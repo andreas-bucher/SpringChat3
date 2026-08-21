@@ -1,0 +1,258 @@
+# SpringChat3
+
+A Kotlin + Spring Boot + WebFlux chat application built on the
+[Embabel agent framework](https://github.com/embabel/embabel-agent) (v1.0.0,
+GA'd July 2026), running against a local [Ollama](https://ollama.com) model.
+
+## What's here
+
+- **Gradle Kotlin DSL** build (`build.gradle.kts`), Spring Boot 3.5.9, Kotlin 2.1.20, Java 21 toolchain.
+- **`ChatAgent`** (`src/main/kotlin/.../agent/ChatAgent.kt`): a 3-step agent
+  (`classifyIntent -> draftReply -> reviewReply`) instead of one LLM call, so
+  Embabel's GOAP planner has actual planning to do - it infers the action
+  order from each `@Action` method's parameter/return types, not from any
+  explicit sequence you write.
+- **`ChatController`** (`src/main/kotlin/.../web/ChatController.kt`): a
+  WebFlux `POST /chat` endpoint that invokes the agent platform reactively.
+- **`embabel-agent-starter-ollama`**: talks to a local Ollama daemon, no API
+  key needed. Configured in `src/main/resources/application.yml`.
+- **`LangfuseTracing.kt`** (`src/main/kotlin/.../config/`): reports every
+  agent action, LLM call, and tool call to [Langfuse](https://langfuse.com)
+  as an OpenTelemetry trace, via Embabel's own `AgenticEventListener` hook
+  (same mechanism `GranularEventLogging.kt` uses for the `Embabel.Llm`/
+  `Embabel.Tools` loggers) rather than generic Spring/Micrometer tracing -
+  see that file's doc comment for why. Configured via `langfuse.*` in
+  `application.yml`; see the Langfuse section below.
+
+## Prerequisites
+
+1. Java 21.
+2. [Ollama](https://ollama.com) installed and running locally, with a model
+   pulled, e.g.:
+   ```bash
+   ollama pull llama3.2
+   ```
+   If you use a different model, set `OLLAMA_MODEL` (see below).
+
+## Running it
+
+```bash
+./gradlew bootRun
+```
+
+Then:
+
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What can you help me with?"}'
+```
+
+Environment variables (all optional, defaults shown):
+
+```bash
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=granite4.1:3b
+OLLAMA_GENERATION_MODEL=mistral:latest
+```
+
+`OLLAMA_MODEL` backs `embabel.models.default-llm` and is used for intent
+classification, tool planning, and tool-result summarization.
+`OLLAMA_GENERATION_MODEL` backs the `generation` role (see
+`ChatAgent.GENERATION_LLM_ROLE`) and is used only for `draftReply` /
+`reviewReply` - the two steps that write and polish the reply text the user
+actually sees. Both must name a model Ollama already has pulled (`ollama
+list`) - Embabel auto-discovers and registers every local Ollama model by
+its exact tag, so e.g. `ollama pull mistral` is all `OLLAMA_GENERATION_MODEL`
+needs to resolve.
+
+## Langfuse tracing
+
+Every chat turn is reported to [Langfuse](https://langfuse.com) as one
+trace - `classifyIntent -> planTools -> executeTools` (with each tool call
+nested inside it) `-> draftReply -> reviewReply` - with the two LLM-calling
+steps shown as "generation" observations (model, input, output). See
+`LangfuseTracing.kt` (`config` package) for how and why.
+
+1. Run Langfuse self-hosted (e.g. `docker compose up` from the
+   [Langfuse repo](https://github.com/langfuse/langfuse) - defaults to
+   `http://localhost:3000`) or use [Langfuse Cloud](https://cloud.langfuse.com).
+2. Create a project, then grab a public/secret key pair from
+   **Settings -> API Keys**.
+3. Set env vars:
+   ```bash
+   LANGFUSE_PUBLIC_KEY=pk-lf-...
+   LANGFUSE_SECRET_KEY=sk-lf-...
+   # Only needed for Langfuse Cloud or a non-default self-hosted URL/port -
+   # defaults to http://localhost:3000/api/public/otel/v1/traces otherwise:
+   LANGFUSE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
+   ```
+4. Set `LANGFUSE_ENABLED=false` to turn tracing off entirely (e.g. if
+   Langfuse isn't running right now and you'd rather not see export-failure
+   log noise) - the app runs fine either way, since a failed span export
+   never blocks or crashes a chat request.
+5. Set `LANGFUSE_MASK_CONTENT=true` to replace every input/output value this
+   listener sends (trace, generation, and tool spans alike) with a fixed
+   placeholder instead of the real content - off by default, since this
+   app's own data (weather/location/transport queries) isn't sensitive.
+
+This uses Langfuse's current OTLP traces endpoint, not its older, simpler
+Ingestion API (`POST /api/public/ingestion`) - that one is deprecated and
+sunsets on Langfuse Cloud on 2026-11-16.
+
+Each trace shows the user's message and the final reply as the trace's own
+input/output (Langfuse v4 derives these from the root span's
+`langfuse.observation.input`/`output`, since the older dedicated
+`langfuse.trace.input`/`output` attributes are deprecated), and is named
+from a short prefix of the user's message instead of a generic "chat" label.
+
+**Known gap - no token usage/cost**: Embabel's `LlmRequestEvent`/
+`LlmResponseEvent` (1.0.0) don't expose token counts or cost, so
+"generation" observations in Langfuse show model name and input/output but
+no token/cost figures. That's an upstream Embabel limitation, not something
+fixable here - see the KNOWN GAP note in `LangfuseTracing.kt`.
+
+This integration was audited against Langfuse's own instrumentation
+checklist (from its `langfuse/skills` Claude-agent skill) on 2026-08-20;
+see `LangfuseTracing.kt`'s class doc comment and `springchat3_langfuse.md`
+in project memory for the full reasoning behind each item.
+
+## HTTPS (production deployment)
+
+TLS is end-to-end: nginx terminates client-facing HTTPS for
+`springchat3.arcticsoft.ch` (already handling TLS for `arcticsoft.ch`
+itself, per the Langfuse section above) *and* the app terminates TLS itself
+too, via a password-protected PKCS12 keystore (Reactor Netty). This matters
+for one concrete feature: `static/index.html`'s `getBrowserLocation()` calls
+`navigator.geolocation.getCurrentPosition()`, which browsers only allow from
+a secure context (HTTPS, or `localhost` itself) - "what's the weather
+here"/"where am I" silently stop resolving a location once this is reached
+via a real domain instead of `localhost`.
+
+**The keystore is a manually-managed file, not build-generated.** After an
+earlier attempt at auto-generating it from certbot's PEM files at build
+time (via a Gradle task shelling out to `openssl`), that approach was
+dropped (2026-08-21) in favor of something simpler: a password-protected
+PKCS12 keystore committed... well, *placed* at
+`src/main/resources/tls/keystore.p12` - Gradle's default resource
+processing picks up anything under `src/main/resources` automatically, so
+it lands in the jar with zero extra build wiring. It's covered by
+`.gitignore` (`**/tls/keystore.p12`, `*.p12`) despite living in a tracked
+source directory, so it never actually reaches git - which means two
+things: it has to be placed by hand on every machine that builds a
+deployable jar (it won't come along with `git clone`), and it has to be
+regenerated by hand whenever the underlying cert renews (see the renewal
+caveat below). Build/rebuild it with:
+```bash
+openssl pkcs12 -export \
+  -in /etc/letsencrypt/live/springchat3.arcticsoft.ch/fullchain.pem \
+  -inkey /etc/letsencrypt/live/springchat3.arcticsoft.ch/privkey.pem \
+  -name springchat3 \
+  -out src/main/resources/tls/keystore.p12
+```
+`-name springchat3` must match `server.ssl.key-alias` in `application.yml`.
+
+SSL is on by default (`server.ssl.enabled: ${SSL_ENABLED:true}`) - set
+`SSL_ENABLED=false` to run over plain HTTP instead (e.g. for local dev
+without a keystore in place). `server.ssl.key-store-password` has no
+default (`${SSL_KEYSTORE_PASSWORD}`) - it must be set to whatever password
+the keystore above was built with, or startup fails fast with an
+unresolved-placeholder error, and if it's set to the *wrong* value startup
+instead fails with `IllegalStateException: Unable to create key store:
+Could not load store from 'classpath:tls/keystore.p12'` (a
+`KeyStore.load()` failure, not a missing-file one - hit this exact error
+once already from a build-time/runtime env var naming mismatch, since
+fixed by using the same `SSL_KEYSTORE_PASSWORD` name everywhere).
+
+1. Point an A/AAAA record for `springchat3.arcticsoft.ch` at this host's
+   public address.
+2. Install `deploy/nginx/springchat3.arcticsoft.ch.conf` and get a cert with
+   `certbot --nginx` - see that file's header comment for the exact steps.
+   **Not yet done: that file's `proxy_pass` still says `http://127.0.0.1:8084` -
+   it needs to become `https://` (and match whatever `server.port` actually
+   is - see the note on that below) to match the app terminating TLS
+   itself.**
+3. Build `src/main/resources/tls/keystore.p12` as shown above (needs read
+   access to the certbot cert/key, e.g. run on the server itself, or from a
+   local copy of those two files), then `./gradlew bootJar` - no special
+   env vars needed at build time now, the keystore is just an ordinary
+   resource file at this point.
+4. Run the resulting jar (or as a systemd service) with the same password
+   the keystore was built with:
+   ```bash
+   SSL_KEYSTORE_PASSWORD=<same one from step 3> java -jar build/libs/springchat3-*.jar
+   ```
+   nginx proxies to it over loopback, on the same host.
+5. In production, set `SERVER_ADDRESS=127.0.0.1` (see `application.yml`) so
+   the app is only reachable from nginx on this same host, not directly
+   from outside - defense in depth even though nginx-to-app traffic is now
+   TLS either way. Leave it unset for local dev (defaults to `0.0.0.0`,
+   unchanged from before).
+
+**Renewal caveat**: because the keystore is a manually-built file, a
+certbot renewal (typically every ~60 days) only reaches production once
+someone reruns the `openssl pkcs12 -export` command above (with the same
+password) and rebuilds/redeploys - point certbot's `--deploy-hook` at doing
+that, or at least an alert to do it manually, or the app will keep serving
+an expiring/expired cert after a silent renewal.
+
+**Port note**: `server.port` has drifted a few times during setup (`8084` →
+`8043` → `8083`) - double-check it matches what
+`deploy/nginx/springchat3.arcticsoft.ch.conf`'s `proxy_pass` actually
+points at before relying on this in production, since nginx won't complain
+loudly if they're out of sync, it'll just fail to connect.
+
+`deploy/nginx/springchat3.arcticsoft.ch.conf` also raises nginx's proxy
+timeouts well above its 60s default - a single chat turn can make several
+sequential local-LLM calls (`classifyIntent -> planTools -> executeTools ->
+summarizeToolResults -> draftReply -> reviewReply`, see `ChatAgent.kt`),
+which can exceed that on modest hardware or a larger
+`OLLAMA_GENERATION_MODEL`.
+
+`deploy/nginx/springchat3.arcticsoft.ch.conf` also raises nginx's proxy
+timeouts well above its 60s default - a single chat turn can make several
+sequential local-LLM calls (`classifyIntent -> planTools -> executeTools ->
+summarizeToolResults -> draftReply -> reviewReply`, see `ChatAgent.kt`),
+which can exceed that on modest hardware or a larger
+`OLLAMA_GENERATION_MODEL`.
+
+## A note on how this was built
+
+This project was scaffolded in a sandboxed cloud environment whose outbound
+network is restricted to a small allowlist (npm, PyPI, a few others) - it
+does **not** include Maven Central, the Gradle Plugin Portal, or Embabel's
+own Artifactory (`repo.embabel.com`). That means the Gradle wrapper
+(`./gradlew`) itself was generated and verified here, but **the actual build
+- dependency resolution, compilation, running the app - has not been
+executed or verified in this session.**
+
+Everything above (dependency coordinates, versions, annotation names, the
+`AgentInvocation` API, `application.yml` property names) was assembled from
+Embabel's current docs/GitHub as of August 2026, via automated fetches
+rather than a live compiler, so treat it as a solid best-effort starting
+point rather than a guaranteed-green build. The most likely trouble spots if
+`./gradlew build` doesn't work first try:
+
+- Exact `embabel.*` configuration property names in `application.yml`
+  (these moved around across 0.x releases).
+- The `AgentInvocation.builder(...)` call in `ChatController.kt` - check the
+  signature in the 1.0.0 docs at https://docs.embabel.com/embabel-agent/guide/
+  if it doesn't compile.
+- The pinned Embabel version (`1.0.0`) and Spring Boot version (`3.5.9`) in
+  `build.gradle.kts` - bump if a newer patch/release exists by the time you
+  read this.
+- `LangfuseTracing.kt`'s Embabel event class names/signatures (`ActionExecutionStartEvent`,
+  `AgentProcessFinishedEvent`, `ObjectAddedEvent`, etc.) were confirmed
+  against embabel-agent's actual source on GitHub rather than guessed, but
+  the OpenTelemetry SDK calls (`OtlpHttpSpanExporter`, `SdkTracerProvider`,
+  ...) and the exact Langfuse OTel attribute names (`langfuse.observation.*`)
+  were not compile-checked or tested against a live Langfuse instance. One
+  specific thing that couldn't be confirmed: whether `AgentProcessCreationEvent`
+  or the `ObjectAddedEvent` for the initial `ChatRequest` fires first -
+  embabel-agent's concrete `AgentProcess`/blackboard-binding implementation
+  wasn't reachable via GitHub's raw file API to check, only the interface.
+  The code is written to not care either way (see `processSpan()`'s doc
+  comment), but it's worth confirming against the first real trace.
+
+Run `./gradlew build` on a machine with normal internet access first; if
+anything doesn't compile, paste the error back and it's a quick fix.
