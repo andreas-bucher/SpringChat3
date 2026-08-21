@@ -37,9 +37,8 @@ import reactor.netty.http.client.HttpClient as ReactorHttpClient
  * That 10s silently overrides everything below and is why Ollama calls used
  * to fail with io.netty.handler.timeout.ReadTimeoutException on anything
  * slower than 10s (basically any real inference), even though this class
- * "worked" for the app's own tool HTTP calls (GeoTool/WeatherTool/
- * TransportTool), which take an unqualified RestClient.Builder and don't
- * care about the qualifier.
+ * "worked" for the app's own tool HTTP calls (TransportTool), which take an
+ * unqualified RestClient.Builder and don't care about the qualifier.
  */
 @Configuration
 class HttpClientConfig {

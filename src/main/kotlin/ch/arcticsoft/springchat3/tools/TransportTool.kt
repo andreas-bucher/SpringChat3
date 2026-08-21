@@ -28,9 +28,12 @@ class TransportTool(restClientBuilder: RestClient.Builder) {
     }
 
     // from/to/station go in as {placeholder} URI variables rather than
-    // URLEncoder.encode()-ed and spliced into the string - see the comment
-    // on GeoTool.lookup() for why (double-encoding breaks non-ASCII station
-    // names like "Genève" or "Neuchâtel" otherwise).
+    // URLEncoder.encode()-ed and spliced into the string: RestClient's
+    // default encoding mode re-encodes whatever's in the template string,
+    // so a pre-encoded value here gets double-encoded (%C3%A8 -> %25C3%25A8)
+    // and any non-ASCII station name like "Genève" or "Neuchâtel" silently
+    // fails to resolve. Letting RestClient encode the raw value itself
+    // keeps it a single pass.
 
     private fun connections(from: String, to: String): String =
         client.get()

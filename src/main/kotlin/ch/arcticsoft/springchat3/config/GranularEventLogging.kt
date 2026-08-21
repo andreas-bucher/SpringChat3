@@ -42,8 +42,7 @@ import org.springframework.context.annotation.Configuration
  *       Embabel.Llm: INFO    # but see every prompt/response, and which
  *                             # model (granite vs. mistral/magistral)
  *                             # handled which step
- *       Embabel.Tools: INFO  # and every GeoTool/WeatherTool/TransportTool/
- *                             # web-search call the LLM made
+ *       Embabel.Tools: INFO  # and every TransportTool call the LLM made
  *
  * To split out another category the same way (e.g. plan formulation, state
  * transitions), add a logger val below, a `when` branch in onProcessEvent

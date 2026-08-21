@@ -97,6 +97,7 @@ logging:
     root: INFO
     ch.arcticsoft.springchat3: INFO
     ch.arcticsoft.springchat3.web: INFO
+    ch.arcticsoft.springchat3.agent: DEBUG
     Embabel: WARN
     Embabel.Llm: INFO
     Embabel.Tools: INFO

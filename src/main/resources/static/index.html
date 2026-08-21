@@ -109,47 +109,110 @@
 
   .msg-col .bubble { max-width: none; }
 
-  .tool-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .tool-chip {
+  /*
+   * Collapsed-by-default disclosure showing the pipeline timeline (see
+   * ChatReply.steps in ChatAgent2.kt) with each turn's tool calls nested
+   * under the "Execute tools" step - a native <details>/<summary> element
+   * so expand/collapse is free (keyboard-accessible, no JS state).
+   */
+  .trace summary {
+    list-style: none;
+    cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 3px 9px;
-    border-radius: 999px;
-    background: var(--panel);
-    border: 1px solid var(--border);
+    padding: 2px 0;
+    font-size: 12px;
     color: var(--muted);
-    font-size: 11.5px;
-    line-height: 1.5;
+    user-select: none;
   }
 
-  .tool-chip .tool-chip-name {
+  .trace summary::-webkit-details-marker { display: none; }
+
+  .trace summary::before {
+    content: '▸';
+    display: inline-block;
+    font-size: 9px;
+    transition: transform 0.15s ease;
+  }
+
+  .trace[open] summary::before {
+    transform: rotate(90deg);
+  }
+
+  .trace.failed summary {
+    color: #92251c;
+  }
+
+  .trace-body {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12.5px;
+  }
+
+  .trace-step {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .trace-step-name {
     font-weight: 600;
-    color: var(--text);
   }
 
-  .tool-chip .tool-chip-time {
+  .trace-time {
     color: var(--muted);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 
-  .tool-chip.failed .tool-chip-time {
+  .trace-tools {
+    margin: 2px 0 2px 4px;
+    padding-left: 8px;
+    border-left: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .trace-tool {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--muted);
+  }
+
+  .trace-tool.failed {
     color: #92251c;
   }
 
-  .tool-chip.failed {
-    background: #fdecea;
-    border-color: #f6c6c0;
+  .trace-tool.failed .trace-time {
     color: #92251c;
   }
 
-  .tool-chip.failed .tool-chip-name {
-    color: #92251c;
+  .trace-status {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .spinner {
+    width: 9px;
+    height: 9px;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--muted);
+    border-radius: 50%;
+    display: inline-block;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .typing {
@@ -259,47 +322,113 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  // Matches ToolName in ChatAgent.kt - falls back to the raw enum value for
+  // Matches ToolName in ChatModel.kt - falls back to the raw enum value for
   // anything added there that isn't listed here yet.
   const TOOL_LABELS = {
-    WEB_SEARCH: 'Web search',
-    LOCATION: 'Location',
-    WEATHER: 'Weather',
-    WEATHER_FORECAST: 'Weather forecast',
-    SWISS_WEATHER: 'MeteoSwiss weather',
-    SWISS_WEATHER_FORECAST: 'MeteoSwiss forecast',
     PUBLIC_TRANSPORT: 'Public transport',
   };
 
-  function buildToolChips(toolCalls) {
-    const chips = document.createElement('div');
-    chips.className = 'tool-chips';
-    for (const call of toolCalls) {
-      const chip = document.createElement('span');
-      chip.className = 'tool-chip' + (call.failed ? ' failed' : '');
-      chip.title = call.failed ? 'This tool call did not return a usable result' : '';
-      const name = document.createElement('span');
-      name.className = 'tool-chip-name';
-      name.textContent = TOOL_LABELS[call.tool] ?? call.tool;
-      chip.appendChild(name);
-      // GeoTool.CURRENT_LOCATION in ChatAgent.kt - the sentinel planTools
-      // uses instead of a place name when the user means "here"/"nearby".
-      const queryLabel = call.query === 'CURRENT_LOCATION' ? 'current location' : call.query;
-      if (queryLabel) {
-        chip.appendChild(document.createTextNode(queryLabel));
-      }
-      if (typeof call.seconds === 'number') {
-        const time = document.createElement('span');
-        time.className = 'tool-chip-time';
-        time.textContent = call.seconds.toFixed(1) + 's';
-        chip.appendChild(time);
-      }
-      chips.appendChild(chip);
+  // Step label executeTools2 (ChatAgent2.kt) records - the step whose time
+  // the individual tool calls are a breakdown of, so that's where toolCalls
+  // get nested inside the trace rather than shown as a separate, unrelated
+  // timeline.
+  const EXECUTE_STEP_NAME = 'Execute tools';
+
+  function buildToolRow(call) {
+    const row = document.createElement('div');
+    row.className = 'trace-tool' + (call.failed ? ' failed' : '');
+    row.title = call.failed ? 'This tool call did not return a usable result' : '';
+    const label = document.createElement('span');
+    label.textContent = (TOOL_LABELS[call.tool] ?? call.tool) + (call.query ? ': ' + call.query : '');
+    row.appendChild(label);
+    if (typeof call.seconds === 'number') {
+      const time = document.createElement('span');
+      time.className = 'trace-time';
+      time.textContent = call.seconds.toFixed(1) + 's';
+      row.appendChild(time);
     }
-    return chips;
+    return row;
   }
 
-  function addRow(role, text, toolCalls) {
+  function buildToolsGroup(toolCalls) {
+    const group = document.createElement('div');
+    group.className = 'trace-tools';
+    for (const call of toolCalls) {
+      group.appendChild(buildToolRow(call));
+    }
+    return group;
+  }
+
+  // Collapsed-by-default disclosure over ChatReply.steps + toolCalls (see
+  // ChatAgent2.kt) - a "1.9s · 2 tools" summary that expands into the full
+  // per-step timeline, with tool calls nested under whichever step actually
+  // ran them, rather than two permanently-visible, visually-flat chip rows.
+  // Returns null when there's nothing to show (e.g. "hello", no tools).
+  function buildTrace(steps, toolCalls) {
+    const hasSteps = steps && steps.length;
+    const hasTools = toolCalls && toolCalls.length;
+    if (!hasSteps && !hasTools) return null;
+
+    const anyFailed = hasTools && toolCalls.some((call) => call.failed);
+    const totalSeconds = (steps || []).reduce((sum, s) => sum + (s.seconds || 0), 0);
+
+    const details = document.createElement('details');
+    details.className = 'trace' + (anyFailed ? ' failed' : '');
+    // Auto-expand only when something failed, so problems surface by
+    // default while the common (all-succeeded) case stays out of the way.
+    if (anyFailed) details.open = true;
+
+    const summary = document.createElement('summary');
+    const timeLabel = document.createElement('span');
+    timeLabel.textContent = totalSeconds > 0 ? totalSeconds.toFixed(1) + 's' : 'Details';
+    summary.appendChild(timeLabel);
+    if (hasTools) {
+      const sep = document.createElement('span');
+      sep.textContent = '·';
+      summary.appendChild(sep);
+      const toolsLabel = document.createElement('span');
+      toolsLabel.textContent = toolCalls.length + (toolCalls.length === 1 ? ' tool' : ' tools');
+      summary.appendChild(toolsLabel);
+    }
+    if (anyFailed) {
+      const warn = document.createElement('span');
+      warn.textContent = '⚠';
+      summary.appendChild(warn);
+    }
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'trace-body';
+    let toolsNested = false;
+    for (const step of (steps || [])) {
+      const row = document.createElement('div');
+      row.className = 'trace-step';
+      const name = document.createElement('span');
+      name.className = 'trace-step-name';
+      name.textContent = step.step;
+      const time = document.createElement('span');
+      time.className = 'trace-time';
+      time.textContent = (step.seconds ?? 0).toFixed(1) + 's';
+      row.appendChild(name);
+      row.appendChild(time);
+      body.appendChild(row);
+
+      if (hasTools && step.step === EXECUTE_STEP_NAME) {
+        body.appendChild(buildToolsGroup(toolCalls));
+        toolsNested = true;
+      }
+    }
+    // Fallback for a reply with tool calls but no matching "Execute tools"
+    // step (e.g. no steps at all) - still show them rather than drop them.
+    if (hasTools && !toolsNested) {
+      body.appendChild(buildToolsGroup(toolCalls));
+    }
+    details.appendChild(body);
+
+    return details;
+  }
+
+  function addRow(role, text, toolCalls, steps) {
     if (emptyStateEl) emptyStateEl.remove();
     const row = document.createElement('div');
     row.className = 'row ' + role;
@@ -308,10 +437,12 @@
     bubble.className = 'bubble';
     bubble.textContent = text;
 
-    if (toolCalls && toolCalls.length) {
+    const trace = buildTrace(steps, toolCalls);
+
+    if (trace) {
       const col = document.createElement('div');
       col.className = 'msg-col';
-      col.appendChild(buildToolChips(toolCalls));
+      col.appendChild(trace);
       col.appendChild(bubble);
       row.appendChild(col);
     } else {
@@ -323,14 +454,161 @@
     return row;
   }
 
-  function addTypingRow() {
+  function spinnerEl() {
+    const span = document.createElement('span');
+    span.className = 'spinner';
+    return span;
+  }
+
+  // Live counterpart to buildTrace() above: instead of one collapsed
+  // disclosure built after the fact from a finished ChatReply, this is an
+  // always-open panel that starts empty and is filled in step by step as
+  // /chat/stream's NDJSON events (see ChatProgress.kt) arrive - each step
+  // appears with a spinner, then gets its time once its "*-finished" event
+  // shows up, same for tool calls nested under "Execute tools". Replaces
+  // the old plain three-dot typing indicator.
+  function addLiveProgressRow() {
     if (emptyStateEl) emptyStateEl.remove();
     const row = document.createElement('div');
     row.className = 'row assistant';
-    row.innerHTML = '<div class="bubble"><span class="typing"><span></span><span></span><span></span></span></div>';
+    const col = document.createElement('div');
+    col.className = 'msg-col';
+    const panel = document.createElement('div');
+    panel.className = 'trace-body';
+    col.appendChild(panel);
+    row.appendChild(col);
     messagesEl.appendChild(row);
     scrollToBottom();
-    return row;
+    return { row, panel, stepStatusEls: new Map(), toolsGroupEl: null, toolEls: new Map() };
+  }
+
+  function addLiveStep(live, stepName) {
+    const stepRow = document.createElement('div');
+    stepRow.className = 'trace-step';
+    const name = document.createElement('span');
+    name.className = 'trace-step-name';
+    name.textContent = stepName;
+    const status = document.createElement('span');
+    status.className = 'trace-status';
+    status.appendChild(spinnerEl());
+    stepRow.appendChild(name);
+    stepRow.appendChild(status);
+    live.panel.appendChild(stepRow);
+    live.stepStatusEls.set(stepName, status);
+
+    // ChatAgent2.kt's executeTools2 is the one step individual tool calls
+    // belong under - reserve the nested group here so tool-started events
+    // (which can arrive interleaved with this step still "running") have
+    // somewhere to attach.
+    if (stepName === EXECUTE_STEP_NAME) {
+      const group = document.createElement('div');
+      group.className = 'trace-tools';
+      live.panel.appendChild(group);
+      live.toolsGroupEl = group;
+    }
+    scrollToBottom();
+  }
+
+  function finishLiveStatus(statusEl, seconds) {
+    if (!statusEl) return;
+    statusEl.textContent = '';
+    const time = document.createElement('span');
+    time.className = 'trace-time';
+    time.textContent = seconds.toFixed(1) + 's';
+    statusEl.appendChild(time);
+  }
+
+  function addLiveTool(live, index, tool, query) {
+    if (!live.toolsGroupEl) return; // defensive: "Execute tools" always starts first
+    const row = document.createElement('div');
+    row.className = 'trace-tool';
+    const label = document.createElement('span');
+    label.textContent = (TOOL_LABELS[tool] ?? tool) + (query ? ': ' + query : '');
+    const status = document.createElement('span');
+    status.className = 'trace-status';
+    status.appendChild(spinnerEl());
+    row.appendChild(label);
+    row.appendChild(status);
+    live.toolsGroupEl.appendChild(row);
+    live.toolEls.set(index, { row, status });
+    scrollToBottom();
+  }
+
+  function finishLiveTool(live, index, seconds, failed) {
+    const entry = live.toolEls.get(index);
+    if (!entry) return;
+    entry.row.classList.toggle('failed', !!failed);
+    finishLiveStatus(entry.status, seconds);
+  }
+
+  // Applies one NDJSON event from /chat/stream to the live progress panel.
+  // 'done'/'failed' are terminal: they replace the live panel with the same
+  // addRow(...) rendering a plain (non-streamed) /chat response gets, so the
+  // finished message looks identical either way.
+  function applyProgressEvent(live, event) {
+    switch (event.type) {
+      case 'step-started':
+        addLiveStep(live, event.step);
+        break;
+      case 'step-finished':
+        finishLiveStatus(live.stepStatusEls.get(event.step), event.seconds);
+        break;
+      case 'tool-started':
+        addLiveTool(live, event.index, event.tool, event.query);
+        break;
+      case 'tool-finished':
+        finishLiveTool(live, event.index, event.seconds, event.failed);
+        break;
+      case 'done':
+        live.row.remove();
+        addRow('assistant', event.reply.text ?? '(empty response)', event.reply.toolCalls, event.reply.steps);
+        break;
+      case 'failed':
+        live.row.remove();
+        addRow('error', 'Something went wrong: ' + event.message);
+        break;
+      default:
+        // Forward-compatible: an event type this page doesn't know about
+        // yet is ignored rather than breaking the whole stream.
+        break;
+    }
+  }
+
+  // Posts to /chat/stream and feeds each newline-delimited JSON object (see
+  // ChatProgress.kt) to applyProgressEvent as it arrives, so the live panel
+  // fills in incrementally instead of the browser waiting for one final
+  // response. A chunk boundary can land mid-object, hence the line buffer.
+  async function streamChat(live, message, location) {
+    const res = await fetch('/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, ...(location ?? {}) }),
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error('Server responded with ' + res.status);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const consume = (line) => {
+      const trimmed = line.trim();
+      if (trimmed) applyProgressEvent(live, JSON.parse(trimmed));
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIndex;
+      while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+        consume(buffer.slice(0, newlineIndex));
+        buffer = buffer.slice(newlineIndex + 1);
+      }
+    }
+    consume(buffer);
   }
 
   function autoGrow() {
@@ -342,6 +620,17 @@
   // "what's the weather here" or "where am I". Resolves to null (rather than
   // rejecting) if geolocation isn't supported, permission is denied, or it
   // just takes too long - the chat still works fine without it.
+  //
+  // enableHighAccuracy asks the browser to use GPS/Wi-Fi positioning rather
+  // than settling for the fastest answer it has, which is often coarse,
+  // IP-address-based geolocation - accurate only to "somewhere in the same
+  // country" and prone to landing on whatever a geolocation database
+  // defaults ambiguous IPs to (a well-known artifact: several such
+  // databases default unresolvable US addresses to the Kansas City area,
+  // since it's near the geographic center of the continental US and hosts
+  // major peering points). The longer timeout (was 3s) gives a real
+  // GPS/Wi-Fi fix time to arrive instead of timing out into that same
+  // coarse fallback.
   function getBrowserLocation() {
     return new Promise((resolve) => {
       if (!('geolocation' in navigator)) {
@@ -351,7 +640,7 @@
       navigator.geolocation.getCurrentPosition(
         (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
         () => resolve(null),
-        { timeout: 3000, maximumAge: 5 * 60 * 1000 },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 5 * 60 * 1000 },
       );
     });
   }
@@ -375,25 +664,16 @@
     autoGrow();
     sendEl.disabled = true;
 
-    const typingRow = addTypingRow();
+    const live = addLiveProgressRow();
 
     try {
       const location = await getBrowserLocation();
-      const res = await fetch('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, ...(location ?? {}) }),
-      });
-
-      if (!res.ok) {
-        throw new Error('Server responded with ' + res.status);
-      }
-
-      const data = await res.json();
-      typingRow.remove();
-      addRow('assistant', data.text ?? '(empty response)', data.toolCalls);
+      await streamChat(live, message, location);
     } catch (err) {
-      typingRow.remove();
+      // live.row may already be gone if a 'failed' event handled this first
+      // (see applyProgressEvent) - removing an already-detached node is a
+      // harmless no-op, so no need to guard against that here.
+      live.row.remove();
       addRow('error', 'Something went wrong: ' + err.message);
     } finally {
       sendEl.disabled = false;
