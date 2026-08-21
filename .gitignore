@@ -41,3 +41,4 @@ bin/
 **/tls/keystore.p12
 *.p12
 _to_delete/
+.env
