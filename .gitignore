@@ -1,0 +1,43 @@
+HELP.md
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+
+### TLS keystore (springchat3_deployment.md, project memory) ###
+# The build embeds a build-time-generated keystore.p12 under
+# build/generated-resources (already covered by build/ above). This is a
+# safety net against ever tracking a *manually* dropped-in copy of the
+# real cert/key material anywhere under src/ - e.g. src/main/resources/tls/,
+# which happened once (2026-08-21) and was cleaned up.
+**/tls/keystore.p12
+*.p12
+_to_delete/
