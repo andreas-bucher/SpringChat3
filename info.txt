@@ -1,1 +1,19 @@
-info
+
+
+
+./gradlew build
+./gradlew bootRun
+
+open -a Docker
+docker compose up
+
+
+keytool -genkeypair \
+  -alias springchat3 \
+  -keyalg RSA \
+  -keysize 2048 \
+  -storetype PKCS12 \
+  -keystore keystore.p12 \
+  -validity 3650 \
+  -dname "CN=springchat3.arcticsoft.ch" \
+  -ext "SAN=dns:springchat3.arcticsoft.ch"
