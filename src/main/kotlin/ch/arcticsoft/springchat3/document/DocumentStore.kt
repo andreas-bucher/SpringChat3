@@ -64,6 +64,21 @@ data class DocumentSummary(val documentId: String, val filename: String, val cha
  * through the same change for the same reason, into its own per-document
  * `vectorstore.json` alongside this one.
  *
+ * **Also holds the original PDF bytes, same directory, since 2026-08-22**
+ * (user's own idea "would it be possible to enable the files to be
+ * displayed on another browser tab?" - see springchat3_document_qa.md in
+ * project memory for the "open in a new tab" feature this enabled): each
+ * document's raw bytes live alongside its `document.json`, as a sibling
+ * `[dataDir]/<documentId>/document.pdf` - see [getBytes]. Kept as a plain
+ * file rather than folded into [ExtractedDocument] itself (e.g. as a
+ * base64 field) so [documentFile] stays small, JSON-only metadata, and the
+ * raw bytes can be read/streamed back independently without ever having to
+ * parse-then-decode them out of a JSON document first. **A document stored
+ * before this change has no `document.pdf`** - [getBytes] simply returns
+ * null for one of those rather than treating it as an error; the side
+ * panel's "open in a new tab" button surfaces that as an ordinary 404, not
+ * a special case this store needs to know about.
+ *
  * **Not migrated from the old single-`documents.json` layout**: any
  * document uploaded before this change is simply no longer found (the old
  * file is orphaned, not deleted) and needs re-uploading. Deliberately not
@@ -101,6 +116,8 @@ class DocumentStore(
 
     private fun documentFile(documentId: String) = File(documentDir(documentId), "document.json")
 
+    private fun documentPdfFile(documentId: String) = File(documentDir(documentId), "document.pdf")
+
     private fun loadPersisted(): LinkedHashMap<String, ExtractedDocument> {
         val root = File(dataDir)
         root.mkdirs()
@@ -131,17 +148,60 @@ class DocumentStore(
         }
     }
 
-    /** Stores [text] extracted from [filename], returning a fresh id to look it up by later. */
-    fun store(filename: String, text: String): String {
+    private fun persistBytes(documentId: String, bytes: ByteArray) {
+        try {
+            val dir = documentDir(documentId)
+            dir.mkdirs()
+            documentPdfFile(documentId).writeBytes(bytes)
+        } catch (e: Exception) {
+            log.warn("Could not persist raw PDF bytes for document {} to {}", documentId, documentPdfFile(documentId), e)
+        }
+    }
+
+    /**
+     * Stores [text] extracted from [filename] plus [bytes], the document's
+     * original PDF content (2026-08-22, see this class's own doc comment) -
+     * returns a fresh id to look either one up by later ([get]/[getBytes]).
+     * A failure persisting [bytes] is logged and otherwise swallowed, same
+     * as [persist] itself - this store already tolerates a failed metadata
+     * write without failing the whole upload/sync, so a failed bytes write
+     * gets the same treatment rather than being held to a stricter standard;
+     * the practical effect is just that [getBytes] later returns null for
+     * this [documentId], same as any other pre-existing document that never
+     * had its bytes stored.
+     */
+    fun store(filename: String, text: String, bytes: ByteArray): String {
         val documentId = UUID.randomUUID().toString()
         val document = ExtractedDocument(filename, text, System.currentTimeMillis())
         documents[documentId] = document
         persist(documentId, document)
+        persistBytes(documentId, bytes)
         return documentId
     }
 
     /** Returns the document stored under [documentId], or null if there is none (never uploaded, or an unrecognized id). */
     fun get(documentId: String): ExtractedDocument? = documents[documentId]
+
+    /**
+     * Returns [documentId]'s original PDF bytes, or null if there are none -
+     * either [documentId] itself doesn't exist, or (2026-08-22, see this
+     * class's own doc comment) it's a document stored before raw bytes were
+     * kept at all. Deliberately does NOT check [documents] first to
+     * distinguish those two null cases - callers (see
+     * [ch.arcticsoft.springchat3.web.DocumentController.file]) already
+     * treat "no bytes" as a plain 404 either way, so there's no behavioral
+     * difference worth the extra lookup.
+     */
+    fun getBytes(documentId: String): ByteArray? {
+        val file = documentPdfFile(documentId)
+        if (!file.exists()) return null
+        return try {
+            file.readBytes()
+        } catch (e: Exception) {
+            log.warn("Could not read raw PDF bytes for document {} from {}", documentId, file, e)
+            null
+        }
+    }
 
     /** All stored documents as lightweight summaries, oldest upload first - backs the side panel's document list. */
     fun list(): List<DocumentSummary> = synchronized(documents) {
@@ -151,8 +211,11 @@ class DocumentStore(
     /**
      * Removes the document stored under [documentId]. Returns true if a
      * document was actually removed, false if [documentId] wasn't found.
-     * Deletes this document's whole on-disk directory *if* it's empty after
-     * removing `document.json` - it usually isn't yet at that point, since
+     * Also deletes `document.pdf` if this document has one (2026-08-22, see
+     * this class's own doc comment) - a no-op `delete()` call for a
+     * pre-existing document that never had raw bytes stored. Deletes this
+     * document's whole on-disk directory *if* it's empty after removing
+     * both files - it usually isn't yet at that point, since
      * [ch.arcticsoft.springchat3.web.DocumentController.delete] also calls
      * [DocumentIndex.remove] for the same [documentId], which still has its
      * own `vectorstore.json` to clean up there. Order between the two
@@ -164,6 +227,7 @@ class DocumentStore(
         val removed = documents.remove(documentId) != null
         if (removed) {
             documentFile(documentId).delete()
+            documentPdfFile(documentId).delete()
             documentDir(documentId).delete()
         }
         return removed

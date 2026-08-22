@@ -547,6 +547,41 @@
     background: #fdecea;
   }
 
+  /*
+   * Opens a document's original PDF in a new browser tab (2026-08-22,
+   * user's own idea "would it be possible to enable the files to be
+   * displayed on another browser tab?" - see springchat3_document_qa.md in
+   * project memory). A separate button rather than making the row/filename
+   * itself do this - clicking the row already toggles this document as the
+   * active chat context, and overloading that same click with "also open a
+   * new tab" would be surprising. Same hover-to-reveal treatment as
+   * .doc-item-remove (visible on hover/active, hidden otherwise) so the two
+   * buttons read as a matched pair, but a neutral hover color rather than
+   * .doc-item-remove's red - this one isn't a destructive action.
+   */
+  .doc-item-view {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+    flex-shrink: 0;
+    padding: 2px 5px;
+    border-radius: 6px;
+    visibility: hidden;
+    text-decoration: none;
+  }
+
+  .doc-item:hover .doc-item-view,
+  .doc-item.active .doc-item-view {
+    visibility: visible;
+  }
+
+  .doc-item-view:hover {
+    color: var(--text);
+    background: var(--panel);
+  }
+
   /* Only used when a .doc-item carries a badge (currently just the "DRIVE" badge below) - .doc-item-name keeps its own plain, unwrapped styling otherwise. */
   .doc-item-name-row {
     display: flex;
@@ -634,12 +669,35 @@
     flex-shrink: 0;
   }
 
+  /*
+   * .drive-folder-card is a <details> element and .drive-folder-header its
+   * <summary> (2026-08-22, collapsable panels) - same list-marker-removal
+   * plus custom chevron approach .trace summary already uses elsewhere on
+   * this page, so the two disclosure widgets look/feel consistent.
+   */
   .drive-folder-header {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 10px 10px 10px 12px;
     background: var(--bg);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+
+  .drive-folder-header::-webkit-details-marker { display: none; }
+
+  .drive-folder-header::before {
+    content: '▸';
+    font-size: 9px;
+    color: var(--muted);
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+  }
+
+  .drive-folder-card[open] > .drive-folder-header::before {
+    transform: rotate(90deg);
   }
 
   .drive-folder-icon {
@@ -1278,8 +1336,11 @@
     return count + ' ' + noun + (count === 1 ? '' : 's');
   }
 
+  // retrieval.filenames (a single retrieval.filename until 2026-08-22's
+  // multi-document change - see ChatRequest.documentIds's doc comment)
+  // covers every document this retrieval searched, joined for display.
   function retrievalLabel(retrieval) {
-    return retrievalPrefix(retrieval.via) + retrieval.filename + ' — ' + retrievalCountLabel(retrieval.via, retrieval.resultCount);
+    return retrievalPrefix(retrieval.via) + retrieval.filenames.join(', ') + ' — ' + retrievalCountLabel(retrieval.via, retrieval.resultCount);
   }
 
   // Same shape as the plain step rows buildTrace() builds inline below (name
@@ -1647,12 +1708,12 @@
   // "Generating answer ...") falls out naturally from when ChatAgent.kt
   // actually emits the retrieval-started event now, so no group needs to be
   // reserved ahead of time the way EXECUTE_STEP_NAME's tools group is.
-  function addLiveRetrieval(live, filename, via) {
+  function addLiveRetrieval(live, filenames, via) {
     const row = document.createElement('div');
     row.className = 'trace-step';
     const name = document.createElement('span');
     name.className = 'trace-step-name';
-    name.textContent = retrievalPrefix(via) + filename;
+    name.textContent = retrievalPrefix(via) + filenames.join(', ');
     const status = document.createElement('span');
     status.className = 'trace-status';
     status.appendChild(spinnerEl());
@@ -1689,7 +1750,7 @@
         finishLiveTool(live, event.index, event.seconds, event.failed);
         break;
       case 'retrieval-started':
-        addLiveRetrieval(live, event.filename, event.via);
+        addLiveRetrieval(live, event.filenames, event.via);
         break;
       case 'retrieval-finished':
         finishLiveRetrieval(live, event.resultCount, event.seconds);
@@ -1730,11 +1791,11 @@
   // ChatProgress.kt) to applyProgressEvent as it arrives, so the live panel
   // fills in incrementally instead of the browser waiting for one final
   // response. A chunk boundary can land mid-object, hence the line buffer.
-  async function streamChat(live, message, location, documentId) {
+  async function streamChat(live, message, location, documentIds) {
     const res = await fetch('/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-      body: JSON.stringify({ message, ...(location ?? {}), ...(documentId ? { documentId } : {}) }),
+      body: JSON.stringify({ message, ...(location ?? {}), ...(documentIds && documentIds.length ? { documentIds } : {}) }),
     });
 
     if (!res.ok || !res.body) {
@@ -1803,11 +1864,18 @@
   // { documentId, filename, characterCount } for each document lives in
   // this page's JS - the extracted text itself never comes back to the
   // browser, it stays server-side keyed by documentId, and answer() looks
-  // it up fresh on every turn. activeDocumentId is whichever one is
-  // currently selected in the panel (null = none), sent as
-  // ChatRequest.documentId on the next message.
+  // it up fresh on every turn. activeDocumentIds is whichever ones are
+  // currently selected in the panel (empty = none), sent as
+  // ChatRequest.documentIds on the next message.
+  //
+  // Was a single nullable activeDocumentId until 2026-08-22 (user's own
+  // request "Can we support that a user selects multiple documents and
+  // then the question is answered based on all these?") - selecting a
+  // document no longer clears whatever else was selected (see
+  // buildDocItem's click handler below), so this is a Set of ids instead
+  // of a single value.
   let documents = [];
-  let activeDocumentId = null;
+  let activeDocumentIds = new Set();
 
   function formatCharCount(n) {
     return (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)) + ' chars';
@@ -1821,7 +1889,7 @@
   // disturbing .doc-item-name's own ellipsis truncation in the no-badge case.
   function buildDocItem(doc, badge) {
     const item = document.createElement('div');
-    item.className = 'doc-item' + (doc.documentId === activeDocumentId ? ' active' : '');
+    item.className = 'doc-item' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
     item.title = doc.filename;
 
     const icon = document.createElement('span');
@@ -1852,6 +1920,27 @@
     info.appendChild(meta);
     item.appendChild(info);
 
+    // "Open in a new tab" (2026-08-22, user's own idea "would it be
+    // possible to enable the files to be displayed on another browser tab?"
+    // - see springchat3_document_qa.md in project memory). A plain <a
+    // target="_blank"> rather than a button + window.open() - simplest way
+    // to let the browser handle the new-tab navigation itself, and it works
+    // identically whether GET /documents/{id}/file finds real PDF bytes (a
+    // document stored after this feature existed) or 404s (predates it) -
+    // either way it's just a normal link the browser resolves on click, no
+    // JS-side success/failure handling needed here.
+    const viewLink = document.createElement('a');
+    viewLink.className = 'doc-item-view';
+    viewLink.href = '/documents/' + encodeURIComponent(doc.documentId) + '/file';
+    viewLink.target = '_blank';
+    viewLink.rel = 'noopener';
+    viewLink.title = 'Open PDF in a new tab';
+    viewLink.textContent = '↗';
+    viewLink.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the item active/inactive
+    });
+    item.appendChild(viewLink);
+
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'doc-item-remove';
@@ -1863,15 +1952,21 @@
     });
     item.appendChild(removeBtn);
 
-    // Toggle: clicking the already-active document clears it, clicking any
-    // other document makes it the (single) active one - only one document
-    // is ever folded into ChatAgent.answer's prompt per turn, see
-    // ChatRequest.documentId's doc comment for why. Re-renders both lists,
-    // not just this one, since activeDocumentId is shared across the
-    // "Uploaded" list and the Google Drive section - the newly (in)active
-    // document could live in either.
+    // Toggle: clicking a document adds/removes it from the active set,
+    // independently of whatever else is already selected - every active
+    // document is folded into ChatAgent.answer's prompt per turn (see
+    // ChatRequest.documentIds's doc comment, 2026-08-22 multi-document
+    // change; this used to be an exclusive single-selection toggle before
+    // that). Re-renders both lists, not just this one, since
+    // activeDocumentIds is shared across the "Uploaded" list and the
+    // Google Drive section - the newly (in)active document could live in
+    // either.
     item.addEventListener('click', () => {
-      activeDocumentId = activeDocumentId === doc.documentId ? null : doc.documentId;
+      if (activeDocumentIds.has(doc.documentId)) {
+        activeDocumentIds.delete(doc.documentId);
+      } else {
+        activeDocumentIds.add(doc.documentId);
+      }
       renderDocList();
       renderDriveSection();
     });
@@ -1909,6 +2004,34 @@
   // for /settings.
   let driveStatus = { folders: [] };
 
+  // Per-folder collapse state (UI improvement, user's own request "Make the
+  // panels with google drive folder sync collapsable") - kept separately
+  // from driveStatus itself since driveStatus.folders is wholesale replaced
+  // on every fetch/sync/link/unlink (see this section's own opening
+  // comment), which would otherwise silently forget which folders the user
+  // had collapsed. Keyed by folderId so it survives a folder's own state
+  // changing (syncing -> synced, file count changing) across re-renders.
+  // Persists across reloads via localStorage, same pattern (and same
+  // failure handling) as the side panel's own sidePanelCollapsed - see
+  // setPanelCollapsed's doc comment.
+  let collapsedDriveFolderIds = new Set();
+  try {
+    const stored = localStorage.getItem('collapsedDriveFolderIds');
+    if (stored) collapsedDriveFolderIds = new Set(JSON.parse(stored));
+  } catch {
+    // Storage unavailable, or a corrupt stored value - start with every
+    // folder expanded, same as a first-ever visit.
+  }
+
+  function persistCollapsedDriveFolderIds() {
+    try {
+      localStorage.setItem('collapsedDriveFolderIds', JSON.stringify(Array.from(collapsedDriveFolderIds)));
+    } catch {
+      // Storage unavailable (private browsing, etc.) - the collapse choice
+      // just won't survive a reload, which is a harmless degradation.
+    }
+  }
+
   function formatSyncedAt(ts) {
     return ts ? 'Synced ' + new Date(ts).toLocaleString() : 'Not yet synced';
   }
@@ -1921,11 +2044,46 @@
   // separate step to keep a folderId-keyed DOM lookup in sync the way
   // populateModelSelect's dataset.activeValue has to for the settings
   // popup's <select>s (see springchat3_settings.md in project memory).
+  //
+  // [folder.syncing] (2026-08-22, user's own request "when initiated the
+  // sync to a google drive folder. then the panel shall be first created
+  // and an indication that sync is in progress") is true only for the
+  // client-side-only placeholder linkDriveFolder() below appends the
+  // instant a folder is picked - GET/POST /drive/status never actually
+  // returns this field (DriveController.kt's DriveFolderStatus has no such
+  // property), since POST /drive/link doesn't respond at all until its own
+  // server-side sync has already finished (see that endpoint's own doc
+  // comment) - by the time a real folder entry ever reaches the browser,
+  // syncing is already over. A placeholder card's sync/unlink buttons are
+  // rendered disabled rather than omitted - keeps the header layout
+  // identical between the placeholder and its eventual real card, avoiding
+  // a visible reflow the moment the real data replaces it.
+  // Collapsable (2026-08-22, user's own request "Make the panels with
+  // google drive folder sync collapsable") - a native <details>/<summary>
+  // element, same free-expand-collapse approach buildTrace() already uses
+  // elsewhere on this page (keyboard-accessible, no manual open/close
+  // wiring needed beyond persisting the choice - see
+  // collapsedDriveFolderIds' own doc comment). <summary> replaces the old
+  // plain <div class="drive-folder-header">, unchanged in every other way
+  // (same class, same children) so its existing CSS keeps applying as-is;
+  // the sync/unlink buttons inside it call stopPropagation() on click so
+  // clicking them doesn't also toggle the card open/closed, same
+  // "don't also trigger the parent's own click behavior" pattern
+  // buildDocItem's own view/remove buttons already use.
   function buildDriveFolderCard(folder) {
-    const card = document.createElement('div');
+    const card = document.createElement('details');
     card.className = 'drive-folder-card';
+    card.open = !collapsedDriveFolderIds.has(folder.folderId);
+    card.addEventListener('toggle', () => {
+      if (card.open) {
+        collapsedDriveFolderIds.delete(folder.folderId);
+      } else {
+        collapsedDriveFolderIds.add(folder.folderId);
+      }
+      persistCollapsedDriveFolderIds();
+    });
 
-    const header = document.createElement('div');
+    const header = document.createElement('summary');
     header.className = 'drive-folder-header';
 
     const icon = document.createElement('span');
@@ -1943,7 +2101,9 @@
     const metaEl = document.createElement('div');
     metaEl.className = 'drive-folder-meta';
     const count = folder.files.length;
-    metaEl.textContent = formatSyncedAt(folder.lastSyncedAt) + ' · ' + count + (count === 1 ? ' PDF' : ' PDFs');
+    metaEl.textContent = folder.syncing
+      ? 'Linking and syncing…'
+      : formatSyncedAt(folder.lastSyncedAt) + ' · ' + count + (count === 1 ? ' PDF' : ' PDFs');
     info.appendChild(metaEl);
     header.appendChild(info);
 
@@ -1954,46 +2114,63 @@
     syncBtn.type = 'button';
     syncBtn.title = 'Sync now';
     syncBtn.textContent = '↻';
-    syncBtn.addEventListener('click', async () => {
+    if (folder.syncing) {
+      // The initial sync this placeholder stands in for is already running
+      // server-side (see this function's own opening comment) - showing it
+      // pre-spun, disabled, communicates that directly rather than looking
+      // like an idle button the user could click.
       syncBtn.disabled = true;
       syncBtn.classList.add('spinning');
-      try {
-        const res = await fetch('/drive/sync/' + encodeURIComponent(folder.folderId), { method: 'POST', headers: csrfHeader() });
-        if (!res.ok) throw new Error('Server responded with ' + res.status);
-        driveStatus = await res.json();
-        renderDriveSection();
-      } catch (err) {
-        addRow('error', 'Could not sync Google Drive folder: ' + err.message);
-      } finally {
-        syncBtn.disabled = false;
-        syncBtn.classList.remove('spinning');
-      }
-    });
+    } else {
+      syncBtn.addEventListener('click', async (e) => {
+        e.stopPropagation(); // don't also toggle the card open/closed
+        syncBtn.disabled = true;
+        syncBtn.classList.add('spinning');
+        try {
+          const res = await fetch('/drive/sync/' + encodeURIComponent(folder.folderId), { method: 'POST', headers: csrfHeader() });
+          if (!res.ok) throw new Error('Server responded with ' + res.status);
+          driveStatus = await res.json();
+          renderDriveSection();
+        } catch (err) {
+          addRow('error', 'Could not sync Google Drive folder: ' + err.message);
+        } finally {
+          syncBtn.disabled = false;
+          syncBtn.classList.remove('spinning');
+        }
+      });
+    }
     actions.appendChild(syncBtn);
 
     const unlinkBtn = document.createElement('button');
     unlinkBtn.type = 'button';
     unlinkBtn.title = 'Unlink folder';
     unlinkBtn.textContent = '×';
-    // Unlinking only clears THIS folder's link - already-synced documents
-    // stay in the app's index untouched, and every other linked folder is
-    // completely unaffected (same "removes it from the app, not from
-    // Drive" principle a per-file × delete follows, see DriveLinkStore.kt's
-    // own doc comment) - so fetchDocuments() isn't called here, nothing
-    // about the "Uploaded" list changes.
-    unlinkBtn.addEventListener('click', async () => {
+    if (folder.syncing) {
+      // Nothing to unlink yet - POST /drive/link hasn't even responded, so
+      // this folder isn't actually recorded by DriveLinkStore server-side.
       unlinkBtn.disabled = true;
-      try {
-        const res = await fetch('/drive/unlink/' + encodeURIComponent(folder.folderId), { method: 'POST', headers: csrfHeader() });
-        if (!res.ok) throw new Error('Server responded with ' + res.status);
-        driveStatus = await res.json();
-        renderDriveSection();
-      } catch (err) {
-        addRow('error', 'Could not unlink Google Drive folder: ' + err.message);
-      } finally {
-        unlinkBtn.disabled = false;
-      }
-    });
+    } else {
+      // Unlinking only clears THIS folder's link - already-synced documents
+      // stay in the app's index untouched, and every other linked folder is
+      // completely unaffected (same "removes it from the app, not from
+      // Drive" principle a per-file × delete follows, see DriveLinkStore.kt's
+      // own doc comment) - so fetchDocuments() isn't called here, nothing
+      // about the "Uploaded" list changes.
+      unlinkBtn.addEventListener('click', async (e) => {
+        e.stopPropagation(); // don't also toggle the card open/closed
+        unlinkBtn.disabled = true;
+        try {
+          const res = await fetch('/drive/unlink/' + encodeURIComponent(folder.folderId), { method: 'POST', headers: csrfHeader() });
+          if (!res.ok) throw new Error('Server responded with ' + res.status);
+          driveStatus = await res.json();
+          renderDriveSection();
+        } catch (err) {
+          addRow('error', 'Could not unlink Google Drive folder: ' + err.message);
+        } finally {
+          unlinkBtn.disabled = false;
+        }
+      });
+    }
     actions.appendChild(unlinkBtn);
 
     header.appendChild(actions);
@@ -2001,7 +2178,12 @@
 
     const filesEl = document.createElement('div');
     filesEl.className = 'drive-folder-files';
-    if (!count) {
+    if (folder.syncing) {
+      const hint = document.createElement('div');
+      hint.className = 'doc-empty-hint';
+      hint.textContent = 'Finding and downloading PDFs…';
+      filesEl.appendChild(hint);
+    } else if (!count) {
       const hint = document.createElement('div');
       hint.className = 'doc-empty-hint';
       hint.textContent = 'No PDFs found in this folder.';
@@ -2115,10 +2297,23 @@
   // POST /drive/link (DriveController.kt) both records the chosen folder -
   // as an ADDITIONAL one alongside whatever else is already linked
   // (2026-08-22, see this section's own opening comment) - AND runs that
-  // folder's first sync before responding, so its new card renders with
-  // real synced files right away rather than an empty "0 PDFs" that only
-  // fills in after a separate manual "Sync now" click.
+  // folder's first sync before responding at all, so the whole call can
+  // take a while for a folder with several/large PDFs. Without something
+  // shown before that response arrives, the just-picked folder would be
+  // completely invisible for however long its first sync takes - added
+  // 2026-08-22, user's own request "when initiated the sync to a google
+  // drive folder. then the panel shall be first created and an indication
+  // that sync is in progress": a placeholder card (folder.syncing = true -
+  // see buildDriveFolderCard's own doc comment) is appended and rendered
+  // BEFORE the fetch even starts, then replaced wholesale once the real
+  // POST /drive/link response arrives (success) or removed again (failure -
+  // nothing was actually linked server-side in that case, so leaving the
+  // placeholder behind would be showing a folder that isn't really there).
   async function linkDriveFolder(folderId, folderName) {
+    driveStatus = {
+      folders: [...driveStatus.folders, { folderId, folderName, lastSyncedAt: null, files: [], syncing: true }],
+    };
+    renderDriveSection();
     try {
       const res = await fetch('/drive/link', {
         method: 'POST',
@@ -2127,10 +2322,11 @@
       });
       if (!res.ok) throw new Error('Server responded with ' + res.status);
       driveStatus = await res.json();
-      renderDriveSection();
     } catch (err) {
       addRow('error', 'Could not link Google Drive folder: ' + err.message);
+      driveStatus = { folders: driveStatus.folders.filter((f) => !f.syncing) };
     } finally {
+      renderDriveSection();
       driveLinkRowEl.classList.remove('linking');
     }
   }
@@ -2398,9 +2594,11 @@
 
   // Uploads a PDF to /upload (DocumentController.kt), which extracts its
   // text server-side and returns a { documentId, filename, characterCount }
-  // summary to add to the list - the newly-uploaded document becomes the
-  // active one, on the assumption that dropping/picking a file means you
-  // want to ask about it next.
+  // summary to add to the list - the newly-uploaded document becomes
+  // (additionally) active, on the assumption that dropping/picking a file
+  // means you want to ask about it next; whatever else was already
+  // selected stays selected (2026-08-22 multi-document change - see
+  // activeDocumentIds' own doc comment).
   async function uploadDocument(file) {
     docUploadBtnEl.disabled = true;
     try {
@@ -2410,7 +2608,7 @@
       if (!res.ok) throw new Error('Server responded with ' + res.status);
       const doc = await res.json();
       documents.push(doc);
-      activeDocumentId = doc.documentId;
+      activeDocumentIds.add(doc.documentId);
       renderDocList();
     } catch (err) {
       addRow('error', 'Could not upload ' + file.name + ': ' + err.message);
@@ -2440,7 +2638,7 @@
     for (const folder of driveStatus.folders) {
       folder.files = folder.files.filter((d) => d.documentId !== documentId);
     }
-    if (activeDocumentId === documentId) activeDocumentId = null;
+    activeDocumentIds.delete(documentId);
     renderDocList();
     renderDriveSection();
   }
@@ -2591,7 +2789,7 @@
 
     try {
       const location = await getBrowserLocation();
-      await streamChat(live, message, location, activeDocumentId);
+      await streamChat(live, message, location, Array.from(activeDocumentIds));
     } catch (err) {
       // live.row may already be gone if a 'failed' event handled this first
       // (see applyProgressEvent) - removing an already-detached node is a

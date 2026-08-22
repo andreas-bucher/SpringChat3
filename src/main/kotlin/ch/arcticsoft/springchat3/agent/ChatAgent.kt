@@ -2,6 +2,7 @@ package ch.arcticsoft.springchat3.agent
 
 import ch.arcticsoft.springchat3.document.DocumentIndex
 import ch.arcticsoft.springchat3.document.DocumentStore
+import ch.arcticsoft.springchat3.document.DocumentStructure
 import ch.arcticsoft.springchat3.document.DocumentStructureStore
 import ch.arcticsoft.springchat3.document.StructureNode
 import ch.arcticsoft.springchat3.settings.AppSettingsStore
@@ -150,16 +151,28 @@ class ChatAgent(
         // budget entirely, same reasoning [answer] uses DocumentIndex's
         // retrieval for instead of routing a document through this small
         // model - see springchat3_document_qa.md in project memory).
-        val documentNote = request.documentId
-            ?.let { documentStore.get(it) }
-            ?.let {
-                "An attached document, \"${it.filename}\", is available for this " +
+        // Multi-document (2026-08-22, see ChatRequest.documentIds's doc
+        // comment) - lists every attached document by name rather than
+        // just one, so this small model recognizes a question about any of
+        // them, not only a single attached document.
+        val attachedDocsForNote = request.documentIds.mapNotNull { documentStore.get(it) }
+        val documentNote = when {
+            attachedDocsForNote.isEmpty() -> "No document is attached to this conversation."
+            attachedDocsForNote.size == 1 ->
+                "An attached document, \"${attachedDocsForNote[0].filename}\", is available for this " +
                     "conversation - questions about it (e.g. \"summarize it\", \"what does " +
                     "it say about X\") are answered from its content by a later step, not by " +
                     "any tool here. If the message is about the attached document, no tool " +
                     "call is needed for that."
+            else -> {
+                val names = attachedDocsForNote.joinToString(", ") { "\"${it.filename}\"" }
+                "Several attached documents ($names) are available for this conversation - " +
+                    "questions about them (e.g. \"summarize them\", \"what do they say about " +
+                    "X\") are answered from their content by a later step, not by any tool " +
+                    "here. If the message is about the attached documents, no tool call is " +
+                    "needed for that."
             }
-            ?: "No document is attached to this conversation."
+        }
 
         val analyzeMessagePrompt = """
             The user's message was: "${request.message}"
@@ -290,6 +303,14 @@ class ChatAgent(
      * making one narrow judgment call per turn, not something this app
      * should let take down an otherwise-answerable document question.
      *
+     * **Multi-document (2026-08-22, see [ChatRequest.documentIds]'s doc
+     * comment):** when more than one document is attached, this still makes
+     * one classification call per turn, not one per document - every
+     * attached document's outline (for whichever of them actually have one)
+     * is shown together, labeled by filename, and the single resulting
+     * decision is applied to each document independently in [answer] (see
+     * [DocumentSearchStrategy]'s own doc comment for why).
+     *
      * Surfaced to the UI as its own timed step (2026-08-22, user's own
      * request, see springchat3_document_qa.md in project memory) - was
      * previously folded silently into the retrieval step's own reported
@@ -307,39 +328,59 @@ class ChatAgent(
     @Action
     fun documentSearchStrategy(request: ChatRequest, context: OperationContext): DocumentSearchStrategy {
         log.debug("documentSearchStrategy ... {}", request.message)
-        val documentId = request.documentId
-            ?: return DocumentSearchStrategy(useStructure = false, useVector = false)
+        if (request.documentIds.isEmpty()) {
+            return DocumentSearchStrategy(useStructure = false, useVector = false)
+        }
 
         val stepName = documentSearchStrategyStepName()
         progressBus.emit(request.correlationId, ChatProgressEvent.StepStarted(stepName))
         val start = System.currentTimeMillis()
 
-        val structure = documentStructureStore.get(documentId)
-        val strategy = if (structure == null) {
+        // Multi-document (2026-08-22, see DocumentSearchStrategy's doc
+        // comment in ChatModel.kt) - classify once against every attached
+        // document's outline that actually has one (labeled by filename),
+        // rather than one LLM call per document; a document with no outline
+        // at all simply contributes nothing here and falls back to vector
+        // search in answer() regardless of this classification.
+        val outlinesByDoc = request.documentIds.mapNotNull { id ->
+            documentStructureStore.get(id)?.let { structure -> id to structure }
+        }
+        val strategy = if (outlinesByDoc.isEmpty()) {
             DocumentSearchStrategy(useStructure = false, useVector = true)
         } else {
+            val outlinesText = outlinesByDoc.joinToString("\n\n") { (id, structure) ->
+                val filename = documentStore.get(id)?.filename ?: id
+                "Document \"$filename\":\n${flattenStructure(structure.nodes)}"
+            }
+            val multiple = outlinesByDoc.size > 1
             val prompt = """
                 The user's question was: "${request.message}"
 
-                This document has the following table of contents/outline:
+                ${if (multiple) "The attached documents have" else "This document has"} the following table${if (multiple) "s" else ""} of contents/outline:
 
-                ${flattenStructure(structure.nodes)}
+                $outlinesText
+
+                This decision applies to every attached document, not just
+                the one(s) shown above - a document with no outline of its
+                own is always searched by content regardless of what you
+                decide here.
 
                 Decide, independently, whether answering this question needs
                 each of these two sources:
 
-                1. The outline above (structure) - useful when the question
-                   is about the document's own organization: what sections,
-                   chapters, or modules it has, how many there are, their
-                   titles, or where in the document something is located.
-                2. A search of the document's actual written content (vector)
-                   - needed whenever answering requires what the document
-                   actually SAYS rather than how it's organized: facts,
-                   arguments, numbers, definitions, or anything else found in
-                   the body text, not the outline.
+                1. The outline(s) above (structure) - useful when the
+                   question is about a document's own organization: what
+                   sections, chapters, or modules it has, how many there
+                   are, their titles, or where in the document something is
+                   located.
+                2. A search of the documents' actual written content
+                   (vector) - needed whenever answering requires what a
+                   document actually SAYS rather than how it's organized:
+                   facts, arguments, numbers, definitions, or anything else
+                   found in the body text, not the outline.
 
                 Always set "useVector" to true for any request to summarize
-                the document (or a part of it), to explain something in it or
+                a document (or a part of it), to explain something in it or
                 help understand it, or that asks for details or specifics
                 about a topic - these always need a semantic search of the
                 actual content, never the outline alone, even if the
@@ -403,24 +444,29 @@ class ChatAgent(
         }
         log.debug("ToolContext: {}", toolContext)
 
-        val documentId = request.documentId
-        val attachedDoc = documentId?.let { documentStore.get(it) }
-        val structure = documentId?.let { documentStructureStore.get(it) }
+        // Multi-document (2026-08-22, see ChatRequest.documentIds's doc
+        // comment) - every currently selected document is looked up here,
+        // silently dropping any id that no longer resolves (e.g. deleted
+        // between being selected client-side and this turn actually
+        // running) rather than failing the whole turn over one stale id.
+        val attachedDocs = request.documentIds.mapNotNull { id -> documentStore.get(id)?.let { id to it } }
+
         // Two-stage search (2026-08-22, see springchat3_document_qa.md in
         // project memory): [documentSearchStrategy] already decided, via its
-        // own small dedicated LLM, whether this question is best answered
-        // from the document's own extracted outline (documentOutline - PDF
-        // bookmarks, see DocumentStructureExtractor) or by searching its
-        // content. useVector is forced on whenever useStructure ends up
-        // unusable (structure null - most documents, since not every PDF has
-        // embedded bookmarks - even if the classification wanted it) or
-        // wasn't chosen, so a document question is never left with neither
-        // search running. Both can end up true at once (structure genuinely
-        // exists AND strategy.useVector was also set) - answer() below
-        // merges whichever pieces are present into documentContext rather
-        // than treating the two as mutually exclusive, ready for a future
-        // version of documentSearchStrategy that deliberately asks for both
-        // in the same turn (see DocumentSearchStrategy's doc comment).
+        // own small dedicated LLM, whether this turn's question is best
+        // answered from each document's own extracted outline
+        // (DocumentStructureExtractor's PDF bookmarks) or by searching its
+        // content - the single useStructure/useVector decision is applied
+        // to every attached document independently below (see
+        // DocumentSearchStrategy's doc comment for why this stays one
+        // classification per turn rather than one per document). useVector
+        // is forced on per document whenever useStructure ends up unusable
+        // for that document (no structure extracted for it) or wasn't
+        // chosen, so a document is never left with neither search running.
+        // Both can end up true at once for a given document (its own
+        // structure exists AND strategy.useVector was also set) -
+        // documentContext below merges whichever pieces are present per
+        // document rather than treating the two as mutually exclusive.
         // Timed and surfaced to the UI as its own step, sibling to
         // "Analyzing message ..."/"Document search strategy ..."/"Generating
         // answer ..." - run and finished before that step's own timer starts
@@ -428,29 +474,47 @@ class ChatAgent(
         // documentSearchStrategy's own LLM call is timed and reported
         // separately as its own step (see that method's doc comment), not
         // folded in here.
+        data class DocPlan(val filename: String, val structure: DocumentStructure?, val useStructure: Boolean, val useVector: Boolean)
+        data class DocContext(val filename: String, val structureText: String?, val vectorSearched: Boolean, val chunks: List<Document>)
+
         var retrievalSummary: RetrievalSummary? = null
-        var relevantChunks: List<Document> = emptyList()
-        var structureText: String? = null
-        var vectorSearched = false
-        if (documentId != null && attachedDoc != null) {
-            val useStructure = strategy.useStructure && structure != null
-            val useVector = strategy.useVector || !useStructure
-            vectorSearched = useVector
-            val via = listOfNotNull("structure".takeIf { useStructure }, "vector".takeIf { useVector }).joinToString("+")
-            progressBus.emit(request.correlationId, ChatProgressEvent.RetrievalStarted(attachedDoc.filename, via))
+        var docContexts: List<DocContext> = emptyList()
+        if (attachedDocs.isNotEmpty()) {
+            val plans = attachedDocs.map { (id, doc) ->
+                val docStructure = documentStructureStore.get(id)
+                val useStructure = strategy.useStructure && docStructure != null
+                val useVector = strategy.useVector || !useStructure
+                id to DocPlan(doc.filename, docStructure, useStructure, useVector)
+            }
+            val filenames = plans.map { (_, plan) -> plan.filename }
+            val via = listOfNotNull(
+                "structure".takeIf { plans.any { (_, plan) -> plan.useStructure } },
+                "vector".takeIf { plans.any { (_, plan) -> plan.useVector } },
+            ).joinToString("+")
+            progressBus.emit(request.correlationId, ChatProgressEvent.RetrievalStarted(filenames, via))
             val retrievalStart = System.currentTimeMillis()
-            if (useStructure) {
-                structureText = flattenStructure(structure!!.nodes)
+
+            var resultCount = 0
+            docContexts = plans.map { (id, plan) ->
+                val docStructureText = if (plan.useStructure) {
+                    resultCount += plan.structure!!.nodes.size
+                    flattenStructure(plan.structure.nodes)
+                } else {
+                    null
+                }
+                val chunks = if (plan.useVector) {
+                    documentIndex.search(id, request.message).also { resultCount += it.size }
+                } else {
+                    emptyList()
+                }
+                DocContext(plan.filename, docStructureText, plan.useVector, chunks)
             }
-            if (useVector) {
-                relevantChunks = documentIndex.search(documentId, request.message)
-            }
-            val resultCount = (if (useStructure) structure!!.nodes.size else 0) + (if (useVector) relevantChunks.size else 0)
+
             val retrievalSeconds = (System.currentTimeMillis() - retrievalStart) / 1000.0
-            retrievalSummary = RetrievalSummary(attachedDoc.filename, resultCount, retrievalSeconds, via)
+            retrievalSummary = RetrievalSummary(filenames, resultCount, retrievalSeconds, via)
             progressBus.emit(
                 request.correlationId,
-                ChatProgressEvent.RetrievalFinished(attachedDoc.filename, resultCount, retrievalSeconds, via),
+                ChatProgressEvent.RetrievalFinished(filenames, resultCount, retrievalSeconds, via),
             )
         }
 
@@ -459,59 +523,81 @@ class ChatAgent(
         val start = System.currentTimeMillis()
 
         val documentContext = when {
-            attachedDoc == null -> "No document is attached to this conversation."
+            attachedDocs.isEmpty() -> "No document is attached to this conversation."
             else -> buildString {
-                if (structureText != null) {
-                    append("The attached document's (\"${attachedDoc.filename}\") own table of contents/outline:\n\n")
-                    append(structureText)
-                    append("\n\n")
-                }
-                if (vectorSearched) {
-                    if (relevantChunks.isEmpty()) {
-                        append(
-                            "A search of the attached document's (\"${attachedDoc.filename}\") actual " +
-                                "content found no passages relevant to this question.\n\n",
-                        )
-                    } else {
-                        append("Passages from the attached document (\"${attachedDoc.filename}\") most relevant to this question:\n\n")
-                        relevantChunks.forEachIndexed { index, chunk ->
-                            val page = chunk.metadata["page_number"]
-                            val label = if (page != null) "Passage ${index + 1} (page $page)" else "Passage ${index + 1}"
-                            append("$label:\n${chunk.text.orEmpty()}\n\n")
+                docContexts.forEach { doc ->
+                    if (doc.structureText != null) {
+                        append("\"${doc.filename}\"'s own table of contents/outline:\n\n")
+                        append(doc.structureText)
+                        append("\n\n")
+                    }
+                    if (doc.vectorSearched) {
+                        if (doc.chunks.isEmpty()) {
+                            append(
+                                "A search of \"${doc.filename}\"'s actual content found no " +
+                                    "passages relevant to this question.\n\n",
+                            )
+                        } else {
+                            append("Passages from \"${doc.filename}\" most relevant to this question:\n\n")
+                            doc.chunks.forEachIndexed { index, chunk ->
+                                val page = chunk.metadata["page_number"]
+                                val label = if (page != null) "Passage ${index + 1} (page $page)" else "Passage ${index + 1}"
+                                append("$label:\n${chunk.text.orEmpty()}\n\n")
+                            }
                         }
                     }
                 }
             }
         }
-        log.debug("documentContext: {} chars, {} chunks, via {}", documentContext.length, relevantChunks.size, retrievalSummary?.via)
+        log.debug(
+            "documentContext: {} chars, {} documents, {} chunks total, via {}",
+            documentContext.length,
+            attachedDocs.size,
+            docContexts.sumOf { it.chunks.size },
+            retrievalSummary?.via,
+        )
 
+        // Multi-document (2026-08-22, see ChatRequest.documentIds's doc
+        // comment): since strategy.useStructure/useVector is one decision
+        // applied to every attached document (see DocumentSearchStrategy's
+        // doc comment), but each document's own structure availability can
+        // differ, the guidance below is picked from what actually ended up
+        // used across ALL attached documents together, and phrased so it
+        // still reads correctly whether one document or several are
+        // attached.
+        val anyStructureText = docContexts.any { it.structureText != null }
+        val anyVectorSearched = docContexts.any { it.vectorSearched }
         val documentGuidance = when {
-            attachedDoc == null ->
+            attachedDocs.isEmpty() ->
                 "No document is attached to this conversation. If the user's message " +
                     "clearly needs one (e.g. asks you to summarize or find something in " +
                     "\"the document\" or \"the pdf\"), say so rather than inventing content."
-            structureText != null && vectorSearched ->
-                "Both the document's own table of contents (above) and a search of its " +
-                    "actual content are provided. Use whichever actually answers the " +
-                    "question - the outline for anything about the document's structure, " +
-                    "the passages for anything about its substance - and say plainly if " +
-                    "neither covers what was asked, rather than guessing."
-            structureText != null ->
-                "The outline above is the document's own table of contents, not a search " +
-                    "result over its content - it's complete, so if it answers the user's " +
-                    "question (e.g. listing modules/chapters/sections), just answer directly " +
-                    "from it. It has no page-level detail beyond what's shown, so if the user " +
-                    "is asking about the substance of a section rather than just its existence " +
-                    "or position, say the outline doesn't cover that rather than guessing."
+            anyStructureText && anyVectorSearched ->
+                "For each attached document above, you're given either its own table of " +
+                    "contents, a search of its actual content, or both, labeled by filename - " +
+                    "use whichever actually answers the question for that document: the " +
+                    "outline for anything about a document's structure, the passages for " +
+                    "anything about its substance. Draw from every attached document that's " +
+                    "actually relevant to the question, not just the first one, and say " +
+                    "plainly if none of them cover what was asked, rather than guessing."
+            anyStructureText ->
+                "The outline(s) above are each document's own table of contents, not a search " +
+                    "result over its content - complete, so if one answers the user's question " +
+                    "(e.g. listing modules/chapters/sections), just answer directly from it, " +
+                    "naming which document it came from if more than one is attached. There's " +
+                    "no page-level detail beyond what's shown, so if the user is asking about " +
+                    "the substance of a section rather than just its existence or position, " +
+                    "say the outline doesn't cover that rather than guessing."
             else ->
                 "The passages above are the excerpts a search found most relevant to this " +
-                    "specific question - not the whole document. If they answer what the user " +
-                    "asked, use them, and mention where natural that you're drawing from the " +
-                    "uploaded document (citing a page number if one is shown). If they don't " +
-                    "contain what the user asked about, say so plainly rather than guessing " +
-                    "or answering from unrelated general knowledge as if it came from the " +
-                    "document - the answer may simply be in a part of the document this " +
-                    "search didn't surface."
+                    "specific question, labeled by which document they came from - not the " +
+                    "whole document(s). If they answer what the user asked, use them, and " +
+                    "mention where natural which document (and page number, if shown) you're " +
+                    "drawing from, especially if more than one document is attached. If they " +
+                    "don't contain what the user asked about, say so plainly rather than " +
+                    "guessing or answering from unrelated general knowledge as if it came from " +
+                    "an attached document - the answer may simply be in a part of a document " +
+                    "this search didn't surface."
         }
 
         val toolErrorGuidance = if (hasToolResults) {
@@ -574,9 +660,9 @@ class ChatAgent(
             $documentContext
 
             Write a helpful, concise reply to the user's message, using
-            the tool results and the attached document (if any) where
-            relevant. If no tool results were needed or gathered and no
-            document is attached, just answer directly.
+            the tool results and any attached documents where relevant.
+            If no tool results were needed or gathered and no documents
+            are attached, just answer directly.
             """.trimIndent(),
             formattingGuidance,
             documentGuidance,
@@ -607,13 +693,13 @@ class ChatAgent(
             )
         }
         // Steps accumulated from gatherInfo (analyzeMessage), this turn's
-        // documentSearchStrategy time (only when a document was actually
-        // attached - same visibility rule as the retrieval row itself), and
-        // this step's own time - the full pipeline timeline for the UI.
-        // Order here is what the *finished* trace always shows, regardless
-        // of the two document-related actions' actual concurrent runtime
-        // order - see documentSearchStrategy's own doc comment.
-        val documentSearchStrategyTiming = if (documentId != null) {
+        // documentSearchStrategy time (only when at least one document was
+        // actually attached - same visibility rule as the retrieval row
+        // itself), and this step's own time - the full pipeline timeline
+        // for the UI. Order here is what the *finished* trace always shows,
+        // regardless of the two document-related actions' actual concurrent
+        // runtime order - see documentSearchStrategy's own doc comment.
+        val documentSearchStrategyTiming = if (request.documentIds.isNotEmpty()) {
             listOf(StepTiming(documentSearchStrategyStepName(), strategy.seconds))
         } else {
             emptyList()

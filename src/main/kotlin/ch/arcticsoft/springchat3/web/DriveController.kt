@@ -313,7 +313,7 @@ class DriveController(
         }
         val pages = pdfTextExtractor.extractPages(bytes)
         val text = pages.joinToString("\n\n") { it.text.orEmpty() }
-        val documentId = documentStore.store(file.name, text)
+        val documentId = documentStore.store(file.name, text, bytes)
         documentIndex.index(documentId, pages)
         documentStructureExtractor.extractStructure(bytes)?.let { structure ->
             documentStructureStore.store(documentId, structure)

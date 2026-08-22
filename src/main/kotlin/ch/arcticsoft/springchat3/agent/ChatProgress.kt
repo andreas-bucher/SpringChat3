@@ -32,14 +32,20 @@ import java.util.concurrent.ConcurrentHashMap
  * own live counterpart to [ToolStarted]/[ToolFinished], for the document
  * lookup it does directly (see [RetrievalSummary]'s doc comment for why
  * that's a distinct pair of events rather than reusing the tool-call ones)
- * - no [index] needed, since at most one search ever happens per turn,
- * unlike tool calls which can be several. Both carry [via] (added alongside
- * the structure-search path, same day) so the UI can show the right
- * label/noun from the moment the search starts, not just once it finishes -
+ * - no [index] needed, since at most one retrieval pass ever happens per
+ * turn, unlike tool calls which can be several; that one pass just now
+ * covers every attached document at once rather than a single one (see
+ * [filenames] below). Both carry [via] (added alongside the
+ * structure-search path, same day) so the UI can show the right label/noun
+ * from the moment the search starts, not just once it finishes -
  * [ChatAgent.answer] already knows which path it's taking (structure,
- * vector, or - v4, 2026-08-22, see [DocumentSearchStrategy]'s doc comment -
- * both) before running it, so there's no reason to make the frontend wait
- * for [RetrievalFinished] to find out.
+ * vector, or - once [ChatAgent.documentSearchStrategy]'s classification
+ * actually produces it, see [DocumentSearchStrategy]'s doc comment - both)
+ * before running it, so there's no reason to make the frontend wait for
+ * [RetrievalFinished] to find out. [filenames] (a single [filename] until
+ * 2026-08-22's multi-document change - see [ChatRequest.documentIds]'s doc
+ * comment) lists every document this retrieval covers, in the order
+ * [ChatAgent.answer] processed them.
  */
 sealed class ChatProgressEvent(val type: String) {
     data class StepStarted(val step: String) : ChatProgressEvent("step-started")
@@ -53,9 +59,9 @@ sealed class ChatProgressEvent(val type: String) {
         val seconds: Double,
         val failed: Boolean,
     ) : ChatProgressEvent("tool-finished")
-    data class RetrievalStarted(val filename: String, val via: String) : ChatProgressEvent("retrieval-started")
+    data class RetrievalStarted(val filenames: List<String>, val via: String) : ChatProgressEvent("retrieval-started")
     data class RetrievalFinished(
-        val filename: String,
+        val filenames: List<String>,
         val resultCount: Int,
         val seconds: Double,
         val via: String,

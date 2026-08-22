@@ -25,19 +25,25 @@ data class ChatRequest(
     val longitude: Double? = null,
     val correlationId: String = "",
     /**
-     * Id of a document previously uploaded via
+     * Ids of documents previously uploaded via
      * [ch.arcticsoft.springchat3.web.DocumentController.upload] and stored
-     * in [ch.arcticsoft.springchat3.document.DocumentStore] - null if no
-     * document is attached to this conversation. Looked up (not
-     * dereferenced here) by [ChatAgent.answer], which folds its
-     * (size-capped) text directly into the generation prompt - see
+     * in [ch.arcticsoft.springchat3.document.DocumentStore] - empty if no
+     * document is attached to this conversation. Was a single nullable
+     * `documentId: String?` until 2026-08-22 (user's own request "Can we
+     * support that a user selects multiple documents and then the question
+     * is answered based on all these?") - the side panel's document
+     * selection is no longer exclusive (see index.html's
+     * `activeDocumentIds`), so this carries every currently selected
+     * document's id, in no particular order. Looked up (not dereferenced
+     * here) by [ChatAgent.answer], which folds each one's (size-capped)
+     * text directly into the generation prompt - see
      * springchat3_document_qa.md in project memory for why this
      * deliberately does NOT go through [ChatAgent.analyzeMessage]'s tool
      * loop the way [latitude]/[longitude] do via `CurrentLocationTool`: a
      * document's extracted text can be far larger than anything else this
      * app round-trips through the small tool-selection model's own context.
      */
-    val documentId: String? = null,
+    val documentIds: List<String> = emptyList(),
 )
 
 /**
@@ -126,19 +132,20 @@ data class StepTiming(val step: String, val seconds: Double)
  * for a structural question, "Document structure: report.pdf - 4 sections -
  * 0.0s") chip, shown the same way a tool call chip is, even though this
  * isn't an LLM-invoked tool call the way [ToolCallSummary] entries are (see
- * [ChatRequest.documentId]'s doc comment for why retrieval deliberately
+ * [ChatRequest.documentIds]'s doc comment for why retrieval deliberately
  * never goes through [ChatAgent.analyzeMessage]'s tool loop) - hence a
  * separate type rather than reusing [ToolCallSummary] itself. Only present
- * when a document was actually attached to this turn ([ChatReply.retrieval]
- * is null otherwise, same convention as [ChatRequest.documentId]).
+ * when at least one document was actually attached to this turn
+ * ([ChatReply.retrieval] is null otherwise, same convention as
+ * [ChatRequest.documentIds]).
  *
  * [via] is `"structure"` when [ChatAgent.answer] answered from the
  * document's extracted outline (see
  * [ch.arcticsoft.springchat3.document.DocumentStructureStore]) instead of a
  * vector-store search, `"vector"` for the original chunk-search path, or
- * `"structure+vector"` (v4, 2026-08-22 - see [DocumentSearchStrategy]'s doc
- * comment) for the case where the question needed both. The UI uses it to
- * pick the right label/noun.
+ * `"structure+vector"` for the (not yet actually produced, but supported -
+ * see [DocumentSearchStrategy]'s doc comment) case where both ran. The UI
+ * uses it to pick the right label/noun.
  *
  * [resultCount] can be 0 (a document is attached but nothing relevant
  * turned up for this question) - still worth showing, since it tells the
@@ -146,9 +153,18 @@ data class StepTiming(val step: String, val seconds: Double)
  * `chunksFound` until the structure-search path was added (2026-08-22) -
  * renamed since it now also counts top-level outline entries, not just
  * vector-store chunks.
+ *
+ * [filenames] was a single [String] until 2026-08-22, when the side panel's
+ * document selection stopped being exclusive (see
+ * [ChatRequest.documentIds]'s doc comment) - one entry per attached
+ * document this retrieval actually covered, in the same order
+ * [ChatAgent.answer] processed them. [resultCount]/[seconds]/[via] stay
+ * single aggregate values across every attached document rather than one
+ * set per document, same simplification [ChatAgent.documentSearchStrategy]
+ * makes for its own classification - see that method's doc comment.
  */
 data class RetrievalSummary(
-    val filename: String,
+    val filenames: List<String>,
     val resultCount: Int,
     val seconds: Double,
     val via: String,
@@ -164,19 +180,17 @@ data class RetrievalSummary(
  * stays separate from [ToolResults] - this is exactly what the LLM was
  * asked to produce, nothing derived or computed added yet.
  *
- * v4 (same day): two independent booleans instead of one either/or
- * `preferOutline` choice, so the model can conclude a question needs BOTH
- * the outline and a content search, not just one of them - field names
- * match [DocumentSearchStrategy]'s own directly (no inversion needed on the
- * way in, unlike the old `preferOutline` -> `!preferOutline` mapping).
- * Defaults to `useStructure = false, useVector = true` (plain content
- * search) so a JSON response missing either field entirely degrades to the
- * safe fallback rather than failing to parse.
+ * Two independent fields, matching the two independent questions
+ * [ChatAgent.documentSearchStrategy]'s own prompt asks the model to answer
+ * (see that method) - an earlier version of this class had a single
+ * `preferOutline` boolean, from before the "both at once" case existed;
+ * [useVector] defaults `true` (the safer choice - a missed content search
+ * loses real information, an unnecessary one just costs a bit of latency)
+ * and [useStructure] defaults `false`, so a JSON response missing either
+ * field entirely degrades to plain vector search rather than failing to
+ * parse.
  */
-data class DocumentQuestionClassification(
-    val useStructure: Boolean = false,
-    val useVector: Boolean = true,
-)
+data class DocumentQuestionClassification(val useStructure: Boolean = false, val useVector: Boolean = true)
 
 /**
  * [ChatAgent.documentSearchStrategy]'s output (2026-08-22, see
@@ -187,15 +201,15 @@ data class DocumentQuestionClassification(
  * structure, with a small dedicated LLM classification instead.
  *
  * Deliberately two independent flags rather than one structure-or-vector
- * choice - v4 (same day) has the classification prompt itself ask for the
- * two independently, so a question can genuinely need both (e.g. "summarize
- * chapter 3" needs the outline to find the chapter and a content search to
- * summarize it); [ChatAgent.answer] already merges whichever of
- * [useStructure]/[useVector] end up true rather than treating them as
- * mutually exclusive - see its own retrieval-block comment. [useVector] is
- * forced on by `answer()` whenever [useStructure] ends up unusable (no
- * structure actually available) or wasn't chosen, so a document question is
- * never left with neither search running.
+ * choice, even though today's classification only ever sets one of them -
+ * the shape is ready for a later version that pulls *some* context from the
+ * outline and *some* from a vector search in the same turn (discussed
+ * 2026-08-22, not yet built) without another type change; [ChatAgent.answer]
+ * already merges whichever of [useStructure]/[useVector] end up true rather
+ * than treating them as mutually exclusive - see its own retrieval-block
+ * comment. [useVector] is forced on by `answer()` whenever [useStructure]
+ * ends up unusable (no structure actually available) or wasn't chosen, so a
+ * document question is never left with neither search running.
  *
  * [seconds] is how long [ChatAgent.documentSearchStrategy] itself took -
  * near 0.0 whenever no LLM call actually happened (the attached document has
@@ -204,6 +218,19 @@ data class DocumentQuestionClassification(
  * Surfaced to the UI as its own trace step (2026-08-22, user's own request)
  * - `"Document search strategy ..."`, sibling to `"Analyzing message ..."`
  * and the retrieval row, not folded into either of their reported times.
+ *
+ * **Multi-document (2026-08-22, see [ChatRequest.documentIds]'s doc
+ * comment):** one [DocumentSearchStrategy] is still decided per turn, not
+ * one per attached document - when more than one document is selected,
+ * [ChatAgent.documentSearchStrategy] classifies once against every attached
+ * document's outline shown together (labeled by filename), and the single
+ * resulting [useStructure]/[useVector] pair is applied uniformly to each
+ * attached document in [ChatAgent.answer] (a document with no outline of
+ * its own simply falls back to vector search regardless, same as before).
+ * Keeps this a single small-model call per turn rather than one per
+ * document, at the cost of not letting different documents take different
+ * search paths in the same turn - acceptable given how rarely a real
+ * question would actually need that.
  */
 data class DocumentSearchStrategy(
     val useStructure: Boolean,

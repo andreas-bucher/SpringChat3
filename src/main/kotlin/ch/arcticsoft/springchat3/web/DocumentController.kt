@@ -9,6 +9,8 @@ import ch.arcticsoft.springchat3.document.DriveLinkStore
 import ch.arcticsoft.springchat3.document.PdfTextExtractor
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
+import org.springframework.http.ContentDisposition
+import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.multipart.FilePart
@@ -89,7 +91,7 @@ class DocumentController(
                     Mono.fromCallable {
                         val pages = pdfTextExtractor.extractPages(bytes)
                         val text = pages.joinToString("\n\n") { it.text.orEmpty() }
-                        val documentId = documentStore.store(filePart.filename(), text)
+                        val documentId = documentStore.store(filePart.filename(), text, bytes)
                         documentIndex.index(documentId, pages)
                         // Structure extraction (2026-08-22, see
                         // springchat3_document_qa.md in project memory) reads
@@ -141,6 +143,40 @@ class DocumentController(
     fun list(): List<DocumentSummary> {
         val driveDocumentIds = driveLinkStore.getAll().flatMap { it.files }.map { it.documentId }.toSet()
         return documentStore.list().filterNot { it.documentId in driveDocumentIds }
+    }
+
+    /**
+     * Serves [id]'s original PDF bytes, for the side panel's "open in a new
+     * tab" button per document (2026-08-22, user's own idea "would it be
+     * possible to enable the files to be displayed on another browser tab?"
+     * - see springchat3_document_qa.md in project memory). Works identically
+     * for an uploaded document or a Drive-synced one, since both are stored
+     * through [DocumentStore] the same way (see [list]'s own doc comment).
+     *
+     * `404 Not Found` both when [id] doesn't match any stored document AND
+     * when it does but simply has no raw bytes on disk - a document stored
+     * before this feature existed, see [DocumentStore.getBytes]'s own doc
+     * comment. Deliberately not distinguished from a plain "no such
+     * document" 404: either way there's nothing to show, and a document
+     * old enough to lack stored bytes just needs re-uploading (or, for a
+     * Drive-sourced one, re-syncing) to pick this feature up, same as any
+     * document from before a schema/feature change in this app generally
+     * would.
+     *
+     * `Content-Disposition: inline` (not the `attachment` a browser
+     * defaults to for an unrecognized disposition) so the new tab renders
+     * the PDF itself rather than downloading it - `filename` there is just
+     * a courtesy for if the user saves it from that tab, has no effect on
+     * inline rendering.
+     */
+    @GetMapping("/documents/{id}/file")
+    fun file(@PathVariable id: String): ResponseEntity<ByteArray> {
+        val document = documentStore.get(id) ?: return ResponseEntity.notFound().build()
+        val bytes = documentStore.getBytes(id) ?: return ResponseEntity.notFound().build()
+        return ResponseEntity.ok()
+            .contentType(MediaType.APPLICATION_PDF)
+            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(document.filename).build().toString())
+            .body(bytes)
     }
 
     /**
