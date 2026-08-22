@@ -19,6 +19,6 @@ keytool -genkeypair \
   -ext "SAN=dns:springchat3.arcticsoft.ch"
 
 
-plutil -lint /Library/LaunchDaemons/ch.arcticsoft.springchat3.plist 
+plutil -lint /Library/LaunchDaemons/ch.arcticsoft.springchat3.plist
 
 cat file.json | jq
