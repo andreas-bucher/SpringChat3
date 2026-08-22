@@ -27,10 +27,17 @@
     color: var(--text);
   }
 
+  .layout {
+    height: 100%;
+    display: flex;
+  }
+
   .app {
+    flex: 1;
+    min-width: 0;
     max-width: 720px;
     margin: 0 auto;
-    height: 100vh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     padding: 0 16px;
@@ -45,6 +52,20 @@
     margin: 0;
     font-size: 18px;
     font-weight: 600;
+  }
+
+  /*
+   * Small "vX.Y.Z" label next to the header title, filled in by
+   * fetchVersion() from GET /version (VersionController.kt) - the Gradle
+   * project version (build.gradle.kts), not hand-typed here, so it can't
+   * drift from what's actually running. Empty until that fetch resolves.
+   */
+  .version-label {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted);
+    margin-left: 6px;
+    vertical-align: middle;
   }
 
   #messages {
@@ -89,6 +110,66 @@
     background: #fdecea;
     color: #92251c;
     border: 1px solid #f6c6c0;
+  }
+
+  /*
+   * Rendered Markdown inside an assistant bubble (see renderMarkdown() /
+   * renderInline() below) - only ever applied to assistant replies, never
+   * to the user's own message or an error row (both stay plain textContent,
+   * see addRow()), so these rules only ever meet LLM-authored, HTML-escaped
+   * content in practice.
+   */
+  .bubble h1, .bubble h2, .bubble h3, .bubble h4 {
+    margin: 10px 0 4px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .bubble h1 { font-size: 17px; }
+  .bubble h2 { font-size: 16px; }
+  .bubble h3 { font-size: 15px; }
+  .bubble h4 { font-size: 14.5px; }
+
+  .bubble *:first-child { margin-top: 0; }
+  .bubble *:last-child { margin-bottom: 0; }
+
+  .bubble p {
+    margin: 0 0 8px;
+  }
+
+  .bubble ul, .bubble ol {
+    margin: 4px 0 8px;
+    padding-left: 20px;
+  }
+
+  .bubble li {
+    margin: 2px 0;
+  }
+
+  .bubble code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    background: rgba(0, 0, 0, 0.06);
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+
+  .bubble pre {
+    margin: 6px 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.06);
+    overflow-x: auto;
+  }
+
+  .bubble pre code {
+    background: none;
+    padding: 0;
+  }
+
+  .bubble a {
+    color: var(--accent);
+    text-decoration: underline;
   }
 
   .msg-col {
@@ -239,6 +320,173 @@
     font-size: 14px;
   }
 
+  /*
+   * Collapsible right-hand side panel (2026-08-22, see
+   * springchat3_document_qa.md in project memory) listing every uploaded
+   * PDF, replacing the old composer paperclip button entirely - upload by
+   * dragging a file into #doc-dropzone or clicking #doc-upload-btn, click
+   * an item to make it the active document for the next chat message
+   * (highlighted via .active), × to delete it server-side.
+   */
+  .side-panel {
+    width: 300px;
+    flex-shrink: 0;
+    height: 100%;
+    border-left: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.18s ease;
+  }
+
+  .side-panel.collapsed {
+    width: 44px;
+  }
+
+  .side-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 18px 12px 12px 16px;
+    flex-shrink: 0;
+  }
+
+  .side-panel.collapsed .side-panel-header {
+    padding: 18px 4px 12px;
+    justify-content: center;
+  }
+
+  .side-panel-header h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .side-panel-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .side-panel.collapsed .side-panel-header h2,
+  .side-panel.collapsed #doc-upload-btn,
+  .side-panel.collapsed .doc-dropzone {
+    display: none;
+  }
+
+  .panel-icon-btn {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1;
+    padding: 6px;
+    border-radius: 8px;
+  }
+
+  .panel-icon-btn:hover {
+    color: var(--text);
+    background: var(--bg);
+  }
+
+  .doc-dropzone {
+    flex: 1;
+    margin: 0 12px 16px 16px;
+    padding: 8px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .doc-dropzone.drag-over {
+    border-color: var(--accent);
+    background: #eef3fe;
+  }
+
+  .doc-empty-hint {
+    margin: auto;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12.5px;
+    padding: 10px;
+    line-height: 1.5;
+  }
+
+  .doc-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 10px;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+
+  .doc-item:hover {
+    background: var(--bg);
+  }
+
+  .doc-item.active {
+    background: var(--bubble-assistant);
+    border-color: var(--accent);
+  }
+
+  .doc-item-icon {
+    flex-shrink: 0;
+    font-size: 15px;
+  }
+
+  .doc-item-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .doc-item-name {
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .doc-item-meta {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .doc-item-remove {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 14px;
+    flex-shrink: 0;
+    padding: 2px 5px;
+    border-radius: 6px;
+    visibility: hidden;
+  }
+
+  .doc-item:hover .doc-item-remove,
+  .doc-item.active .doc-item-remove {
+    visibility: visible;
+  }
+
+  .doc-item-remove:hover {
+    color: #92251c;
+    background: #fdecea;
+  }
+
   form#composer {
     display: flex;
     gap: 8px;
@@ -286,22 +534,240 @@
   #send:not(:disabled):hover {
     filter: brightness(0.95);
   }
+
+  /*
+   * Settings popup (2026-08-22, see springchat3_settings.md in project
+   * memory) - the gear button sits at the bottom-left of the composer row
+   * (first flex child of form#composer), and the popup itself is an
+   * absolutely-positioned child of the .settings-anchor wrapper around that
+   * button, anchored to open upward from it - this works regardless of where
+   * .app actually sits in the viewport (it's centered, max-width 720px, so a
+   * viewport-fixed position would drift from the button on wide screens).
+   */
+  .settings-anchor {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  #settings-btn {
+    font-size: 18px;
+  }
+
+  .settings-popup {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 8px);
+    width: 480px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+    padding: 14px;
+    z-index: 20;
+  }
+
+  .settings-popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .settings-popup-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .settings-section {
+    margin-bottom: 12px;
+  }
+
+  .settings-section:last-child {
+    margin-bottom: 0;
+  }
+
+  .settings-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .settings-model-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12.5px;
+    padding: 3px 0;
+  }
+
+  .settings-model-row span:first-child {
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+
+  /* Shared look for a model's current value, whether shown as plain text (Embeddings) or a <select> (the three selectable roles). */
+  .settings-model-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    text-align: right;
+    word-break: break-all;
+  }
+
+  .settings-model-select {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    max-width: 200px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 4px;
+    background: var(--panel);
+    color: var(--text);
+  }
+
+  .settings-hint {
+    font-size: 10.5px;
+    color: var(--muted);
+    line-height: 1.4;
+    margin-top: 6px;
+  }
+
+  .settings-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .settings-toggle-row label[for="tools-enabled-toggle"] {
+    font-size: 13px;
+  }
+
+  .settings-error {
+    color: #92251c;
+    font-size: 11.5px;
+    margin-top: 8px;
+  }
+
+  /* Plain checkbox restyled as an on/off slider - #tools-enabled-toggle itself stays visually hidden but focusable/clickable. */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .switch-track {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .switch-track::before {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 2px;
+    top: 2px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.15s;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+
+  .switch input:checked + .switch-track {
+    background: var(--accent);
+  }
+
+  .switch input:checked + .switch-track::before {
+    transform: translateX(16px);
+  }
+
+  .switch input:disabled + .switch-track {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 </style>
 </head>
 <body>
-<div class="app">
-  <header>
-    <h1>SpringChat3</h1>
-  </header>
+<div class="layout">
+  <div class="app">
+    <header>
+      <h1>SpringChat3<span id="version-label" class="version-label"></span></h1>
+    </header>
 
-  <div id="messages">
-    <div id="empty-state">Say hello to get started.</div>
+    <div id="messages">
+      <div id="empty-state">Say hello to get started.</div>
+    </div>
+
+    <form id="composer">
+      <div class="settings-anchor">
+        <button id="settings-btn" type="button" class="panel-icon-btn" title="Settings">⚙</button>
+        <div id="settings-popup" class="settings-popup" hidden>
+          <div class="settings-popup-header">
+            <h3>Settings</h3>
+            <button id="settings-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
+          </div>
+          <div class="settings-section">
+            <div class="settings-section-title">Models</div>
+            <div class="settings-model-row">
+              <span>Tool selection</span>
+              <select id="model-tool-selection" class="settings-model-select" data-role="tool-selection"></select>
+            </div>
+            <div class="settings-model-row">
+              <span>Doc. search strategy</span>
+              <select id="model-doc-strategy" class="settings-model-select" data-role="document-search-strategy"></select>
+            </div>
+            <div class="settings-model-row">
+              <span>Generation</span>
+              <select id="model-generation" class="settings-model-select" data-role="generation"></select>
+            </div>
+            <div class="settings-model-row"><span>Embeddings</span><span id="model-embedding" class="settings-model-value">…</span></div>
+            <div class="settings-hint">Embeddings can't be changed here - switching it would make already-uploaded documents unsearchable until they're re-uploaded.</div>
+          </div>
+          <div class="settings-section settings-toggle-row">
+            <label for="tools-enabled-toggle">Tool use</label>
+            <label class="switch">
+              <input type="checkbox" id="tools-enabled-toggle" checked>
+              <span class="switch-track"></span>
+            </label>
+          </div>
+          <div id="settings-error" class="settings-error" hidden></div>
+        </div>
+      </div>
+      <textarea id="input" placeholder="Message SpringChat3…" rows="1" autofocus></textarea>
+      <button id="send" type="submit">Send</button>
+    </form>
   </div>
 
-  <form id="composer">
-    <textarea id="input" placeholder="Message SpringChat3…" rows="1" autofocus></textarea>
-    <button id="send" type="submit">Send</button>
-  </form>
+  <aside id="side-panel" class="side-panel">
+    <div class="side-panel-header">
+      <h2>Documents</h2>
+      <div class="side-panel-header-actions">
+        <button id="doc-upload-btn" type="button" class="panel-icon-btn" title="Upload a PDF">＋</button>
+        <button id="panel-toggle" type="button" class="panel-icon-btn" title="Collapse panel">›</button>
+      </div>
+    </div>
+    <div id="doc-dropzone" class="doc-dropzone">
+      <div class="doc-empty-hint">No PDFs uploaded yet.<br>Drag one here, or click ＋ above.</div>
+    </div>
+    <input type="file" id="doc-file-input" accept="application/pdf" hidden>
+  </aside>
 </div>
 
 <script>
@@ -310,6 +776,21 @@
   const formEl = document.getElementById('composer');
   const inputEl = document.getElementById('input');
   const sendEl = document.getElementById('send');
+  const sidePanelEl = document.getElementById('side-panel');
+  const panelToggleEl = document.getElementById('panel-toggle');
+  const docUploadBtnEl = document.getElementById('doc-upload-btn');
+  const docFileInputEl = document.getElementById('doc-file-input');
+  const docDropzoneEl = document.getElementById('doc-dropzone');
+  const versionLabelEl = document.getElementById('version-label');
+  const settingsBtnEl = document.getElementById('settings-btn');
+  const settingsPopupEl = document.getElementById('settings-popup');
+  const settingsCloseBtnEl = document.getElementById('settings-close-btn');
+  const settingsErrorEl = document.getElementById('settings-error');
+  const toolsEnabledToggleEl = document.getElementById('tools-enabled-toggle');
+  const modelToolSelectionEl = document.getElementById('model-tool-selection');
+  const modelGenerationEl = document.getElementById('model-generation');
+  const modelDocStrategyEl = document.getElementById('model-doc-strategy');
+  const modelEmbeddingEl = document.getElementById('model-embedding');
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -330,6 +811,17 @@
   // toolCalls get nested inside the trace rather than shown as a separate,
   // unrelated timeline.
   const EXECUTE_STEP_NAME = 'Analyzing message ...';
+
+  // ChatAgent.answer's own step label (ChatAgent.kt) - where a document
+  // search, if any, actually runs. Same nesting idea as EXECUTE_STEP_NAME
+  // above but for ChatReply.retrieval instead of toolCalls (2026-08-22, see
+  // springchat3_document_qa.md in project memory). A prefix, not the full
+  // label, since the same day ChatAgent.kt started appending the actual
+  // generation model in use (e.g. "Generating answer (llama3.1:8b) ...",
+  // see springchat3_settings.md) - matched below with startsWith rather than
+  // an exact "===" so a settings-popup model switch doesn't break the
+  // retrieval-row placement.
+  const ANSWER_STEP_PREFIX = 'Generating answer';
 
   // get_user_location takes no arguments, so its tool-input payload is
   // empty/"{}" rather than a place name worth displaying - see
@@ -364,15 +856,66 @@
     return group;
   }
 
-  // Collapsed-by-default disclosure over ChatReply.steps + toolCalls (see
-  // ChatAgent.kt) - a "1.9s · 2 tools" summary that expands into the full
-  // per-step timeline, with tool calls nested under whichever step actually
-  // ran them, rather than two permanently-visible, visually-flat chip rows.
-  // Returns null when there's nothing to show (e.g. "hello", no tools).
-  function buildTrace(steps, toolCalls) {
+  // ChatReply.retrieval (2026-08-22, promoted from a nested tool-style chip
+  // to its own sibling step the same day, per user request) - the document
+  // vector-store search ChatAgent.answer does directly, not an LLM-invoked
+  // tool call, but shown with the same "trace-step" weight as "Analyzing
+  // message ..."/"Generating answer ..." since it's a genuinely distinct,
+  // separately-timed phase of the turn, not a sub-detail of either of those.
+  // Shared between the final trace (retrievalLabel) and the live panel
+  // (addLiveRetrieval/finishLiveRetrieval) so both name the search path(s)
+  // the same way. `via` (set by ChatAgent.answer, backed by
+  // ChatAgent.documentSearchStrategy's own small dedicated LLM - 2026-08-22,
+  // see springchat3_document_qa.md in project memory) is "structure" (the
+  // document's own extracted outline), "vector" (a content search), or
+  // "structure+vector" for the combined case - not yet actually produced by
+  // that model, but the frontend handles it already so a later prompt change
+  // there needs no matching UI change.
+  function retrievalPrefix(via) {
+    if (via === 'structure') return 'Document structure: ';
+    if (via === 'vector') return 'Document search: ';
+    return 'Document search + structure: ';
+  }
+
+  function retrievalCountLabel(via, count) {
+    const noun = via === 'structure' ? 'section' : (via === 'vector' ? 'passage' : 'result');
+    return count + ' ' + noun + (count === 1 ? '' : 's');
+  }
+
+  function retrievalLabel(retrieval) {
+    return retrievalPrefix(retrieval.via) + retrieval.filename + ' — ' + retrievalCountLabel(retrieval.via, retrieval.resultCount);
+  }
+
+  // Same shape as the plain step rows buildTrace() builds inline below (name
+  // + time, no failed/muted styling - a search either found chunks or it
+  // didn't, there's no error state the way a tool call has one).
+  function buildRetrievalStepRow(retrieval) {
+    const row = document.createElement('div');
+    row.className = 'trace-step';
+    const name = document.createElement('span');
+    name.className = 'trace-step-name';
+    name.textContent = retrievalLabel(retrieval);
+    const time = document.createElement('span');
+    time.className = 'trace-time';
+    time.textContent = (retrieval.seconds ?? 0).toFixed(1) + 's';
+    row.appendChild(name);
+    row.appendChild(time);
+    return row;
+  }
+
+  // Collapsed-by-default disclosure over ChatReply.steps + toolCalls +
+  // retrieval (see ChatAgent.kt) - a "1.9s · 2 tools" summary that expands
+  // into the full per-step timeline: tool calls nested under "Analyzing
+  // message ...", and (since 2026-08-22) a document search shown as its own
+  // sibling step, inserted right before "Generating answer ..." since it
+  // always runs immediately before it and ChatAgent.kt no longer folds its
+  // time into that step's own (see buildRetrievalStepRow/retrievalLabel).
+  // Returns null when there's nothing to show (e.g. "hello", no tools, no
+  // document attached).
+  function buildTrace(steps, toolCalls, retrieval) {
     const hasSteps = steps && steps.length;
     const hasTools = toolCalls && toolCalls.length;
-    if (!hasSteps && !hasTools) return null;
+    if (!hasSteps && !hasTools && !retrieval) return null;
 
     const anyFailed = hasTools && toolCalls.some((call) => call.failed);
     const totalSeconds = (steps || []).reduce((sum, s) => sum + (s.seconds || 0), 0);
@@ -405,7 +948,15 @@
     const body = document.createElement('div');
     body.className = 'trace-body';
     let toolsNested = false;
+    let retrievalPlaced = false;
     for (const step of (steps || [])) {
+      // Placed just before "Generating answer ..." own row, not nested
+      // inside it - see this function's doc comment above.
+      if (retrieval && step.step.startsWith(ANSWER_STEP_PREFIX) && !retrievalPlaced) {
+        body.appendChild(buildRetrievalStepRow(retrieval));
+        retrievalPlaced = true;
+      }
+
       const row = document.createElement('div');
       row.className = 'trace-step';
       const name = document.createElement('span');
@@ -428,21 +979,161 @@
     if (hasTools && !toolsNested) {
       body.appendChild(buildToolsGroup(toolCalls));
     }
+    // Same fallback idea for a retrieval with no matching "Generating
+    // answer ..." step.
+    if (retrieval && !retrievalPlaced) {
+      body.appendChild(buildRetrievalStepRow(retrieval));
+    }
     details.appendChild(body);
 
     return details;
   }
 
-  function addRow(role, text, toolCalls, steps) {
+  // Minimal Markdown -> HTML renderer for assistant replies only (see
+  // addRow() below - the user's own message and error rows stay plain
+  // textContent, never passed through this). Deliberately hand-rolled
+  // rather than pulling in a library (marked.js etc.) - this app has no
+  // build step and this page is otherwise fully self-contained with zero
+  // external script dependencies, and the subset of Markdown a chat reply
+  // actually needs (headers, bold/italic, inline code, fenced code blocks,
+  // single-level lists, links, paragraphs) is small enough to cover
+  // directly. No tables, blockquotes, or nested lists - ChatAgent.answer's
+  // prompt is written to match this exact subset (see project memory), so
+  // the model isn't asked to produce Markdown this renderer can't handle.
+  //
+  // Security: escapeHtml() runs on every raw text run BEFORE any Markdown
+  // construct is turned into a real tag, so literal '<'/'>'/'&' in the
+  // model's output (or copied verbatim from tool results / an attached
+  // document into the reply) can never become live HTML - only the fixed
+  // set of tags this function itself emits ever reach innerHTML. Link URLs
+  // are restricted to http(s):// by the regex itself, so a "javascript:"
+  // or other scheme just stays unlinked plain text rather than becoming a
+  // clickable href.
+  function escapeHtml(s) {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderInline(text) {
+    let s = escapeHtml(text);
+    s = s.replace(/`([^`]+)`/g, (_, code) => '<code>' + code + '</code>');
+    s = s.replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      (_, label, url) => '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>',
+    );
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    s = s.replace(/(^|[^\w])_([^_]+)_(?!\w)/g, '$1<em>$2</em>');
+    return s;
+  }
+
+  function renderMarkdown(text) {
+    const lines = text.split('\n');
+    const out = [];
+    let list = null; // { type: 'ul' | 'ol', items: [] }
+    let i = 0;
+
+    function flushList() {
+      if (!list) return;
+      out.push(
+        '<' + list.type + '>' + list.items.map((item) => '<li>' + renderInline(item) + '</li>').join('') + '</' + list.type + '>',
+      );
+      list = null;
+    }
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      if (/^```/.test(line.trim())) {
+        flushList();
+        const codeLines = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i].trim())) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        i++; // skip the closing fence
+        out.push('<pre><code>' + escapeHtml(codeLines.join('\n')) + '</code></pre>');
+        continue;
+      }
+
+      const heading = line.match(/^(#{1,4})\s+(.*)$/);
+      if (heading) {
+        flushList();
+        const level = heading[1].length + 1; // '#' -> h2, not h1 - a bubble is never the page's top heading
+        out.push('<h' + level + '>' + renderInline(heading[2]) + '</h' + level + '>');
+        i++;
+        continue;
+      }
+
+      const ulItem = line.match(/^\s*[-*]\s+(.*)$/);
+      if (ulItem) {
+        if (!list || list.type !== 'ul') {
+          flushList();
+          list = { type: 'ul', items: [] };
+        }
+        list.items.push(ulItem[1]);
+        i++;
+        continue;
+      }
+
+      const olItem = line.match(/^\s*\d+\.\s+(.*)$/);
+      if (olItem) {
+        if (!list || list.type !== 'ol') {
+          flushList();
+          list = { type: 'ol', items: [] };
+        }
+        list.items.push(olItem[1]);
+        i++;
+        continue;
+      }
+
+      if (line.trim() === '') {
+        flushList();
+        i++;
+        continue;
+      }
+
+      // Plain paragraph: keep consuming lines until something that starts a
+      // different block (blank line, fence, heading, list item).
+      flushList();
+      const paraLines = [line];
+      i++;
+      while (
+        i < lines.length &&
+        lines[i].trim() !== '' &&
+        !/^```/.test(lines[i].trim()) &&
+        !/^#{1,4}\s+/.test(lines[i]) &&
+        !/^\s*[-*]\s+/.test(lines[i]) &&
+        !/^\s*\d+\.\s+/.test(lines[i])
+      ) {
+        paraLines.push(lines[i]);
+        i++;
+      }
+      out.push('<p>' + paraLines.map(renderInline).join('<br>') + '</p>');
+    }
+    flushList();
+    return out.join('');
+  }
+
+  function addRow(role, text, toolCalls, steps, retrieval) {
     if (emptyStateEl) emptyStateEl.remove();
     const row = document.createElement('div');
     row.className = 'row ' + role;
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
-    bubble.textContent = text;
+    if (role === 'assistant') {
+      bubble.innerHTML = renderMarkdown(text);
+    } else {
+      bubble.textContent = text;
+    }
 
-    const trace = buildTrace(steps, toolCalls);
+    const trace = buildTrace(steps, toolCalls, retrieval);
 
     if (trace) {
       const col = document.createElement('div');
@@ -484,7 +1175,14 @@
     row.appendChild(col);
     messagesEl.appendChild(row);
     scrollToBottom();
-    return { row, panel, stepStatusEls: new Map(), toolsGroupEl: null, toolEls: new Map() };
+    return {
+      row,
+      panel,
+      stepStatusEls: new Map(),
+      toolsGroupEl: null,
+      toolEls: new Map(),
+      retrievalEl: null,
+    };
   }
 
   function addLiveStep(live, stepName) {
@@ -547,6 +1245,35 @@
     finishLiveStatus(entry.status, seconds);
   }
 
+  // Live counterpart to buildRetrievalStepRow() above - a plain trace-step
+  // row appended directly to the panel, the same weight addLiveStep()
+  // produces. Correct arrival order (after "Analyzing message ...", before
+  // "Generating answer ...") falls out naturally from when ChatAgent.kt
+  // actually emits the retrieval-started event now, so no group needs to be
+  // reserved ahead of time the way EXECUTE_STEP_NAME's tools group is.
+  function addLiveRetrieval(live, filename, via) {
+    const row = document.createElement('div');
+    row.className = 'trace-step';
+    const name = document.createElement('span');
+    name.className = 'trace-step-name';
+    name.textContent = retrievalPrefix(via) + filename;
+    const status = document.createElement('span');
+    status.className = 'trace-status';
+    status.appendChild(spinnerEl());
+    row.appendChild(name);
+    row.appendChild(status);
+    live.panel.appendChild(row);
+    live.retrievalEl = { name, status, via };
+    scrollToBottom();
+  }
+
+  function finishLiveRetrieval(live, resultCount, seconds) {
+    const entry = live.retrievalEl;
+    if (!entry) return;
+    entry.name.textContent += ' — ' + retrievalCountLabel(entry.via, resultCount);
+    finishLiveStatus(entry.status, seconds);
+  }
+
   // Applies one NDJSON event from /chat/stream to the live progress panel.
   // 'done'/'failed' are terminal: they replace the live panel with the same
   // addRow(...) rendering a plain (non-streamed) /chat response gets, so the
@@ -565,9 +1292,21 @@
       case 'tool-finished':
         finishLiveTool(live, event.index, event.seconds, event.failed);
         break;
+      case 'retrieval-started':
+        addLiveRetrieval(live, event.filename, event.via);
+        break;
+      case 'retrieval-finished':
+        finishLiveRetrieval(live, event.resultCount, event.seconds);
+        break;
       case 'done':
         live.row.remove();
-        addRow('assistant', event.reply.text ?? '(empty response)', event.reply.toolCalls, event.reply.steps);
+        addRow(
+          'assistant',
+          event.reply.text ?? '(empty response)',
+          event.reply.toolCalls,
+          event.reply.steps,
+          event.reply.retrieval,
+        );
         break;
       case 'failed':
         live.row.remove();
@@ -584,11 +1323,11 @@
   // ChatProgress.kt) to applyProgressEvent as it arrives, so the live panel
   // fills in incrementally instead of the browser waiting for one final
   // response. A chunk boundary can land mid-object, hence the line buffer.
-  async function streamChat(live, message, location) {
+  async function streamChat(live, message, location, documentId) {
     const res = await fetch('/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, ...(location ?? {}) }),
+      body: JSON.stringify({ message, ...(location ?? {}), ...(documentId ? { documentId } : {}) }),
     });
 
     if (!res.ok || !res.body) {
@@ -651,6 +1390,345 @@
     });
   }
 
+  // Document-Q&A "Phase 1" (see DocumentController.kt / DocumentStore.kt /
+  // ChatAgent.answer) - documents now live in the right-hand side panel
+  // (2026-08-22), not a paperclip button on the composer. Only
+  // { documentId, filename, characterCount } for each document lives in
+  // this page's JS - the extracted text itself never comes back to the
+  // browser, it stays server-side keyed by documentId, and answer() looks
+  // it up fresh on every turn. activeDocumentId is whichever one is
+  // currently selected in the panel (null = none), sent as
+  // ChatRequest.documentId on the next message.
+  let documents = [];
+  let activeDocumentId = null;
+
+  function formatCharCount(n) {
+    return (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)) + ' chars';
+  }
+
+  function buildDocItem(doc) {
+    const item = document.createElement('div');
+    item.className = 'doc-item' + (doc.documentId === activeDocumentId ? ' active' : '');
+    item.title = doc.filename;
+
+    const icon = document.createElement('span');
+    icon.className = 'doc-item-icon';
+    icon.textContent = '📄';
+    item.appendChild(icon);
+
+    const info = document.createElement('span');
+    info.className = 'doc-item-info';
+    const name = document.createElement('span');
+    name.className = 'doc-item-name';
+    name.textContent = doc.filename;
+    const meta = document.createElement('span');
+    meta.className = 'doc-item-meta';
+    meta.textContent = formatCharCount(doc.characterCount);
+    info.appendChild(name);
+    info.appendChild(meta);
+    item.appendChild(info);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'doc-item-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Delete this document';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the item active/inactive
+      deleteDocument(doc.documentId);
+    });
+    item.appendChild(removeBtn);
+
+    // Toggle: clicking the already-active document clears it, clicking any
+    // other document makes it the (single) active one - only one document
+    // is ever folded into ChatAgent.answer's prompt per turn, see
+    // ChatRequest.documentId's doc comment for why.
+    item.addEventListener('click', () => {
+      activeDocumentId = activeDocumentId === doc.documentId ? null : doc.documentId;
+      renderDocList();
+    });
+
+    return item;
+  }
+
+  function renderDocList() {
+    docDropzoneEl.innerHTML = '';
+    if (!documents.length) {
+      const hint = document.createElement('div');
+      hint.className = 'doc-empty-hint';
+      hint.innerHTML = 'No PDFs uploaded yet.<br>Drag one here, or click ＋ above.';
+      docDropzoneEl.appendChild(hint);
+    } else {
+      for (const doc of documents) {
+        docDropzoneEl.appendChild(buildDocItem(doc));
+      }
+    }
+  }
+
+  // Fills in the small "vX.Y.Z" label next to the header title from GET
+  // /version (VersionController.kt), which reads the Gradle project version
+  // via Spring Boot's build-info bean - see build.gradle.kts's
+  // springBoot { buildInfo() }. Left blank (rather than shown as an error)
+  // if the fetch fails, since this is a cosmetic label, not something worth
+  // interrupting the chat UI over.
+  async function fetchVersion() {
+    try {
+      const res = await fetch('/version');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      const data = await res.json();
+      versionLabelEl.textContent = data.version ? 'v' + data.version : '';
+    } catch (err) {
+      console.error('Could not load version:', err);
+    }
+  }
+
+  // Settings popup (2026-08-22, see springchat3_settings.md in project
+  // memory). GET /settings (SettingsController.kt) returns the three
+  // selectable roles' currently active models, the read-only embedding
+  // model, every model available in the local Ollama install (to populate
+  // the dropdowns), and the server-side toolsEnabled flag. POST
+  // /settings/tools flips the latter; POST /settings/model (same day,
+  // "make models selectable from all available from ollama") sets or clears
+  // one role's override. Both are genuine app-level settings (persisted to
+  // data/settings.json), not per-request - so, unlike attaching a document,
+  // there's nothing to send along with each /chat call; ChatAgent reads
+  // AppSettingsStore directly on the backend.
+
+  // Rebuilds one role's <option> list from scratch and selects [active] -
+  // simplest way to keep a <select> in sync with a freshly fetched
+  // available-models list without diffing the old one. If [active] (the
+  // currently active model, which might be a stale override for a model
+  // that's since been removed from Ollama) isn't in [available], it's added
+  // as an extra option anyway so the dropdown still shows the true current
+  // value rather than silently jumping to whatever happens to be first.
+  function populateModelSelect(selectEl, active, available) {
+    const options = available.includes(active) ? available : [active, ...available];
+    selectEl.innerHTML = '';
+    options.forEach((model) => {
+      const option = document.createElement('option');
+      option.value = model;
+      option.textContent = model;
+      selectEl.appendChild(option);
+    });
+    selectEl.value = active;
+    selectEl.dataset.activeValue = active; // last confirmed value, for the change handler below to revert to on failure
+  }
+
+  function applySettings(data) {
+    populateModelSelect(modelToolSelectionEl, data.models.toolSelection, data.availableModels);
+    populateModelSelect(modelDocStrategyEl, data.models.documentSearchStrategy, data.availableModels);
+    populateModelSelect(modelGenerationEl, data.models.generation, data.availableModels);
+    modelEmbeddingEl.textContent = data.embeddingModel;
+    toolsEnabledToggleEl.checked = data.toolsEnabled;
+  }
+
+  function showSettingsError(message) {
+    settingsErrorEl.textContent = message;
+    settingsErrorEl.hidden = false;
+  }
+
+  function clearSettingsError() {
+    settingsErrorEl.textContent = '';
+    settingsErrorEl.hidden = true;
+  }
+
+  async function fetchSettings() {
+    try {
+      const res = await fetch('/settings');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      applySettings(await res.json());
+    } catch (err) {
+      console.error('Could not load settings:', err);
+    }
+  }
+
+  function openSettingsPopup() {
+    clearSettingsError();
+    settingsPopupEl.hidden = false;
+    fetchSettings();
+  }
+
+  function closeSettingsPopup() {
+    settingsPopupEl.hidden = true;
+  }
+
+  settingsBtnEl.addEventListener('click', () => {
+    if (settingsPopupEl.hidden) {
+      openSettingsPopup();
+    } else {
+      closeSettingsPopup();
+    }
+  });
+
+  settingsCloseBtnEl.addEventListener('click', closeSettingsPopup);
+
+  // Click-outside and Escape both close the popup, same conventions a
+  // native <dialog> would give for free - this is a plain positioned <div>
+  // instead (see the .settings-popup CSS comment for why), so both need
+  // wiring up by hand.
+  document.addEventListener('click', (e) => {
+    if (!settingsPopupEl.hidden && !settingsPopupEl.contains(e.target) && e.target !== settingsBtnEl) {
+      closeSettingsPopup();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !settingsPopupEl.hidden) closeSettingsPopup();
+  });
+
+  toolsEnabledToggleEl.addEventListener('change', async () => {
+    const enabled = toolsEnabledToggleEl.checked;
+    toolsEnabledToggleEl.disabled = true;
+    clearSettingsError();
+    try {
+      const res = await fetch('/settings/tools', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      applySettings(await res.json());
+    } catch (err) {
+      toolsEnabledToggleEl.checked = !enabled;
+      showSettingsError('Could not save: ' + err.message);
+    } finally {
+      toolsEnabledToggleEl.disabled = false;
+    }
+  });
+
+  // Each of the three selectable-role <select>s carries its role key in
+  // data-role (matching ModelRoleKeys on the backend) - one shared handler
+  // rather than three near-identical ones. Reverts to the previously active
+  // model and shows an inline error on failure, same pattern as the
+  // tools-enabled toggle above.
+  [modelToolSelectionEl, modelDocStrategyEl, modelGenerationEl].forEach((selectEl) => {
+    selectEl.addEventListener('change', async () => {
+      const previous = selectEl.dataset.activeValue;
+      const model = selectEl.value;
+      selectEl.disabled = true;
+      clearSettingsError();
+      try {
+        const res = await fetch('/settings/model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: selectEl.dataset.role, model }),
+        });
+        if (!res.ok) throw new Error('Server responded with ' + res.status);
+        applySettings(await res.json());
+      } catch (err) {
+        if (previous) selectEl.value = previous;
+        showSettingsError('Could not save: ' + err.message);
+      } finally {
+        selectEl.disabled = false;
+      }
+    });
+  });
+
+  async function fetchDocuments() {
+    try {
+      const res = await fetch('/documents');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      documents = await res.json();
+    } catch (err) {
+      console.error('Could not load documents:', err);
+      documents = [];
+    }
+    renderDocList();
+  }
+
+  // Uploads a PDF to /upload (DocumentController.kt), which extracts its
+  // text server-side and returns a { documentId, filename, characterCount }
+  // summary to add to the list - the newly-uploaded document becomes the
+  // active one, on the assumption that dropping/picking a file means you
+  // want to ask about it next.
+  async function uploadDocument(file) {
+    docUploadBtnEl.disabled = true;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/upload', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      const doc = await res.json();
+      documents.push(doc);
+      activeDocumentId = doc.documentId;
+      renderDocList();
+    } catch (err) {
+      addRow('error', 'Could not upload ' + file.name + ': ' + err.message);
+    } finally {
+      docUploadBtnEl.disabled = false;
+    }
+  }
+
+  async function deleteDocument(documentId) {
+    try {
+      const res = await fetch('/documents/' + encodeURIComponent(documentId), { method: 'DELETE' });
+      if (!res.ok && res.status !== 404) throw new Error('Server responded with ' + res.status);
+    } catch (err) {
+      addRow('error', 'Could not delete document: ' + err.message);
+      return;
+    }
+    documents = documents.filter((d) => d.documentId !== documentId);
+    if (activeDocumentId === documentId) activeDocumentId = null;
+    renderDocList();
+  }
+
+  docUploadBtnEl.addEventListener('click', () => docFileInputEl.click());
+
+  docFileInputEl.addEventListener('change', () => {
+    const file = docFileInputEl.files[0];
+    docFileInputEl.value = ''; // reset so picking the same file again still fires 'change'
+    if (file) uploadDocument(file);
+  });
+
+  // Drag-and-drop upload target - all four drag events need preventDefault()
+  // or the browser's own "open this file" navigation hijacks the drop
+  // instead of firing our handler below.
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach((evt) => {
+    docDropzoneEl.addEventListener(evt, (e) => e.preventDefault());
+  });
+  docDropzoneEl.addEventListener('dragenter', () => docDropzoneEl.classList.add('drag-over'));
+  docDropzoneEl.addEventListener('dragover', () => docDropzoneEl.classList.add('drag-over'));
+  docDropzoneEl.addEventListener('dragleave', () => docDropzoneEl.classList.remove('drag-over'));
+  docDropzoneEl.addEventListener('drop', (e) => {
+    docDropzoneEl.classList.remove('drag-over');
+    const file = e.dataTransfer?.files?.[0];
+    if (file) uploadDocument(file);
+  });
+
+  // Collapse state persists across reloads via localStorage - safe here
+  // since this is the app's own deployed page rendered in a real browser,
+  // not an in-conversation preview. Falls back to collapsed-by-default on
+  // narrow viewports the first time (no stored preference yet), since a
+  // fixed 300px panel eats too much of a phone-width screen otherwise.
+  function setPanelCollapsed(collapsed) {
+    sidePanelEl.classList.toggle('collapsed', collapsed);
+    panelToggleEl.textContent = collapsed ? '‹' : '›';
+    panelToggleEl.title = collapsed ? 'Expand documents panel' : 'Collapse documents panel';
+    try {
+      localStorage.setItem('sidePanelCollapsed', collapsed ? '1' : '0');
+    } catch {
+      // Storage unavailable (private browsing, etc.) - the collapse choice
+      // just won't survive a reload, which is a harmless degradation.
+    }
+  }
+
+  panelToggleEl.addEventListener('click', () => {
+    setPanelCollapsed(!sidePanelEl.classList.contains('collapsed'));
+  });
+
+  let initiallyCollapsed;
+  try {
+    const stored = localStorage.getItem('sidePanelCollapsed');
+    initiallyCollapsed = stored !== null ? stored === '1' : window.matchMedia('(max-width: 700px)').matches;
+  } catch {
+    initiallyCollapsed = false;
+  }
+  setPanelCollapsed(initiallyCollapsed);
+
+  fetchVersion();
+  fetchDocuments();
+  fetchSettings();
+
   inputEl.addEventListener('input', autoGrow);
 
   inputEl.addEventListener('keydown', (e) => {
@@ -674,7 +1752,7 @@
 
     try {
       const location = await getBrowserLocation();
-      await streamChat(live, message, location);
+      await streamChat(live, message, location, activeDocumentId);
     } catch (err) {
       // live.row may already be gone if a 'failed' event handled this first
       // (see applyProgressEvent) - removing an already-detached node is a

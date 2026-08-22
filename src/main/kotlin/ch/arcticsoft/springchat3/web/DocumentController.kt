@@ -1,0 +1,152 @@
+package ch.arcticsoft.springchat3.web
+
+import ch.arcticsoft.springchat3.document.DocumentIndex
+import ch.arcticsoft.springchat3.document.DocumentStore
+import ch.arcticsoft.springchat3.document.DocumentStructureExtractor
+import ch.arcticsoft.springchat3.document.DocumentStructureStore
+import ch.arcticsoft.springchat3.document.DocumentSummary
+import ch.arcticsoft.springchat3.document.PdfTextExtractor
+import org.slf4j.LoggerFactory
+import org.springframework.core.io.buffer.DataBufferUtils
+import org.springframework.http.MediaType
+import org.springframework.http.ResponseEntity
+import org.springframework.http.codec.multipart.FilePart
+import org.springframework.web.bind.annotation.DeleteMapping
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestPart
+import org.springframework.web.bind.annotation.RestController
+import reactor.core.publisher.Mono
+import reactor.core.scheduler.Schedulers
+
+/**
+ * Reactive (WebFlux) entry point for the document-Q&A feature (2026-08-22) -
+ * see springchat3_document_qa.md in project memory for the full design.
+ * Separate from [ChatController] since this is a distinct concern (file
+ * upload/extraction vs. chat turns), even though both feed into the same
+ * [ch.arcticsoft.springchat3.agent.ChatAgent].
+ *
+ * `@RequestPart("file") filePart: FilePart` (a direct, non-`Mono`-wrapped
+ * parameter type) is Spring WebFlux's documented way to bind one multipart
+ * part - Spring resolves it asynchronously before invoking this method, the
+ * same way `@RequestBody` works for a non-reactive parameter type elsewhere.
+ * This specific binding shape hasn't been build-verified in this app yet
+ * (unlike [PdfTextExtractor]'s Spring AI API, which was checked against
+ * Spring AI's own docs before writing) - it's long-standing, stable Spring
+ * Framework core API, not a fast-moving library, so confidence is high, but
+ * flag this first if `./gradlew compileKotlin` fails here.
+ */
+@RestController
+class DocumentController(
+    private val documentStore: DocumentStore,
+    private val pdfTextExtractor: PdfTextExtractor,
+    private val documentIndex: DocumentIndex,
+    private val documentStructureExtractor: DocumentStructureExtractor,
+    private val documentStructureStore: DocumentStructureStore,
+) {
+    private val log = LoggerFactory.getLogger(DocumentController::class.java)
+
+    companion object {
+        /**
+         * Hard cap on an uploaded PDF's size, checked against the joined
+         * in-memory byte array before it ever reaches PDFBox. Generous for
+         * the kind of document a single user is likely to attach (a report,
+         * a manual, a paper), while still bounding how much memory one
+         * upload can claim - this app has no queueing/backpressure beyond
+         * WebFlux's own request handling, so an unbounded upload size is a
+         * real (if unlikely, single-user-app) risk worth a simple cap.
+         * Bump this if a real document gets rejected that shouldn't be.
+         */
+        private const val MAX_PDF_BYTES = 20 * 1024 * 1024 // 20 MB
+    }
+
+    @PostMapping("/upload", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+    fun upload(@RequestPart("file") filePart: FilePart): Mono<DocumentSummary> =
+        DataBufferUtils.join(filePart.content())
+            .map { buffer ->
+                val bytes = ByteArray(buffer.readableByteCount())
+                buffer.read(bytes)
+                DataBufferUtils.release(buffer)
+                bytes
+            }
+            .flatMap { bytes ->
+                if (bytes.size > MAX_PDF_BYTES) {
+                    Mono.error(IllegalArgumentException("PDF too large (${bytes.size} bytes, max $MAX_PDF_BYTES)"))
+                } else {
+                    // PDFBox parsing is blocking CPU/IO work - shift it off
+                    // the Netty event-loop thread, same pattern
+                    // ChatController.invoke uses for Embabel's own blocking
+                    // call. Parsed once (extractPages), not twice: the
+                    // joined `text` (display-only character count, see
+                    // DocumentStore.ExtractedDocument's doc comment) and the
+                    // page-level Documents (documentIndex.index, for
+                    // chunking + embedding - "Phase 2", see
+                    // springchat3_document_qa.md in project memory) both
+                    // come from the same PDFBox parse.
+                    Mono.fromCallable {
+                        val pages = pdfTextExtractor.extractPages(bytes)
+                        val text = pages.joinToString("\n\n") { it.text.orEmpty() }
+                        val documentId = documentStore.store(filePart.filename(), text)
+                        documentIndex.index(documentId, pages)
+                        // Structure extraction (2026-08-22, see
+                        // springchat3_document_qa.md in project memory) reads
+                        // the same already-in-memory `bytes` directly via
+                        // PDFBox (see DocumentStructureExtractor) rather than
+                        // reusing `pages` above - it needs the PDF's outline
+                        // tree, which PagePdfDocumentReader never exposes.
+                        // Stored only when the PDF actually has an embedded
+                        // outline; absent otherwise, same as any document
+                        // that predates this feature (ChatAgent.answer falls
+                        // back to vector search for both cases identically).
+                        documentStructureExtractor.extractStructure(bytes)?.let { structure ->
+                            documentStructureStore.store(documentId, structure)
+                        }
+                        log.info(
+                            "Uploaded document '{}' ({} bytes -> {} extracted chars, {} pages indexed) as {}",
+                            filePart.filename(),
+                            bytes.size,
+                            text.length,
+                            pages.size,
+                            documentId,
+                        )
+                        DocumentSummary(documentId, filePart.filename(), text.length)
+                    }.subscribeOn(Schedulers.boundedElastic())
+                }
+            }
+
+    /**
+     * Backs the side panel's document list (added 2026-08-22, see
+     * springchat3_document_qa.md in project memory) - every currently
+     * stored document's metadata, oldest upload first. A plain (non-`Mono`)
+     * return type is fine here: [DocumentStore.list] only ever does a fast
+     * in-memory read, so there's no blocking work to shift off the Netty
+     * event-loop thread the way [upload]'s PDFBox parsing needs.
+     */
+    @GetMapping("/documents")
+    fun list(): List<DocumentSummary> = documentStore.list()
+
+    /**
+     * Deletes one uploaded document, e.g. from the side panel's per-item ×
+     * button. `204 No Content` on success, `404 Not Found` if [id] doesn't
+     * match any stored document (already deleted, or never existed) - the
+     * frontend treats both as "it's gone" rather than surfacing a 404 as an
+     * error. Also removes [id]'s chunks from the vector store
+     * ([DocumentIndex.remove], "Phase 2" - see springchat3_document_qa.md in
+     * project memory) and its extracted structure, if any
+     * ([DocumentStructureStore.remove], "two-stage search" - same memory
+     * file) so a deleted document stops being searchable, in either way,
+     * immediately rather than lingering there indefinitely; only called
+     * alongside an actual [DocumentStore] removal, not for an [id] that was
+     * never a real document.
+     */
+    @DeleteMapping("/documents/{id}")
+    fun delete(@PathVariable id: String): ResponseEntity<Void> =
+        if (documentStore.remove(id)) {
+            documentIndex.remove(id)
+            documentStructureStore.remove(id)
+            ResponseEntity.noContent().build()
+        } else {
+            ResponseEntity.notFound().build()
+        }
+}

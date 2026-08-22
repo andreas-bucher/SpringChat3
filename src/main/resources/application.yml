@@ -10,57 +10,6 @@ server:
     key-store-type: PKCS12
     key-alias: springchat3
 
-
-spring:
-  application:
-    name: springchat3
-
-  # Ollama runs locally (see https://ollama.com). Override via env vars if it
-  # lives somewhere else, or if you want a different local model pulled.
-  ai:
-    ollama:
-      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-      chat:
-        options:
-          model: ${OLLAMA_MODEL:granite4.1:3b}
-
-# Embabel's own configuration namespace. Property names have moved around a
-# bit between 0.x releases and 1.0.0 - if the app fails to start with an
-# "unknown property" or placeholder-resolution error, check the exact keys
-# for embabel-agent 1.0.0 at https://docs.embabel.com/embabel-agent/guide/
-#
-# Two model tiers, same split as SpringChat 2 (Granite for tool/function
-# calling, Mistral for generation): default-llm backs classifyIntent /
-# planTools / summarizeToolResults / web search, while the "generation" role
-# backs only draftReply/reviewReply (see ChatAgent.GENERATION_LLM_ROLE) - the
-# steps that actually write the reply text the user reads. The Ollama
-# autoconfigure module auto-registers every model `ollama list` shows on
-# this host by its exact tag (embabel-agent-ollama-autoconfigure's
-# OllamaModelsConfig calls GET /api/tags) - no extra config needed beyond
-# having pulled the model, e.g. `ollama pull mistral`.
-embabel:
-  models:
-    default-llm: ${OLLAMA_MODEL:granite4.1:3b}
-    llms:
-      generation: ${OLLAMA_GENERATION_MODEL:magistral:24b-small-2506-q4_K_M}
-
-# Default-deny logging: root at WARN so framework/library startup chatter
-# and internal traces are silent unless something's actually wrong, then
-# explicitly allow-list what's worth seeing. Things worth knowing if you
-# tune this further:
-#  - "Embabel" (yes, that literal logger name, not a package) is
-#    embabel-agent's own step-by-step narration - LoggingAgenticEventListener
-#    (embabel-agent-api) logs essentially every agent-process/tool-call/LLM-
-#    request/response event at INFO under LoggerFactory.getLogger("Embabel"),
-#    which is what actually produces most of this app's log volume per chat
-#    turn (~25-30 lines: process creation, plan formulated, one action-start/
-#    result and one LLM-request/response pair per @Action, goal achieved,
-#    process completion). Set it back to INFO if you want that full
-#    narration while developing.
-#  - org.springframework.ai.retry.RetryUtils logs a WARN (with full stack
-#    trace) on every retried LLM call - left alone here on purpose, since
-#    root: WARN keeps it visible. That's the one that would have made the
-#    read-timeout bug obvious immediately, so don't silence it further.
 logging:
   level:
     root: INFO
@@ -68,3 +17,27 @@ logging:
     ch.arcticsoft.springchat3.web: DEBUG
     ch.arcticsoft.springchat3.agent: DEBUG
     Embabel: WARN
+
+spring:
+  application:
+    name: springchat3
+  ai:
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OLLAMA_MODEL:granite4.1:3b}
+      embedding:
+        model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
+  model:
+    embedding: ollama
+
+embabel:
+  models:
+    default-llm: ${OLLAMA_MODEL:granite4.1:3b}
+    llms:
+      generation: ${OLLAMA_GENERATION_MODEL:magistral:24b-small-2506-q4_K_M}
+      document-search-strategy: ${OLLAMA_DOC_STRATEGY_MODEL:granite4.1:3b}
+
+springchat3:
+  data-dir: ${SPRINGCHAT3_DATA_DIR:./data}

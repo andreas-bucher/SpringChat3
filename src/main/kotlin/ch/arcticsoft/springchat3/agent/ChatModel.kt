@@ -24,6 +24,20 @@ data class ChatRequest(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val correlationId: String = "",
+    /**
+     * Id of a document previously uploaded via
+     * [ch.arcticsoft.springchat3.web.DocumentController.upload] and stored
+     * in [ch.arcticsoft.springchat3.document.DocumentStore] - null if no
+     * document is attached to this conversation. Looked up (not
+     * dereferenced here) by [ChatAgent.answer], which folds its
+     * (size-capped) text directly into the generation prompt - see
+     * springchat3_document_qa.md in project memory for why this
+     * deliberately does NOT go through [ChatAgent.analyzeMessage]'s tool
+     * loop the way [latitude]/[longitude] do via `CurrentLocationTool`: a
+     * document's extracted text can be far larger than anything else this
+     * app round-trips through the small tool-selection model's own context.
+     */
+    val documentId: String? = null,
 )
 
 /**
@@ -103,15 +117,110 @@ data class ToolCallSummary(
  */
 data class StepTiming(val step: String, val seconds: Double)
 
+/**
+ * Surfaced to the UI (2026-08-22) alongside a reply, the same idea as
+ * [ToolCallSummary] but for the document lookup
+ * [ch.arcticsoft.springchat3.agent.ChatAgent.answer] does inside its own
+ * two-stage search (2026-08-22, see springchat3_document_qa.md in project
+ * memory) - a small "Document search: report.pdf - 6 passages - 0.2s" (or,
+ * for a structural question, "Document structure: report.pdf - 4 sections -
+ * 0.0s") chip, shown the same way a tool call chip is, even though this
+ * isn't an LLM-invoked tool call the way [ToolCallSummary] entries are (see
+ * [ChatRequest.documentId]'s doc comment for why retrieval deliberately
+ * never goes through [ChatAgent.analyzeMessage]'s tool loop) - hence a
+ * separate type rather than reusing [ToolCallSummary] itself. Only present
+ * when a document was actually attached to this turn ([ChatReply.retrieval]
+ * is null otherwise, same convention as [ChatRequest.documentId]).
+ *
+ * [via] is `"structure"` when [ChatAgent.answer] answered from the
+ * document's extracted outline (see
+ * [ch.arcticsoft.springchat3.document.DocumentStructureStore]) instead of a
+ * vector-store search, `"vector"` for the original chunk-search path, or
+ * `"structure+vector"` (v4, 2026-08-22 - see [DocumentSearchStrategy]'s doc
+ * comment) for the case where the question needed both. The UI uses it to
+ * pick the right label/noun.
+ *
+ * [resultCount] can be 0 (a document is attached but nothing relevant
+ * turned up for this question) - still worth showing, since it tells the
+ * user a search actually happened rather than nothing occurring at all. Was
+ * `chunksFound` until the structure-search path was added (2026-08-22) -
+ * renamed since it now also counts top-level outline entries, not just
+ * vector-store chunks.
+ */
+data class RetrievalSummary(
+    val filename: String,
+    val resultCount: Int,
+    val seconds: Double,
+    val via: String,
+)
+
+/**
+ * [ChatAgent.documentSearchStrategy]'s own createObject target (2026-08-22,
+ * see springchat3_document_qa.md in project memory) - the new
+ * "document-search-strategy" small model's raw classification of one
+ * question, before application code turns it into the richer
+ * [DocumentSearchStrategy] that [ChatAgent.answer] actually consumes. Kept
+ * separate from that richer type for the same reason [ToolGatheringNote]
+ * stays separate from [ToolResults] - this is exactly what the LLM was
+ * asked to produce, nothing derived or computed added yet.
+ *
+ * v4 (same day): two independent booleans instead of one either/or
+ * `preferOutline` choice, so the model can conclude a question needs BOTH
+ * the outline and a content search, not just one of them - field names
+ * match [DocumentSearchStrategy]'s own directly (no inversion needed on the
+ * way in, unlike the old `preferOutline` -> `!preferOutline` mapping).
+ * Defaults to `useStructure = false, useVector = true` (plain content
+ * search) so a JSON response missing either field entirely degrades to the
+ * safe fallback rather than failing to parse.
+ */
+data class DocumentQuestionClassification(
+    val useStructure: Boolean = false,
+    val useVector: Boolean = true,
+)
+
+/**
+ * [ChatAgent.documentSearchStrategy]'s output (2026-08-22, see
+ * springchat3_document_qa.md in project memory), consumed by
+ * [ChatAgent.answer] to decide how to build its document context - replaces
+ * an earlier plain keyword heuristic (`looksStructural`) that over-triggered
+ * on ordinary phrasing having nothing to do with the document's actual
+ * structure, with a small dedicated LLM classification instead.
+ *
+ * Deliberately two independent flags rather than one structure-or-vector
+ * choice - v4 (same day) has the classification prompt itself ask for the
+ * two independently, so a question can genuinely need both (e.g. "summarize
+ * chapter 3" needs the outline to find the chapter and a content search to
+ * summarize it); [ChatAgent.answer] already merges whichever of
+ * [useStructure]/[useVector] end up true rather than treating them as
+ * mutually exclusive - see its own retrieval-block comment. [useVector] is
+ * forced on by `answer()` whenever [useStructure] ends up unusable (no
+ * structure actually available) or wasn't chosen, so a document question is
+ * never left with neither search running.
+ *
+ * [seconds] is how long [ChatAgent.documentSearchStrategy] itself took -
+ * near 0.0 whenever no LLM call actually happened (the attached document has
+ * no extracted structure to classify a question against; see that method's
+ * short-circuits), otherwise the classification call's real latency.
+ * Surfaced to the UI as its own trace step (2026-08-22, user's own request)
+ * - `"Document search strategy ..."`, sibling to `"Analyzing message ..."`
+ * and the retrieval row, not folded into either of their reported times.
+ */
+data class DocumentSearchStrategy(
+    val useStructure: Boolean,
+    val useVector: Boolean,
+    val seconds: Double = 0.0,
+)
+
 /** Just the reply text - what the single answering LLM call is actually asked to produce. */
 data class AnswerText(val text: String)
 
 /**
- * Final reply returned to the caller. [toolCalls] and [steps] are both
- * populated in code, never by an LLM.
+ * Final reply returned to the caller. [toolCalls], [steps], and [retrieval]
+ * are all populated in code, never by an LLM.
  */
 data class ChatReply(
     val text: String,
     val toolCalls: List<ToolCallSummary> = emptyList(),
     val steps: List<StepTiming> = emptyList(),
+    val retrieval: RetrievalSummary? = null,
 )

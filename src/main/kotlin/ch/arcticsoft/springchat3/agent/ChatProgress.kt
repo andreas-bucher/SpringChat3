@@ -27,6 +27,19 @@ import java.util.concurrent.ConcurrentHashMap
  * with its finish. [tool] is a real Spring AI tool name (e.g.
  * `"lookup_place"`) now, not the old hand-maintained `ToolName` enum - see
  * [ToolExecution]'s doc comment for why.
+ *
+ * [RetrievalStarted]/[RetrievalFinished] (2026-08-22) are [ChatAgent.answer]'s
+ * own live counterpart to [ToolStarted]/[ToolFinished], for the document
+ * lookup it does directly (see [RetrievalSummary]'s doc comment for why
+ * that's a distinct pair of events rather than reusing the tool-call ones)
+ * - no [index] needed, since at most one search ever happens per turn,
+ * unlike tool calls which can be several. Both carry [via] (added alongside
+ * the structure-search path, same day) so the UI can show the right
+ * label/noun from the moment the search starts, not just once it finishes -
+ * [ChatAgent.answer] already knows which path it's taking (structure,
+ * vector, or - v4, 2026-08-22, see [DocumentSearchStrategy]'s doc comment -
+ * both) before running it, so there's no reason to make the frontend wait
+ * for [RetrievalFinished] to find out.
  */
 sealed class ChatProgressEvent(val type: String) {
     data class StepStarted(val step: String) : ChatProgressEvent("step-started")
@@ -40,6 +53,13 @@ sealed class ChatProgressEvent(val type: String) {
         val seconds: Double,
         val failed: Boolean,
     ) : ChatProgressEvent("tool-finished")
+    data class RetrievalStarted(val filename: String, val via: String) : ChatProgressEvent("retrieval-started")
+    data class RetrievalFinished(
+        val filename: String,
+        val resultCount: Int,
+        val seconds: Double,
+        val via: String,
+    ) : ChatProgressEvent("retrieval-finished")
 
     /** Terminal event: the turn is fully answered - [reply] is the same object `/chat` (non-streaming) returns. */
     data class Done(val reply: ChatReply) : ChatProgressEvent("done")

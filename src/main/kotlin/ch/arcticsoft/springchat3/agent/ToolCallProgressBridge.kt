@@ -139,6 +139,12 @@ class ToolCallProgressBridge(private val progressBus: ChatProgressBus) : Agentic
                 val capture = activeCaptures[event.processId]
                 val index = capture?.index?.getAndIncrement() ?: 0
                 pending[event] = PendingCall(System.currentTimeMillis(), index)
+                log.debug(
+                    "Tool call requested: {} (input: {}, processId: {})",
+                    event.tool,
+                    event.toolInput,
+                    event.processId,
+                )
                 val correlationId = capture?.correlationId ?: return
                 progressBus.emit(correlationId, ChatProgressEvent.ToolStarted(index, event.tool.toString(), event.toolInput))
             }
