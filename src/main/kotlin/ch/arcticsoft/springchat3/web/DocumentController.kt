@@ -7,6 +7,7 @@ import ch.arcticsoft.springchat3.document.DocumentStructureStore
 import ch.arcticsoft.springchat3.document.DocumentSummary
 import ch.arcticsoft.springchat3.document.DriveLinkStore
 import ch.arcticsoft.springchat3.document.PdfTextExtractor
+import ch.arcticsoft.springchat3.document.WorkingDocumentStore
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
 import org.springframework.http.ContentDisposition
@@ -48,6 +49,7 @@ class DocumentController(
     private val documentStructureExtractor: DocumentStructureExtractor,
     private val documentStructureStore: DocumentStructureStore,
     private val driveLinkStore: DriveLinkStore,
+    private val workingDocumentStore: WorkingDocumentStore,
 ) {
     private val log = LoggerFactory.getLogger(DocumentController::class.java)
 
@@ -127,22 +129,27 @@ class DocumentController(
      * request "File loaded from Google Drive do not need to be enlisted as
      * Documents" - see springchat3_google_drive.md in project memory; "any"
      * since a later same-day change allows more than one folder to be
-     * linked at once). [DocumentStore] itself makes no such distinction - a
-     * Drive-sourced document is stored there exactly like an uploaded one,
-     * since it goes through the same ingestion pipeline (see
+     * linked at once) OR any individually-linked Google Doc (2026-08-22,
+     * "Working Documents" - see springchat3_working_documents.md in project
+     * memory, same reasoning: it belongs in its own section, not this one).
+     * [DocumentStore] itself makes no such distinction - a Drive-sourced or
+     * linked-Doc document is stored there exactly like an uploaded one,
+     * since both go through the same ingestion pipeline (see
      * [ch.arcticsoft.springchat3.web.DriveController]'s own doc comment) -
-     * so the filtering has to happen here, against [DriveLinkStore]'s own separate
-     * bookkeeping of which `documentId`s came from Drive. Without it, a
-     * Drive-synced file would show up twice: once here (labeled as if
-     * uploaded) and once in its own "Google Drive" folder card. A plain
-     * (non-`Mono`) return type is fine here: both stores only ever do a
-     * fast in-memory read, so there's no blocking work to shift off the
-     * Netty event-loop thread the way [upload]'s PDFBox parsing needs.
+     * so the filtering has to happen here, against [DriveLinkStore]'s and
+     * [WorkingDocumentStore]'s own separate bookkeeping of which
+     * `documentId`s came from each. Without it, such a file would show up
+     * twice: once here (labeled as if uploaded) and once in its own
+     * "Google Drive" folder card or "Working Documents" row. A plain
+     * (non-`Mono`) return type is fine here: every store involved only ever
+     * does a fast in-memory read, so there's no blocking work to shift off
+     * the Netty event-loop thread the way [upload]'s PDFBox parsing needs.
      */
     @GetMapping("/documents")
     fun list(): List<DocumentSummary> {
         val driveDocumentIds = driveLinkStore.getAll().flatMap { it.files }.map { it.documentId }.toSet()
-        return documentStore.list().filterNot { it.documentId in driveDocumentIds }
+        val workingDocumentIds = workingDocumentStore.getAll().map { it.documentId }.toSet()
+        return documentStore.list().filterNot { it.documentId in driveDocumentIds || it.documentId in workingDocumentIds }
     }
 
     /**
@@ -199,7 +206,13 @@ class DocumentController(
      * a directly-uploaded document, which was never tracked there. Without
      * this, a later "Sync now" would keep treating this file as already
      * synced and never re-offer it, even though deleting it here only
-     * removes it from this app's index, not from Drive itself.
+     * removes it from this app's index, not from Drive itself. Likewise
+     * drops [id] from [WorkingDocumentStore] if it's a linked Google Doc
+     * (2026-08-22, "Working Documents" - see
+     * springchat3_working_documents.md in project memory) - unlike a
+     * Drive *folder*, there's no lighter "unlink but keep the document"
+     * case for a single linked Doc (see [WorkingDocumentStore.remove]'s own
+     * doc comment), so this same × delete is its only removal path.
      */
     @DeleteMapping("/documents/{id}")
     fun delete(@PathVariable id: String): ResponseEntity<Void> =
@@ -207,6 +220,7 @@ class DocumentController(
             documentIndex.remove(id)
             documentStructureStore.remove(id)
             driveLinkStore.untrackDocument(id)
+            workingDocumentStore.remove(id)
             ResponseEntity.noContent().build()
         } else {
             ResponseEntity.notFound().build()

@@ -198,6 +198,36 @@ class DriveLinkStore(
     }
 
     /**
+     * Adds or replaces just [file] within [folderId]'s tracked list, leaving
+     * every other file already tracked there untouched - the incremental
+     * counterpart to [replaceFiles] (2026-08-22, "let the file-by-file sync
+     * continue in the background" - user's own follow-up after a real
+     * embed-call interruption during a folder's *inline* first sync lost
+     * every file's progress for that request, since nothing was persisted
+     * until the whole batch finished - see springchat3_google_drive.md in
+     * project memory). [ch.arcticsoft.springchat3.web.DriveController.performSync]
+     * now calls this once per file, right as each one finishes ingesting,
+     * instead of only calling [replaceFiles] once at the very end - so an
+     * interruption partway through a background sync only loses whatever
+     * hadn't completed *yet*, not the whole pass. [replaceFiles] is still
+     * called once at the end of a sync pass to prune any file no longer
+     * present in the current Drive listing (something no per-file call can
+     * do on its own, since it never sees the full picture). No-op if
+     * [folderId] isn't currently linked, same guard [replaceFiles] has.
+     */
+    fun upsertFile(folderId: String, file: DriveSyncedFile) {
+        if (get(folderId) == null) return
+        links = links.map { link ->
+            if (link.folderId == folderId) {
+                link.copy(files = link.files.filterNot { it.driveFileId == file.driveFileId } + file)
+            } else {
+                link
+            }
+        }
+        persist()
+    }
+
+    /**
      * Drops [documentId]'s entry from whichever linked folder currently
      * tracks it, if any - see this class's own doc comment for why. Checks
      * every linked folder rather than just one, since with more than one

@@ -7,7 +7,9 @@ import ch.arcticsoft.springchat3.document.DocumentStructureStore
 import ch.arcticsoft.springchat3.document.DocumentSummary
 import ch.arcticsoft.springchat3.document.DriveLinkStore
 import ch.arcticsoft.springchat3.document.DriveSyncedFile
+import ch.arcticsoft.springchat3.document.LinkedGoogleDoc
 import ch.arcticsoft.springchat3.document.PdfTextExtractor
+import ch.arcticsoft.springchat3.document.WorkingDocumentStore
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatusCode
@@ -24,6 +26,8 @@ import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * `GET /drive/config`'s response - the one piece of Drive-specific config
@@ -49,25 +53,82 @@ data class DrivePickerTokenResponse(val accessToken: String)
  */
 data class LinkFolderRequest(val folderId: String, val folderName: String)
 
-/** One linked folder's current state, as [DriveStatusResponse] reports it. */
+/**
+ * `POST /drive/link-doc`'s request body (2026-08-22, "Working Documents" -
+ * see springchat3_working_documents.md in project memory) - the Google Doc
+ * file id/name the frontend's Google Picker callback resolved (see
+ * index.html's handleDocPickerResponse), the individual-file counterpart to
+ * [LinkFolderRequest].
+ */
+data class LinkDocRequest(val fileId: String, val fileName: String)
+
+/**
+ * One linked folder's current state, as [DriveStatusResponse] reports it.
+ *
+ * [syncing] (2026-08-22, "let the file-by-file sync continue in the
+ * background" - see [DriveController]'s own doc comment) is true while a
+ * background sync pass ([DriveController.startBackgroundSync]) is currently
+ * running for this folder - covers both this folder's very first sync
+ * (kicked off by [DriveController.link]) and a later manual
+ * [DriveController.sync]. index.html's `buildDriveFolderCard` already had a
+ * `folder.syncing` branch before this - originally only ever true for a
+ * client-side-only placeholder object shown optimistically while `POST
+ * /drive/link`'s response was still in flight (back when that response
+ * didn't arrive until the *whole* sync finished) - this field is what makes
+ * that same branch reflect genuine, ongoing server-side progress instead,
+ * once the frontend starts polling `GET /drive/status` after a now-fast
+ * `link`/`sync` response (see index.html's `ensureDriveStatusPolling`).
+ */
 data class DriveFolderStatus(
     val folderId: String,
     val folderName: String,
     val lastSyncedAt: Long?,
     val files: List<DocumentSummary>,
+    val syncing: Boolean = false,
+)
+
+/**
+ * One linked Google Doc's current state (2026-08-22, "Working Documents" -
+ * see springchat3_working_documents.md in project memory), as
+ * [DriveStatusResponse] reports it - the individual-file counterpart to
+ * [DriveFolderStatus]. [characterCount] comes from the same
+ * [DocumentStore]-backed field [DocumentSummary] already exposes elsewhere,
+ * for the same char-count meta line index.html's `formatCharCount()`
+ * already renders for every other document type.
+ *
+ * [driveFileId] (2026-08-22, "add icon to open as Google Doc" - user's own
+ * follow-up request) is Drive's own stable file id (see [LinkedGoogleDoc]'s
+ * own doc comment for why it's the stable one, unlike [documentId]) - the
+ * frontend builds `https://docs.google.com/document/d/{driveFileId}/edit`
+ * from it for a new "open the actual Google Doc" link, alongside the
+ * existing "open the exported PDF" one every document row already has.
+ * Not exposed before this, since nothing on the frontend needed Drive's own
+ * id until now - [documentId] alone was enough for every other purpose
+ * (selecting, viewing the exported PDF, deleting, resyncing).
+ */
+data class WorkingDocumentStatus(
+    val documentId: String,
+    val filename: String,
+    val characterCount: Int,
+    val lastSyncedAt: Long,
+    val driveFileId: String,
 )
 
 /**
  * Shared response shape for `GET /drive/status` and every
- * `POST /drive/{link,sync/{folderId},unlink/{folderId}}` - always the full
- * current picture of every linked folder, so index.html's
- * renderDriveSection() never has to reconcile a partial update against
- * whatever it already had. A single top-level `linked: Boolean` (v1) doesn't
- * make sense once more than one folder can be linked at once (2026-08-22 -
- * see [DriveController]'s own doc comment) - the frontend derives
- * "nothing linked" from an empty [folders] instead.
+ * `POST /drive/{link,sync/{folderId},unlink/{folderId},link-doc,doc-sync/{documentId}}` -
+ * always the full current picture of every linked folder AND every linked
+ * Google Doc, so index.html's renderDriveSection()/renderWorkingDocsSection()
+ * never have to reconcile a partial update against whatever they already
+ * had. A single top-level `linked: Boolean` (v1) doesn't make sense once
+ * more than one folder can be linked at once (2026-08-22 - see
+ * [DriveController]'s own doc comment) - the frontend derives "nothing
+ * linked" from an empty [folders]/[workingDocuments] instead.
  */
-data class DriveStatusResponse(val folders: List<DriveFolderStatus> = emptyList())
+data class DriveStatusResponse(
+    val folders: List<DriveFolderStatus> = emptyList(),
+    val workingDocuments: List<WorkingDocumentStatus> = emptyList(),
+)
 
 /**
  * Backs index.html's "Google Drive" section (2026-08-22, user's own request
@@ -115,11 +176,80 @@ data class DriveStatusResponse(val folders: List<DriveFolderStatus> = emptyList(
  * introducing a second, blocking way of making HTTP calls. Query/download
  * syntax confirmed against Drive API v3's own reference docs before writing
  * this - not guessed.
+ *
+ * **Also backs index.html's "Working Documents" section (2026-08-22, user's
+ * own request "Enable to link a Google Doc from Google Drive" - see
+ * springchat3_working_documents.md in project memory):** [linkDoc]/[syncDoc]
+ * link/resync one individually-picked native Google Doc at a time, tracked
+ * by [workingDocumentStore] rather than [driveLinkStore] (a linked Doc isn't
+ * inside a folder - see [WorkingDocumentStore]'s own doc comment for why
+ * this is a separate store rather than folded into [DriveLink]). The one
+ * real mechanical difference from a folder's PDFs: a Google Doc has no raw
+ * bytes of its own to download via `files/{id}?alt=media` the way
+ * [downloadFile] does for a binary PDF - [exportDocAsPdf] instead calls
+ * Drive's `files/{id}/export?mimeType=application/pdf` (confirmed against
+ * Drive API v3's own reference docs before writing this, same standard the
+ * rest of this class already holds itself to), which renders the Doc's
+ * current content as an actual PDF - once exported, [ingestGoogleDoc] feeds
+ * those bytes through the *exact* same [PdfTextExtractor]/[DocumentIndex]/
+ * [DocumentStructureExtractor] pipeline any other PDF uses, so this feature
+ * needed no new extraction code at all. **Not yet confirmed:** whether
+ * Google's PDF export actually preserves a Doc's heading structure as PDF
+ * bookmarks the way a manually-authored PDF's outline would - if it
+ * doesn't, a linked Doc simply falls back to plain vector search for every
+ * question, identically to any other bookmark-less PDF (see
+ * [DocumentStructureStore]'s own doc comment), not a broken or degraded
+ * experience, just one that doesn't get the two-stage structure-search
+ * benefit until/unless this is verified and (if needed) addressed.
+ *
+ * **Confirmed (2026-08-22, in production use): Drive's `export` endpoint has
+ * a hard, real size cap** - a large enough Doc 403s with reason
+ * `exportSizeLimitExceeded` rather than exporting a (possibly huge) PDF.
+ * Unlike the bookmark question above, there's no known workaround via a
+ * request parameter - a Doc over the limit simply can't be exported as a
+ * PDF at all. [handleDocSyncError] recognizes this specific reason and
+ * turns it into a `422` with a plain-language message instead of an opaque
+ * `500` (see that method's own doc comment); it does not attempt to link a
+ * degraded/partial version of an oversized Doc.
+ *
+ * **Resync is manual and unconditional, unlike a folder's [performSync]:**
+ * the user's own choice, "link + manual resync" over a one-time import -
+ * [syncDoc] always re-exports and re-ingests on a deliberate click, with no
+ * changed-vs-unchanged skip check the way folder sync's `md5Checksum`
+ * comparison has (see [WorkingDocumentStore]'s own doc comment for why - a
+ * native Google Doc has no equivalently reliable change-detection field,
+ * and a click already means "I want the latest version").
+ *
+ * **A folder's sync runs in the background, not inline with the HTTP
+ * request (2026-08-22).** [link] used to call [performSync] directly and
+ * return its result - meaning `POST /drive/link` didn't respond until every
+ * PDF in the folder had been downloaded and embedded, one real request that
+ * could run for minutes on a folder with several/large files. A real
+ * production interruption (the local Ollama embedding call for one file
+ * getting cancelled mid-request - see springchat3_google_drive.md in
+ * project memory for the incident) exposed the real cost of that design:
+ * since nothing was persisted until the *whole* batch finished, the entire
+ * sync's progress was lost, not just the one interrupted file. [link] and
+ * [sync] now both persist the link/kick off the sync and return
+ * immediately via [startBackgroundSync], which tracks in-flight folder ids
+ * in [syncingFolderIds] (subscribing [performSync] independently of the
+ * request/response lifecycle, so a client disconnecting no longer cancels
+ * it) - [DriveFolderStatus.syncing] reports that state, and index.html
+ * polls `GET /drive/status` (see `ensureDriveStatusPolling`) to reflect
+ * progress as it happens rather than only once, at the very end. [performSync]
+ * itself now also persists each file the moment it finishes
+ * ([DriveLinkStore.upsertFile]), not just once for the whole batch at the
+ * end ([DriveLinkStore.replaceFiles], still used at the end of a pass to
+ * prune anything no longer present in Drive) - so a later interruption only
+ * loses whatever hadn't completed *yet*, matching the same "don't lose more
+ * than necessary" reasoning [performSync]'s own per-file [Mono.onErrorResume]
+ * already applied one level up.
  */
 @RestController
 @RequestMapping("/drive")
 class DriveController(
     private val driveLinkStore: DriveLinkStore,
+    private val workingDocumentStore: WorkingDocumentStore,
     private val documentStore: DocumentStore,
     private val documentIndex: DocumentIndex,
     private val pdfTextExtractor: PdfTextExtractor,
@@ -152,6 +282,21 @@ class DriveController(
         .codecs { it.defaultCodecs().maxInMemorySize(MAX_PDF_BYTES + 1024 * 1024) }
         .build()
 
+    /**
+     * Folder ids with a background [performSync] currently in flight
+     * (2026-08-22, see this class's own doc comment) - purely in-memory,
+     * process-local bookkeeping, not persisted like [driveLinkStore]'s own
+     * state: it only ever needs to answer "is a sync running right now",
+     * which is meaningless across an app restart anyway (any sync in
+     * progress when the process stops is gone regardless of what this set
+     * says). A plain `ConcurrentHashMap`-backed set rather than anything
+     * fancier - this app is a single instance, and the only operations
+     * needed are "add if absent" ([MutableSet.add]'s own atomic return
+     * value, used by [startBackgroundSync] to avoid starting two overlapping
+     * passes for the same folder) and "remove"/"contains".
+     */
+    private val syncingFolderIds: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
+
     companion object {
         // Same 20 MB cap DocumentController.upload applies to a direct
         // upload - a Drive-sourced PDF gets no special exemption, same
@@ -177,7 +322,13 @@ class DriveController(
                     folderName = link.folderName,
                     lastSyncedAt = link.lastSyncedAt,
                     files = files,
+                    syncing = link.folderId in syncingFolderIds,
                 )
+            },
+            workingDocuments = workingDocumentStore.getAll().mapNotNull { doc ->
+                documentStore.get(doc.documentId)?.let {
+                    WorkingDocumentStatus(doc.documentId, it.filename, it.text.length, doc.lastSyncedAt, doc.driveFileId)
+                }
             },
         )
 
@@ -186,33 +337,92 @@ class DriveController(
 
     /**
      * Links an additional folder (2026-08-22, see this class's own doc
-     * comment - previously replaced whatever was already linked) and
-     * immediately syncs just that one, so its card renders with real synced
-     * files right away rather than an empty "0 PDFs" that only fills in
-     * after a separate manual "Sync now" click. Every other already-linked
-     * folder is untouched, both in [DriveLinkStore] and in whatever it had
-     * already synced.
+     * comment - previously replaced whatever was already linked) and starts
+     * syncing just that one in the background (2026-08-22, see this class's
+     * own doc comment on why - [startBackgroundSync]), so its card renders
+     * with real synced files as they come in rather than an empty "0 PDFs"
+     * that only fills in after a separate manual "Sync now" click. Every
+     * other already-linked folder is untouched, both in [DriveLinkStore] and
+     * in whatever it had already synced. Responds as soon as the link itself
+     * is recorded - not, as before, only once the whole first sync finishes.
      */
     @PostMapping("/link")
     fun link(
         @RequestBody request: LinkFolderRequest,
         @RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient,
-    ): Mono<DriveStatusResponse> {
+    ): DriveStatusResponse {
         driveLinkStore.link(request.folderId, request.folderName)
-        return performSync(client, request.folderId)
+        startBackgroundSync(client, request.folderId)
+        return statusResponse()
     }
 
-    /** Re-syncs just [folderId]. `404 Not Found` if it isn't (or is no longer) linked. */
+    /**
+     * Kicks off (or resyncs) just [folderId] in the background.
+     * `404 Not Found` if it isn't (or is no longer) linked. Responds as soon
+     * as the sync starts (2026-08-22, see this class's own doc comment),
+     * not once it finishes - index.html polls `GET /drive/status` (see
+     * `ensureDriveStatusPolling`) to find out when it does.
+     */
     @PostMapping("/sync/{folderId}")
     fun sync(
         @PathVariable folderId: String,
         @RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient,
-    ): Mono<ResponseEntity<DriveStatusResponse>> =
+    ): ResponseEntity<DriveStatusResponse> =
         if (driveLinkStore.get(folderId) == null) {
-            Mono.just(ResponseEntity.notFound().build())
+            ResponseEntity.notFound().build()
         } else {
-            performSync(client, folderId).map { ResponseEntity.ok(it) }
+            startBackgroundSync(client, folderId)
+            ResponseEntity.ok(statusResponse())
         }
+
+    /**
+     * Subscribes [performSync] for [folderId] independently of whatever HTTP
+     * request triggered it (2026-08-22, see this class's own doc comment),
+     * so the sync keeps running even if that request's own response has
+     * already gone out (or the client that made it has since disconnected -
+     * the original failure mode this exists to fix). [syncingFolderIds]'s
+     * atomic "add if absent" guards against starting a second overlapping
+     * pass for a folder that's already syncing - e.g. a double-click on
+     * "Sync now", or a manual sync landing while the just-triggered [link]
+     * sync for the same folder is still running (unlikely, since a freshly
+     * linked folder wouldn't have a "Sync now" button rendered yet while its
+     * card still shows [DriveFolderStatus.syncing], but not impossible under
+     * a raw API call) - a no-op in that case, not an error, since a sync IS
+     * already in progress, which is what the caller wanted regardless of
+     * who started it. Errors are logged, not surfaced anywhere else, since
+     * nothing is awaiting this call's own completion - a failed pass simply
+     * leaves [DriveFolderStatus.syncing] false again with whatever files had
+     * already been persisted via [DriveLinkStore.upsertFile] before the
+     * failure, same partial-progress outcome [performSync]'s own per-file
+     * [Mono.onErrorResume] already produces for one bad file within an
+     * otherwise-successful pass.
+     *
+     * **Known edge case, not handled:** [syncingFolderIds] is keyed by
+     * [folderId] alone, not by "this particular sync attempt" - unlinking a
+     * folder and immediately relinking the *same* Drive folder while its
+     * original sync is still running will find [folderId] still present in
+     * [syncingFolderIds] (not yet removed by the old pass's [doFinally]) and
+     * skip starting a fresh one, even though [DriveLinkStore.link] just
+     * created a brand new entry for it - the still-running old pass's own
+     * [DriveLinkStore.upsertFile]/[DriveLinkStore.replaceFiles] calls will
+     * keep writing into that new entry instead (they only check "is
+     * [folderId] linked at all", which it is again), against a Drive
+     * listing snapshot taken before the relink. Requires unlinking and
+     * relinking the same folder within the window its own sync is still
+     * running to trigger at all - not addressed here, since nothing this
+     * app has seen so far has hit it; would need per-attempt identity (e.g.
+     * a generation counter alongside each [folderId]) rather than a plain
+     * set, if it ever does.
+     */
+    private fun startBackgroundSync(client: OAuth2AuthorizedClient, folderId: String) {
+        if (!syncingFolderIds.add(folderId)) return
+        performSync(client, folderId)
+            .doFinally { syncingFolderIds.remove(folderId) }
+            .subscribe(
+                {},
+                { e -> log.error("Background sync of Drive folder '{}' failed", folderId, e) },
+            )
+    }
 
     /**
      * Unlinks just [folderId] (see [DriveLinkStore.unlink]'s own doc comment
@@ -226,6 +436,122 @@ class DriveController(
         driveLinkStore.unlink(folderId)
         return statusResponse()
     }
+
+    /**
+     * Links [LinkDocRequest.fileId] as a Working Document (2026-08-22, see
+     * this class's own doc comment) and immediately ingests it - same
+     * "render with real content right away, not an empty placeholder that
+     * only fills in after a separate manual sync" reasoning [link] already
+     * follows for a folder. Idempotent against an already-linked Drive file,
+     * same as [DriveLinkStore.link]'s own idempotency: if
+     * [WorkingDocumentStore.getByDriveFileId] already has an entry for this
+     * [LinkDocRequest.fileId] (e.g. the Picker was used to pick the same Doc
+     * twice), this is simply treated as a resync of that existing entry
+     * rather than creating a duplicate one - [WorkingDocumentStore.upsert]
+     * replaces by `driveFileId`, so no special-casing is needed here beyond
+     * looking up whether an existing entry's [LinkedGoogleDoc.documentId]/
+     * [LinkedGoogleDoc.linkedAt] should carry forward.
+     */
+    @PostMapping("/link-doc")
+    fun linkDoc(
+        @RequestBody request: LinkDocRequest,
+        @RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient,
+    ): Mono<ResponseEntity<Any>> {
+        val existing = workingDocumentStore.getByDriveFileId(request.fileId)
+        return syncGoogleDocInternal(client, request.fileId, request.fileName, existing)
+    }
+
+    /**
+     * Re-exports and re-ingests [documentId]'s Google Doc, always - a
+     * manual, single-document action, unlike folder sync's changed-vs-
+     * unchanged reconciliation across every file in a folder (see this
+     * class's own doc comment for why there's no skip-if-unchanged check
+     * here). `404 Not Found` if [documentId] isn't (or is no longer) a
+     * linked Working Document.
+     */
+    @PostMapping("/doc-sync/{documentId}")
+    fun syncDoc(
+        @PathVariable documentId: String,
+        @RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient,
+    ): Mono<ResponseEntity<Any>> {
+        val existing = workingDocumentStore.get(documentId) ?: return Mono.just(ResponseEntity.notFound().build())
+        return syncGoogleDocInternal(client, existing.driveFileId, existing.filename, existing)
+    }
+
+    /**
+     * Shared export+ingest+bookkeeping sequence [linkDoc] (a brand new link,
+     * [existing] null) and [syncDoc] (a resync, [existing] the current
+     * entry) both call - kept as one path so the two endpoints can't drift
+     * apart on what "linking"/"resyncing" actually does. Runs on
+     * [Schedulers.boundedElastic] for the same reason [performSync]'s own
+     * per-file ingestion does - PDFBox parsing (inside [ingestGoogleDoc]) is
+     * blocking CPU work, not something to run on a Netty event-loop thread.
+     *
+     * Returns `ResponseEntity<Any>` rather than the plain [DriveStatusResponse]
+     * both endpoints used to return directly - added 2026-08-22 after a real
+     * Doc ("EDIT - Designing and Building AI Products and Services") 403'd
+     * on export with Google's `exportSizeLimitExceeded` reason (a real,
+     * permanent Drive API cap on how large a rendered export can be - not a
+     * transient failure, and not something a request parameter can raise).
+     * Before this fix that surfaced to the browser as a bare "Server
+     * responded with 500" with the actual reason buried in the server log -
+     * [handleDocSyncError] below turns that one specific, recognizable
+     * failure into a `422` with a human-readable body instead, while letting
+     * every other error (network blip, revoked auth, disabled API, etc.)
+     * keep propagating as a plain 500 exactly as before, consistent with how
+     * [logDriveErrorBody] already treats those as adequately actionable via
+     * the logged response body.
+     */
+    private fun syncGoogleDocInternal(
+        client: OAuth2AuthorizedClient,
+        fileId: String,
+        fileName: String,
+        existing: LinkedGoogleDoc?,
+    ): Mono<ResponseEntity<Any>> {
+        val linkedAt = existing?.linkedAt ?: System.currentTimeMillis()
+        log.info(
+            "{} Google Doc '{}' (id={})...",
+            if (existing == null) "Linking" else "Re-syncing",
+            fileName,
+            fileId,
+        )
+        return exportDocAsPdf(client, fileId)
+            .publishOn(Schedulers.boundedElastic())
+            .map { bytes -> ingestGoogleDoc(fileId, fileName, bytes, existing?.documentId, linkedAt) }
+            .doOnNext { workingDocumentStore.upsert(it) }
+            .map<ResponseEntity<Any>> { ResponseEntity.ok(statusResponse()) }
+            .onErrorResume { e -> handleDocSyncError(e, fileName) }
+    }
+
+    /**
+     * Recognizes Google Drive's `exportSizeLimitExceeded` reason (see
+     * [syncGoogleDocInternal]'s own doc comment) inside the raw error string
+     * [logDriveErrorBody] raises, and turns it into a `422 Unprocessable
+     * Entity` with a plain-language `{"message": "..."}` body the frontend
+     * displays directly (see index.html's `readErrorMessage`) - matched by
+     * substring against the Drive API's own JSON error body rather than a
+     * dedicated exception type, since [logDriveErrorBody] only ever raises a
+     * generic [IllegalStateException] carrying that body as its message; not
+     * worth a structured JSON-parse of Google's error shape for one
+     * recognized reason string. Any other error (a substring match miss)
+     * is re-raised unchanged and falls through to the default 500, same as
+     * before this fix existed.
+     */
+    private fun handleDocSyncError(e: Throwable, fileName: String): Mono<ResponseEntity<Any>> =
+        if (e.message?.contains("exportSizeLimitExceeded") == true) {
+            log.warn("Google Doc '{}' is too large for Drive to export as a PDF - not linked/synced", fileName)
+            Mono.just(
+                ResponseEntity.unprocessableEntity().body(
+                    mapOf(
+                        "message" to
+                            "\"$fileName\" is too large for Google Drive to export as a PDF, so it can't be linked. " +
+                            "Try splitting it into smaller Docs, or exporting/uploading a PDF of it manually instead.",
+                    ),
+                ),
+            )
+        } else {
+            Mono.error(e)
+        }
 
     private data class DriveApiFile(
         val id: String,
@@ -288,6 +614,31 @@ class DriveController(
             .bodyToMono(ByteArray::class.java)
 
     /**
+     * Renders [fileId]'s CURRENT content as a PDF (2026-08-22, "Working
+     * Documents" - see this class's own doc comment) - Drive API v3's
+     * `files/{id}/export`, not the `alt=media` [downloadFile] uses for a
+     * binary file already stored in Drive. A native Google Doc has no fixed
+     * bytes of its own to download that way (`alt=media` on one 400s/403s -
+     * Google's own docs are explicit that native-format files must be
+     * exported, not downloaded directly); `export` instead asks Drive to
+     * render the Doc, at the moment of the call, into a chosen format - here
+     * `application/pdf`, so [ingestGoogleDoc] can feed the result through
+     * the exact same PDF pipeline every other document in this app already
+     * uses, no separate text-extraction path needed. This is also exactly
+     * why resync (unlike a folder's `md5Checksum`-diffed [performSync])
+     * always re-exports unconditionally: every call renders the Doc fresh,
+     * so there's no stable checksum to compare against between one export
+     * and the next the way a binary file's bytes would give you.
+     */
+    private fun exportDocAsPdf(client: OAuth2AuthorizedClient, fileId: String): Mono<ByteArray> =
+        driveApi.get()
+            .uri("/drive/v3/files/{id}/export?mimeType=application/pdf", fileId)
+            .headers { it.setBearerAuth(client.accessToken.tokenValue) }
+            .retrieve()
+            .logDriveErrorBody()
+            .bodyToMono(ByteArray::class.java)
+
+    /**
      * Downloads+ingests one Drive file through the exact same pipeline
      * [ch.arcticsoft.springchat3.web.DocumentController.upload] uses for a
      * direct upload (PDFBox page extraction, vector-store indexing, and -
@@ -332,6 +683,54 @@ class DriveController(
     }
 
     /**
+     * Ingests one exported Google Doc PDF through the exact same pipeline
+     * [ingestFile] uses for a folder-synced PDF (PDFBox page extraction,
+     * vector-store indexing, best-effort outline/structure extraction) -
+     * see [exportDocAsPdf]'s own doc comment for how [bytes] gets here.
+     * [existingDocumentId] (given on a resync, see [syncGoogleDocInternal])
+     * has its older version's document/index/structure entries removed
+     * first, same "replace, don't leave an orphan" handling [ingestFile]
+     * already applies to a changed folder-synced PDF - the difference here
+     * is that EVERY resync takes this path (no unchanged-skip check, see
+     * this class's own doc comment), not just a detected-as-changed one.
+     * [linkedAt] is threaded through from the caller rather than computed
+     * here, since only the caller knows whether this is a brand new link
+     * (now) or a resync of an existing one (its original [LinkedGoogleDoc.linkedAt]) -
+     * [documentId] itself is always freshly generated either way (see
+     * [WorkingDocumentStore]'s own doc comment for why that's fine, since
+     * lookups needing to survive a resync key off [driveFileId]/[fileId]
+     * instead).
+     */
+    private fun ingestGoogleDoc(fileId: String, fileName: String, bytes: ByteArray, existingDocumentId: String?, linkedAt: Long): LinkedGoogleDoc {
+        if (bytes.size > MAX_PDF_BYTES) {
+            throw IllegalArgumentException("Google Doc '$fileName' too large once exported as PDF (${bytes.size} bytes, max $MAX_PDF_BYTES) - skipped")
+        }
+        existingDocumentId?.let { oldId ->
+            documentStore.remove(oldId)
+            documentIndex.remove(oldId)
+            documentStructureStore.remove(oldId)
+        }
+        val pages = pdfTextExtractor.extractPages(bytes)
+        val text = pages.joinToString("\n\n") { it.text.orEmpty() }
+        val documentId = documentStore.store(fileName, text, bytes)
+        documentIndex.index(documentId, pages)
+        documentStructureExtractor.extractStructure(bytes)?.let { structure ->
+            documentStructureStore.store(documentId, structure)
+        }
+        log.info(
+            "Synced Google Doc '{}' ({} exported PDF bytes -> {} extracted chars, {} pages indexed) as {}",
+            fileName, bytes.size, text.length, pages.size, documentId,
+        )
+        return LinkedGoogleDoc(
+            driveFileId = fileId,
+            documentId = documentId,
+            filename = fileName,
+            linkedAt = linkedAt,
+            lastSyncedAt = System.currentTimeMillis(),
+        )
+    }
+
+    /**
      * Re-reads [folderId]'s current Drive contents and reconciles this app's
      * ingested documents against them: new files are downloaded+ingested,
      * changed files (`md5Checksum` differs from what was last synced) are
@@ -352,16 +751,31 @@ class DriveController(
      * ingested document over a one-off failure. Only a file genuinely
      * absent from the current Drive listing is treated as removed.
      *
+     * **Persists incrementally, not just once at the end (2026-08-22, see
+     * this class's own doc comment):** each freshly ingested/re-ingested
+     * file is written via [DriveLinkStore.upsertFile] the moment it
+     * completes, inside the `concatMap` below - not only via the single
+     * [DriveLinkStore.replaceFiles] call after every file in the folder has
+     * been processed. [replaceFiles] still runs at the end (needed either
+     * way, to prune anything no longer present in Drive - a per-file
+     * upsert can't know that on its own), but a background pass that gets
+     * interrupted or killed partway through - the whole reason this method
+     * now runs detached from its triggering request, see [startBackgroundSync] -
+     * only loses whatever hadn't finished *yet*, not everything.
+     *
      * Sequential (`concatMap`, not `flatMap`), not parallel: [DocumentIndex]'s
      * `index`/`remove` both rewrite the *entire* shared vector-store file on
      * every call (see that class's own doc comment) - concurrent writes
      * from several files syncing at once would race on that same file.
      * Fine at this feature's expected scale (a personal folder of PDFs). This
      * only serializes within one folder's own sync - two *different* folders
-     * being synced concurrently (e.g. one from [link], another from a
-     * concurrent [sync] call) would still race on that same vector-store
-     * file; not addressed here, same as the pre-existing single-folder
-     * version never addressed a concurrent upload racing a sync either.
+     * syncing concurrently (e.g. one from [link], another from a concurrent
+     * [sync] call) would still race on that same vector-store file; more
+     * likely to actually happen now that both endpoints return immediately
+     * rather than blocking (see this class's own doc comment) instead of
+     * needing two overlapping slow requests, but still not addressed here,
+     * same as the pre-existing single-folder version never addressed a
+     * concurrent upload racing a sync either.
      */
     private fun performSync(client: OAuth2AuthorizedClient, folderId: String): Mono<DriveStatusResponse> {
         val link = driveLinkStore.get(folderId) ?: return Mono.just(statusResponse())
@@ -391,6 +805,7 @@ class DriveController(
                     downloadFile(client, file.id)
                         .publishOn(Schedulers.boundedElastic())
                         .map { bytes -> ingestFile(file, bytes, previous?.documentId) }
+                        .doOnNext { synced -> driveLinkStore.upsertFile(folderId, synced) }
                         .onErrorResume { e ->
                             log.warn("Could not sync Drive file '{}' - keeping its previous state, if any", file.name, e)
                             Mono.justOrEmpty(previous)
