@@ -5,6 +5,7 @@ import ch.arcticsoft.springchat3.document.DocumentStore
 import ch.arcticsoft.springchat3.document.DocumentStructureExtractor
 import ch.arcticsoft.springchat3.document.DocumentStructureStore
 import ch.arcticsoft.springchat3.document.DocumentSummary
+import ch.arcticsoft.springchat3.document.DriveLinkStore
 import ch.arcticsoft.springchat3.document.PdfTextExtractor
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
@@ -44,6 +45,7 @@ class DocumentController(
     private val documentIndex: DocumentIndex,
     private val documentStructureExtractor: DocumentStructureExtractor,
     private val documentStructureStore: DocumentStructureStore,
+    private val driveLinkStore: DriveLinkStore,
 ) {
     private val log = LoggerFactory.getLogger(DocumentController::class.java)
 
@@ -116,15 +118,30 @@ class DocumentController(
             }
 
     /**
-     * Backs the side panel's document list (added 2026-08-22, see
-     * springchat3_document_qa.md in project memory) - every currently
-     * stored document's metadata, oldest upload first. A plain (non-`Mono`)
-     * return type is fine here: [DocumentStore.list] only ever does a fast
-     * in-memory read, so there's no blocking work to shift off the Netty
-     * event-loop thread the way [upload]'s PDFBox parsing needs.
+     * Backs the side panel's "Uploaded Documents" list (added 2026-08-22,
+     * see springchat3_document_qa.md in project memory) - every currently
+     * stored document's metadata, oldest upload first, EXCLUDING anything
+     * synced in from any linked Google Drive folder (2026-08-22, user's own
+     * request "File loaded from Google Drive do not need to be enlisted as
+     * Documents" - see springchat3_google_drive.md in project memory; "any"
+     * since a later same-day change allows more than one folder to be
+     * linked at once). [DocumentStore] itself makes no such distinction - a
+     * Drive-sourced document is stored there exactly like an uploaded one,
+     * since it goes through the same ingestion pipeline (see
+     * [ch.arcticsoft.springchat3.web.DriveController]'s own doc comment) -
+     * so the filtering has to happen here, against [DriveLinkStore]'s own separate
+     * bookkeeping of which `documentId`s came from Drive. Without it, a
+     * Drive-synced file would show up twice: once here (labeled as if
+     * uploaded) and once in its own "Google Drive" folder card. A plain
+     * (non-`Mono`) return type is fine here: both stores only ever do a
+     * fast in-memory read, so there's no blocking work to shift off the
+     * Netty event-loop thread the way [upload]'s PDFBox parsing needs.
      */
     @GetMapping("/documents")
-    fun list(): List<DocumentSummary> = documentStore.list()
+    fun list(): List<DocumentSummary> {
+        val driveDocumentIds = driveLinkStore.getAll().flatMap { it.files }.map { it.documentId }.toSet()
+        return documentStore.list().filterNot { it.documentId in driveDocumentIds }
+    }
 
     /**
      * Deletes one uploaded document, e.g. from the side panel's per-item ×
@@ -139,12 +156,21 @@ class DocumentController(
      * immediately rather than lingering there indefinitely; only called
      * alongside an actual [DocumentStore] removal, not for an [id] that was
      * never a real document.
+     *
+     * Also drops [id] from [DriveLinkStore]'s bookkeeping if it came from a
+     * linked Google Drive folder (2026-08-22, see
+     * springchat3_google_drive.md in project memory) - a harmless no-op for
+     * a directly-uploaded document, which was never tracked there. Without
+     * this, a later "Sync now" would keep treating this file as already
+     * synced and never re-offer it, even though deleting it here only
+     * removes it from this app's index, not from Drive itself.
      */
     @DeleteMapping("/documents/{id}")
     fun delete(@PathVariable id: String): ResponseEntity<Void> =
         if (documentStore.remove(id)) {
             documentIndex.remove(id)
             documentStructureStore.remove(id)
+            driveLinkStore.untrackDocument(id)
             ResponseEntity.noContent().build()
         } else {
             ResponseEntity.notFound().build()

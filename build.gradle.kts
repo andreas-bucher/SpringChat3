@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ch.arctcisoft"
-version = "0.1.1"
+version = "0.1.2"
 description = "SpringChat3 - a Kotlin + Spring Boot + WebFlux chat application built on the Embabel agent framework"
 
 // Embabel is released to its own Artifactory instance rather than Maven Central.
@@ -57,6 +57,19 @@ dependencies {
     // Reactive web layer
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+
+    // Google OAuth2/OIDC login, gating the whole app (2026-08-22, user's own
+    // request "add oauth2.0 google authentication" - see
+    // springchat3_authentication.md in project memory). Brings in
+    // spring-boot-starter-security + spring-security-oauth2-client/-jose
+    // transitively - no separate "reactive" flavor of this starter exists;
+    // Spring Boot's own autoconfiguration picks the reactive
+    // (ReactiveOAuth2ClientAutoConfiguration) vs. servlet wiring based on
+    // WebFlux being on the classpath (it already is, above), same detection
+    // Spring Boot uses everywhere else in this app. Confirmed the exact
+    // artifact coordinate and this reactive/servlet auto-detection against
+    // Spring Security's own reference docs before adding this, not assumed.
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
 
     // Embabel agent platform (base starter, no predefined shell/CLI mode - we expose it via WebFlux)
     implementation("com.embabel.agent:embabel-agent-starter:$embabelAgentVersion")

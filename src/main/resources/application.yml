@@ -21,6 +21,33 @@ logging:
 spring:
   application:
     name: springchat3
+  security:
+    oauth2:
+      client:
+        registration:
+          # "google" matches CommonOAuth2Provider.GOOGLE, so Spring Boot
+          # fills in the authorization/token/user-info endpoints and default
+          # scope (openid, profile, email) automatically - no provider:
+          # block needed alongside this. No defaults on either value below
+          # (fails fast if unset), same convention as SSL_KEYSTORE_PASSWORD
+          # above - see ch.arcticsoft.springchat3.security.SecurityConfig
+          # and springchat3_authentication.md in project memory.
+          google:
+            client-id: ${GOOGLE_CLIENT_ID}
+            client-secret: ${GOOGLE_CLIENT_SECRET}
+            # Beyond the default openid/profile/email (see this block's own
+            # doc comment above) - drive.readonly (2026-08-22, see
+            # springchat3_google_drive.md in project memory: switched from
+            # the originally-proposed drive.file because it's genuinely
+            # unclear from Google's own docs whether drive.file grants
+            # access to a folder's *contents* when the folder itself was
+            # picked via Picker, and community reports say it doesn't) lets
+            # DriveController read the contents of whichever folder the user
+            # links via the Google Picker. Setting `scope` at all replaces
+            # CommonOAuth2Provider.GOOGLE's default scope list entirely
+            # rather than adding to it, so openid/profile/email have to be
+            # listed here explicitly too, or sign-in itself would break.
+            scope: openid,profile,email,https://www.googleapis.com/auth/drive.readonly
   ai:
     ollama:
       base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
@@ -28,7 +55,7 @@ spring:
         options:
           model: ${OLLAMA_MODEL:granite4.1:3b}
       embedding:
-        model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
+        model: ${OLLAMA_EMBEDDING_MODEL:corvojaeger/jina-embeddings-v5-text-small}
   model:
     embedding: ollama
 
@@ -41,3 +68,16 @@ embabel:
 
 springchat3:
   data-dir: ${SPRINGCHAT3_DATA_DIR:./data}
+  # Comma-separated list of Google account emails allowed to sign in - see
+  # ch.arcticsoft.springchat3.security.SecurityConfig.oidcUserService. No
+  # default (fails fast if unset) - an unset allow-list should never
+  # silently mean "let everyone in".
+  allowed-emails: ${SPRINGCHAT3_ALLOWED_EMAILS}
+  google:
+    # Google Cloud "Picker API key" (a browser/API key restricted by HTTP
+    # referrer in the Cloud Console, not GOOGLE_CLIENT_SECRET - safe to send
+    # to the browser) the Google Picker widget needs alongside the OAuth
+    # access token DriveController.pickerToken hands out - see
+    # springchat3_google_drive.md in project memory. No default (fails fast
+    # if unset), same convention as the other required secrets above.
+    picker-api-key: ${GOOGLE_PICKER_API_KEY}

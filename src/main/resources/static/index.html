@@ -344,6 +344,38 @@
     width: 44px;
   }
 
+  /*
+   * Drag-to-resize (2026-08-22, user's own request "make the right panel
+   * expandable with slider") - a thin flex sibling between .app and
+   * #side-panel, not a child of either: a child would need position:relative
+   * plus absolute positioning that .side-panel's own overflow:hidden would
+   * then clip half of, since the natural place for a resize handle straddles
+   * the panel's left edge. As a flex sibling it just eats its own 6px from
+   * .layout's flex row - .app (flex:1) automatically gives up the space, no
+   * extra layout math needed. Hidden whenever the panel is collapsed
+   * (toggled by setPanelCollapsed, same as the header/upload/dropzone
+   * elements .side-panel.collapsed already hides) - a fixed 44px collapsed
+   * width isn't meant to be resized.
+   */
+  .panel-resize-handle {
+    width: 6px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: transparent;
+    touch-action: none;
+  }
+
+  .panel-resize-handle:hover,
+  .panel-resize-handle.dragging {
+    background: var(--accent);
+    opacity: 0.35;
+  }
+
+  /* Suppress .side-panel's own width transition while actively dragging - otherwise the 0.18s ease (meant for the collapse/expand toggle) makes the panel visibly lag behind the pointer. */
+  .side-panel.resizing {
+    transition: none;
+  }
+
   .side-panel-header {
     display: flex;
     align-items: center;
@@ -363,6 +395,11 @@
     font-size: 14px;
     font-weight: 600;
     white-space: nowrap;
+    /* "Uploaded Documents" (2026-08-22, was just "Documents" - see springchat3_google_drive.md in project memory) is long enough to need real truncation at the panel's minimum resized width, not just nowrap. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
   }
 
   .side-panel-header-actions {
@@ -374,8 +411,23 @@
 
   .side-panel.collapsed .side-panel-header h2,
   .side-panel.collapsed #doc-upload-btn,
-  .side-panel.collapsed .doc-dropzone {
+  .side-panel.collapsed .side-panel-body {
     display: none;
+  }
+
+  /*
+   * Wraps the "Uploaded" list and the Google Drive section below it
+   * (2026-08-22, see springchat3_google_drive.md in project memory) - this,
+   * not #doc-dropzone, is now the flex:1/scrollable element, since the
+   * panel has two sections stacked vertically instead of one that used to
+   * simply fill all remaining space on its own.
+   */
+  .side-panel-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .panel-icon-btn {
@@ -395,7 +447,15 @@
   }
 
   .doc-dropzone {
-    flex: 1;
+    /*
+     * min/max-height, not flex:1 (moved up to the new .side-panel-body wrapper,
+     * 2026-08-22, see springchat3_google_drive.md in project memory) - this
+     * section no longer owns all remaining vertical space by itself now that
+     * the Google Drive section sits below it in the same scrollable parent.
+     */
+    min-height: 90px;
+    max-height: 260px;
+    flex-shrink: 0;
     margin: 0 12px 16px 16px;
     padding: 8px;
     overflow-y: auto;
@@ -487,6 +547,179 @@
     background: #fdecea;
   }
 
+  /* Only used when a .doc-item carries a badge (currently just the "DRIVE" badge below) - .doc-item-name keeps its own plain, unwrapped styling otherwise. */
+  .doc-item-name-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .doc-item-name-row .doc-item-name {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /*
+   * Linking a Google Drive folder as an additional document source
+   * (2026-08-22, user's own request "additionally to upload Documents, it
+   * should be possible to link to a Google Drive Folder" - see
+   * springchat3_google_drive.md in project memory for the full design,
+   * including why this uses the drive.readonly scope rather than the
+   * originally-proposed drive.file). Sits below the "Uploaded" list, inside
+   * the same scrollable .side-panel-body. More than one folder can be
+   * linked at once (2026-08-22, same day - user's own bug report "when
+   * linking a new Google Drive folder, the previously uploaded files are
+   * lost. The folder should stay. A 2nd Folder should be added" - see
+   * springchat3_google_drive.md in project memory): #drive-link-row (the
+   * "Link a Google Drive folder" prompt) is always visible, not hidden once
+   * something is linked, and #drive-folder-list holds zero or more
+   * .drive-folder-card elements built by renderDriveSection() from the
+   * latest GET /drive/status - one per linked folder, not a single static
+   * card.
+   */
+  .panel-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    padding: 10px 16px 4px;
+    flex-shrink: 0;
+  }
+
+  .panel-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 6px 16px 0;
+    flex-shrink: 0;
+  }
+
+  .drive-connect-row {
+    margin: 6px 12px 12px;
+    padding: 12px;
+    border: 1.5px dashed var(--border);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 12.5px;
+    flex-shrink: 0;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .drive-connect-row:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* While a link is being established (Picker open, or /drive/link in flight) - not a full disabled state, just visually damped so a second click doesn't fire a second picker/request. */
+  .drive-connect-row.linking {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  .drive-connect-row .drive-icon {
+    font-size: 17px;
+    flex-shrink: 0;
+  }
+
+  .drive-folder-card {
+    margin: 6px 12px 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .drive-folder-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 10px 10px 12px;
+    background: var(--bg);
+  }
+
+  .drive-folder-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .drive-folder-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .drive-folder-name {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drive-folder-meta {
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  .drive-folder-actions {
+    display: flex;
+    gap: 1px;
+    flex-shrink: 0;
+  }
+
+  .drive-folder-actions button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+    padding: 5px 6px;
+    border-radius: 7px;
+  }
+
+  .drive-folder-actions button:hover {
+    color: var(--text);
+    background: var(--panel);
+  }
+
+  .drive-folder-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Spins the ↻ glyph itself while a sync is in flight - reuses the same @keyframes spin the small loading spinner elsewhere on this page already defines. */
+  .drive-folder-actions button.spinning {
+    display: inline-block;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .drive-folder-files {
+    padding: 4px 6px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .drive-folder-files .doc-empty-hint {
+    padding: 6px 8px 10px;
+  }
+
+  .drive-badge {
+    flex-shrink: 0;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #1a7f37;
+    background: #e6f4ea;
+    border-radius: 4px;
+    padding: 1px 4px;
+    letter-spacing: 0.02em;
+  }
+
   form#composer {
     display: flex;
     gap: 8px;
@@ -537,22 +770,127 @@
 
   /*
    * Settings popup (2026-08-22, see springchat3_settings.md in project
-   * memory) - the gear button sits at the bottom-left of the composer row
-   * (first flex child of form#composer), and the popup itself is an
-   * absolutely-positioned child of the .settings-anchor wrapper around that
-   * button, anchored to open upward from it - this works regardless of where
-   * .app actually sits in the viewport (it's centered, max-width 720px, so a
-   * viewport-fixed position would drift from the button on wide screens).
+   * memory) - v1 lived behind its own gear button; v2 (same day, user's own
+   * request "The Settings icon and functionality shall be moved to the
+   * Settings menu entry") retired that button entirely - the popup is now an
+   * absolutely-positioned child of .user-menu-anchor (see below), the same
+   * anchor the account menu itself opens from, and the only way to reach it
+   * is that menu's "Settings" entry (openSettingsPopup(), called from
+   * userMenuSettingsBtnEl's click handler further down). Anchored to open
+   * upward from there rather than fixed to the viewport - this works
+   * regardless of where .app actually sits in the viewport (it's centered,
+   * max-width 720px, so a viewport-fixed position would drift on wide
+   * screens).
    */
-  .settings-anchor {
+
+  /*
+   * Signed-in-user account menu (2026-08-22, see springchat3_authentication.md
+   * in project memory) - sits at the bottom-left of the composer row (first
+   * flex child of form#composer). v1 was just a non-interactive avatar; v2
+   * (same day, user's own request "add additionally the firstname right of
+   * the icon... the icon + firstname shall be clickable... a menu opens with
+   * the entry Settings") turned it into a real trigger for a small dropdown,
+   * .user-menu - back then it sat alongside a separate gear button that also
+   * opened the settings popup directly. v3 (same day, user's own request
+   * "The Settings icon and functionality shall be moved to the Settings menu
+   * entry") removed that gear button and its wrapping .settings-anchor
+   * entirely - this is now the only way into settings. The gear glyph itself
+   * moved along with it (user's own follow-up, same day) into the "Settings"
+   * menu item as a .user-menu-item-icon, rather than disappearing outright.
+   */
+  .user-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .user-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .user-menu-anchor {
     position: relative;
     display: flex;
     align-items: center;
     flex-shrink: 0;
   }
 
-  #settings-btn {
-    font-size: 18px;
+  .user-menu-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 4px 10px 4px 4px;
+    border-radius: 999px;
+    color: var(--text);
+  }
+
+  .user-menu-btn:hover {
+    background: var(--bg);
+  }
+
+  .user-firstname {
+    font-size: 13px;
+    font-weight: 500;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .user-menu {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 8px);
+    min-width: 160px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+    padding: 6px;
+    z-index: 20;
+  }
+
+  .user-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: none;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--text);
+  }
+
+  .user-menu-item:hover {
+    background: var(--bg);
+  }
+
+  /* Fixed-width icon column so a menu item's label lines up the same way regardless of the glyph's own natural width. */
+  .user-menu-item-icon {
+    width: 16px;
+    flex-shrink: 0;
+    text-align: center;
+    font-size: 14px;
   }
 
   .settings-popup {
@@ -579,6 +917,13 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
+  }
+
+  /* Same muted, small treatment as .settings-hint - a fact to glance at, not something to interact with. */
+  .settings-signed-in-as {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-bottom: 12px;
   }
 
   .settings-section {
@@ -653,6 +998,26 @@
     margin-top: 8px;
   }
 
+  /* Deliberately understated (plain text, no border/background) - signing out isn't a frequent action worth the same visual weight as the toggle/dropdowns above. */
+  .settings-signout-row {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .settings-signout-btn {
+    font-size: 12px;
+    color: var(--muted);
+    background: none;
+    border: none;
+    padding: 2px 0;
+    cursor: pointer;
+  }
+
+  .settings-signout-btn:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+
   /* Plain checkbox restyled as an on/off slider - #tools-enabled-toggle itself stays visually hidden but focusable/clickable. */
   .switch {
     position: relative;
@@ -716,13 +1081,20 @@
     </div>
 
     <form id="composer">
-      <div class="settings-anchor">
-        <button id="settings-btn" type="button" class="panel-icon-btn" title="Settings">⚙</button>
+      <div class="user-menu-anchor">
+        <button id="user-menu-btn" type="button" class="user-menu-btn">
+          <span id="user-avatar" class="user-avatar"></span>
+          <span id="user-firstname" class="user-firstname"></span>
+        </button>
+        <div id="user-menu" class="user-menu" hidden>
+          <button id="user-menu-settings-btn" type="button" class="user-menu-item"><span class="user-menu-item-icon">⚙</span>Settings</button>
+        </div>
         <div id="settings-popup" class="settings-popup" hidden>
           <div class="settings-popup-header">
             <h3>Settings</h3>
             <button id="settings-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
           </div>
+          <div class="settings-signed-in-as">Signed in as <span id="signed-in-email"></span></div>
           <div class="settings-section">
             <div class="settings-section-title">Models</div>
             <div class="settings-model-row">
@@ -747,6 +1119,9 @@
               <span class="switch-track"></span>
             </label>
           </div>
+          <div class="settings-section settings-signout-row">
+            <button id="sign-out-btn" type="button" class="settings-signout-btn">Sign out</button>
+          </div>
           <div id="settings-error" class="settings-error" hidden></div>
         </div>
       </div>
@@ -755,18 +1130,30 @@
     </form>
   </div>
 
+  <div id="panel-resize-handle" class="panel-resize-handle" title="Drag to resize"></div>
+
   <aside id="side-panel" class="side-panel">
     <div class="side-panel-header">
-      <h2>Documents</h2>
+      <h2>Uploaded Documents</h2>
       <div class="side-panel-header-actions">
         <button id="doc-upload-btn" type="button" class="panel-icon-btn" title="Upload a PDF">＋</button>
         <button id="panel-toggle" type="button" class="panel-icon-btn" title="Collapse panel">›</button>
       </div>
     </div>
-    <div id="doc-dropzone" class="doc-dropzone">
-      <div class="doc-empty-hint">No PDFs uploaded yet.<br>Drag one here, or click ＋ above.</div>
+    <div class="side-panel-body">
+      <div id="doc-dropzone" class="doc-dropzone">
+        <div class="doc-empty-hint">No PDFs uploaded yet.<br>Drag one here, or click ＋ above.</div>
+      </div>
+      <input type="file" id="doc-file-input" accept="application/pdf" hidden>
+
+      <div class="panel-divider"></div>
+      <div class="panel-section-title">Google Drive</div>
+      <div id="drive-link-row" class="drive-connect-row" title="Link a Google Drive folder">
+        <span class="drive-icon">🔗</span>
+        <span>Link a Google Drive folder</span>
+      </div>
+      <div id="drive-folder-list"></div>
     </div>
-    <input type="file" id="doc-file-input" accept="application/pdf" hidden>
   </aside>
 </div>
 
@@ -778,11 +1165,17 @@
   const sendEl = document.getElementById('send');
   const sidePanelEl = document.getElementById('side-panel');
   const panelToggleEl = document.getElementById('panel-toggle');
+  const panelResizeHandleEl = document.getElementById('panel-resize-handle');
   const docUploadBtnEl = document.getElementById('doc-upload-btn');
   const docFileInputEl = document.getElementById('doc-file-input');
   const docDropzoneEl = document.getElementById('doc-dropzone');
   const versionLabelEl = document.getElementById('version-label');
-  const settingsBtnEl = document.getElementById('settings-btn');
+  const userMenuBtnEl = document.getElementById('user-menu-btn');
+  const userAvatarEl = document.getElementById('user-avatar');
+  const userFirstnameEl = document.getElementById('user-firstname');
+  const userMenuEl = document.getElementById('user-menu');
+  const userMenuSettingsBtnEl = document.getElementById('user-menu-settings-btn');
+  const signedInEmailEl = document.getElementById('signed-in-email');
   const settingsPopupEl = document.getElementById('settings-popup');
   const settingsCloseBtnEl = document.getElementById('settings-close-btn');
   const settingsErrorEl = document.getElementById('settings-error');
@@ -791,6 +1184,9 @@
   const modelGenerationEl = document.getElementById('model-generation');
   const modelDocStrategyEl = document.getElementById('model-doc-strategy');
   const modelEmbeddingEl = document.getElementById('model-embedding');
+  const signOutBtnEl = document.getElementById('sign-out-btn');
+  const driveLinkRowEl = document.getElementById('drive-link-row');
+  const driveFolderListEl = document.getElementById('drive-folder-list');
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -1319,6 +1715,17 @@
     }
   }
 
+  // SecurityConfig.kt (2026-08-22, see springchat3_authentication.md in
+  // project memory) configures a cookie-readable CSRF token (XSRF-TOKEN) -
+  // every POST/DELETE fetch() call below needs to echo it back as
+  // X-XSRF-TOKEN, or Spring Security rejects the request with 403 before it
+  // ever reaches the controller. GET requests never need this - CSRF only
+  // protects unsafe methods.
+  function csrfHeader() {
+    const match = document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]*)/);
+    return match ? { 'X-XSRF-TOKEN': decodeURIComponent(match[1]) } : {};
+  }
+
   // Posts to /chat/stream and feeds each newline-delimited JSON object (see
   // ChatProgress.kt) to applyProgressEvent as it arrives, so the live panel
   // fills in incrementally instead of the browser waiting for one final
@@ -1326,7 +1733,7 @@
   async function streamChat(live, message, location, documentId) {
     const res = await fetch('/chat/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeader() },
       body: JSON.stringify({ message, ...(location ?? {}), ...(documentId ? { documentId } : {}) }),
     });
 
@@ -1406,7 +1813,13 @@
     return (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)) + ' chars';
   }
 
-  function buildDocItem(doc) {
+  // [badge] (e.g. "DRIVE", see buildDriveDocItem below/springchat3_google_drive.md
+  // in project memory) is optional - a plain uploaded document renders with
+  // no badge at all, exactly as before. When present, the filename gets
+  // wrapped in .doc-item-name-row (a small additive flex wrapper, see that
+  // class's own CSS comment) so the badge sits inline right after it without
+  // disturbing .doc-item-name's own ellipsis truncation in the no-badge case.
+  function buildDocItem(doc, badge) {
     const item = document.createElement('div');
     item.className = 'doc-item' + (doc.documentId === activeDocumentId ? ' active' : '');
     item.title = doc.filename;
@@ -1421,10 +1834,21 @@
     const name = document.createElement('span');
     name.className = 'doc-item-name';
     name.textContent = doc.filename;
+    if (badge) {
+      const nameRow = document.createElement('span');
+      nameRow.className = 'doc-item-name-row';
+      nameRow.appendChild(name);
+      const badgeEl = document.createElement('span');
+      badgeEl.className = 'drive-badge';
+      badgeEl.textContent = badge;
+      nameRow.appendChild(badgeEl);
+      info.appendChild(nameRow);
+    } else {
+      info.appendChild(name);
+    }
     const meta = document.createElement('span');
     meta.className = 'doc-item-meta';
     meta.textContent = formatCharCount(doc.characterCount);
-    info.appendChild(name);
     info.appendChild(meta);
     item.appendChild(info);
 
@@ -1442,10 +1866,14 @@
     // Toggle: clicking the already-active document clears it, clicking any
     // other document makes it the (single) active one - only one document
     // is ever folded into ChatAgent.answer's prompt per turn, see
-    // ChatRequest.documentId's doc comment for why.
+    // ChatRequest.documentId's doc comment for why. Re-renders both lists,
+    // not just this one, since activeDocumentId is shared across the
+    // "Uploaded" list and the Google Drive section - the newly (in)active
+    // document could live in either.
     item.addEventListener('click', () => {
       activeDocumentId = activeDocumentId === doc.documentId ? null : doc.documentId;
       renderDocList();
+      renderDriveSection();
     });
 
     return item;
@@ -1465,6 +1893,250 @@
     }
   }
 
+  // Google Drive folder links (2026-08-22, user's own request "additionally
+  // to upload Documents, it should be possible to link to a Google Drive
+  // Folder" - see springchat3_google_drive.md in project memory for the
+  // full design). More than one folder can be linked at once (2026-08-22,
+  // same day - user's own bug report "when linking a new Google Drive
+  // folder, the previously uploaded files are lost. The folder should stay.
+  // A 2nd Folder should be added" - see springchat3_google_drive.md in
+  // project memory): driveStatus.folders mirrors DriveController.kt's
+  // DriveStatusResponse exactly - a list of per-folder statuses, not a
+  // single folder-or-nothing shape - refreshed wholesale by GET
+  // /drive/status on load, then by whatever POST
+  // /drive/{link,sync/{id},unlink/{id}} returns, same "always the full
+  // current picture" approach ChatAgent's own settings popup already uses
+  // for /settings.
+  let driveStatus = { folders: [] };
+
+  function formatSyncedAt(ts) {
+    return ts ? 'Synced ' + new Date(ts).toLocaleString() : 'Not yet synced';
+  }
+
+  // Builds one linked folder's card fresh, including its own sync/unlink
+  // button handlers closing directly over folder.folderId - simplest
+  // correct approach at this feature's scale (a handful of linked folders
+  // at most). renderDriveSection() below discards and rebuilds every card
+  // on each refresh rather than patching one in place, so there's no
+  // separate step to keep a folderId-keyed DOM lookup in sync the way
+  // populateModelSelect's dataset.activeValue has to for the settings
+  // popup's <select>s (see springchat3_settings.md in project memory).
+  function buildDriveFolderCard(folder) {
+    const card = document.createElement('div');
+    card.className = 'drive-folder-card';
+
+    const header = document.createElement('div');
+    header.className = 'drive-folder-header';
+
+    const icon = document.createElement('span');
+    icon.className = 'drive-folder-icon';
+    icon.textContent = '📁';
+    header.appendChild(icon);
+
+    const info = document.createElement('div');
+    info.className = 'drive-folder-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'drive-folder-name';
+    nameEl.textContent = folder.folderName;
+    nameEl.title = folder.folderName;
+    info.appendChild(nameEl);
+    const metaEl = document.createElement('div');
+    metaEl.className = 'drive-folder-meta';
+    const count = folder.files.length;
+    metaEl.textContent = formatSyncedAt(folder.lastSyncedAt) + ' · ' + count + (count === 1 ? ' PDF' : ' PDFs');
+    info.appendChild(metaEl);
+    header.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'drive-folder-actions';
+
+    const syncBtn = document.createElement('button');
+    syncBtn.type = 'button';
+    syncBtn.title = 'Sync now';
+    syncBtn.textContent = '↻';
+    syncBtn.addEventListener('click', async () => {
+      syncBtn.disabled = true;
+      syncBtn.classList.add('spinning');
+      try {
+        const res = await fetch('/drive/sync/' + encodeURIComponent(folder.folderId), { method: 'POST', headers: csrfHeader() });
+        if (!res.ok) throw new Error('Server responded with ' + res.status);
+        driveStatus = await res.json();
+        renderDriveSection();
+      } catch (err) {
+        addRow('error', 'Could not sync Google Drive folder: ' + err.message);
+      } finally {
+        syncBtn.disabled = false;
+        syncBtn.classList.remove('spinning');
+      }
+    });
+    actions.appendChild(syncBtn);
+
+    const unlinkBtn = document.createElement('button');
+    unlinkBtn.type = 'button';
+    unlinkBtn.title = 'Unlink folder';
+    unlinkBtn.textContent = '×';
+    // Unlinking only clears THIS folder's link - already-synced documents
+    // stay in the app's index untouched, and every other linked folder is
+    // completely unaffected (same "removes it from the app, not from
+    // Drive" principle a per-file × delete follows, see DriveLinkStore.kt's
+    // own doc comment) - so fetchDocuments() isn't called here, nothing
+    // about the "Uploaded" list changes.
+    unlinkBtn.addEventListener('click', async () => {
+      unlinkBtn.disabled = true;
+      try {
+        const res = await fetch('/drive/unlink/' + encodeURIComponent(folder.folderId), { method: 'POST', headers: csrfHeader() });
+        if (!res.ok) throw new Error('Server responded with ' + res.status);
+        driveStatus = await res.json();
+        renderDriveSection();
+      } catch (err) {
+        addRow('error', 'Could not unlink Google Drive folder: ' + err.message);
+      } finally {
+        unlinkBtn.disabled = false;
+      }
+    });
+    actions.appendChild(unlinkBtn);
+
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    const filesEl = document.createElement('div');
+    filesEl.className = 'drive-folder-files';
+    if (!count) {
+      const hint = document.createElement('div');
+      hint.className = 'doc-empty-hint';
+      hint.textContent = 'No PDFs found in this folder.';
+      filesEl.appendChild(hint);
+    } else {
+      for (const doc of folder.files) {
+        filesEl.appendChild(buildDocItem(doc, 'DRIVE'));
+      }
+    }
+    card.appendChild(filesEl);
+
+    return card;
+  }
+
+  // #drive-link-row (unlike the old single-folder #drive-not-linked) is
+  // never hidden here - linking is always available so a second (or third)
+  // folder can be added without unlinking the first (2026-08-22, see this
+  // section's own opening comment for why). Every currently linked folder
+  // gets its own fresh card, in whatever order GET /drive/status reports
+  // them (insertion order - see DriveLinkStore.kt's own list-append in
+  // `link`).
+  function renderDriveSection() {
+    driveFolderListEl.innerHTML = '';
+    for (const folder of driveStatus.folders) {
+      driveFolderListEl.appendChild(buildDriveFolderCard(folder));
+    }
+  }
+
+  async function fetchDriveStatus() {
+    try {
+      const res = await fetch('/drive/status');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      driveStatus = await res.json();
+    } catch (err) {
+      console.error('Could not load Google Drive status:', err);
+    }
+    renderDriveSection();
+  }
+
+  // Lazily loads the Google Picker JS API (https://apis.google.com/js/api.js
+  // + gapi.load('picker', ...)) - not loaded up front on every page load,
+  // since most turns never touch Drive at all. Cached as a promise so a
+  // second click while the first load is still in flight doesn't kick off a
+  // duplicate <script> fetch.
+  let drivePickerApiPromise = null;
+
+  function loadDrivePickerApi() {
+    if (window.google && window.google.picker) return Promise.resolve();
+    if (drivePickerApiPromise) return drivePickerApiPromise;
+    drivePickerApiPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://apis.google.com/js/api.js';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => gapi.load('picker', { callback: resolve, onerror: reject });
+      script.onerror = () => reject(new Error('Could not load the Google Picker script'));
+      document.head.appendChild(script);
+    });
+    return drivePickerApiPromise;
+  }
+
+  // GET /drive/picker-token hands back an access token from THIS app's own
+  // Google sign-in (already scoped to drive.readonly - see
+  // DriveController.kt's own doc comment for why no separate consent popup
+  // is needed here, unlike a typical standalone Picker integration) and GET
+  // /drive/config the Picker "developer key" the widget also needs
+  // alongside that token. google.picker.ViewId.FOLDERS +
+  // setIncludeFolders/setSelectFolderEnabled restricts the dialog to
+  // browsing and picking a folder, not a file - confirmed against Google's
+  // own Picker reference docs before writing this, not guessed.
+  async function openDriveFolderPicker() {
+    if (driveLinkRowEl.classList.contains('linking')) return;
+    driveLinkRowEl.classList.add('linking');
+    try {
+      await loadDrivePickerApi();
+      const [configRes, tokenRes] = await Promise.all([fetch('/drive/config'), fetch('/drive/picker-token')]);
+      if (!configRes.ok) throw new Error('Server responded with ' + configRes.status);
+      if (!tokenRes.ok) throw new Error('Server responded with ' + tokenRes.status);
+      const config = await configRes.json();
+      const { accessToken } = await tokenRes.json();
+
+      const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+        .setIncludeFolders(true)
+        .setSelectFolderEnabled(true);
+
+      const picker = new google.picker.PickerBuilder()
+        .setOAuthToken(accessToken)
+        .setDeveloperKey(config.pickerApiKey)
+        .addView(view)
+        .setCallback(handlePickerResponse)
+        .build();
+      picker.setVisible(true);
+    } catch (err) {
+      addRow('error', 'Could not open the Google Drive folder picker: ' + err.message);
+      driveLinkRowEl.classList.remove('linking');
+    }
+  }
+
+  function handlePickerResponse(data) {
+    if (data[google.picker.Response.ACTION] !== google.picker.Action.PICKED) {
+      // Cancelled - drop the "linking" state Picker was opened under.
+      if (data[google.picker.Response.ACTION] === google.picker.Action.CANCEL) {
+        driveLinkRowEl.classList.remove('linking');
+      }
+      return;
+    }
+    const folder = data[google.picker.Response.DOCUMENTS][0];
+    linkDriveFolder(folder[google.picker.Document.ID], folder[google.picker.Document.NAME]);
+  }
+
+  // POST /drive/link (DriveController.kt) both records the chosen folder -
+  // as an ADDITIONAL one alongside whatever else is already linked
+  // (2026-08-22, see this section's own opening comment) - AND runs that
+  // folder's first sync before responding, so its new card renders with
+  // real synced files right away rather than an empty "0 PDFs" that only
+  // fills in after a separate manual "Sync now" click.
+  async function linkDriveFolder(folderId, folderName) {
+    try {
+      const res = await fetch('/drive/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ folderId, folderName }),
+      });
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      driveStatus = await res.json();
+      renderDriveSection();
+    } catch (err) {
+      addRow('error', 'Could not link Google Drive folder: ' + err.message);
+    } finally {
+      driveLinkRowEl.classList.remove('linking');
+    }
+  }
+
+  driveLinkRowEl.addEventListener('click', openDriveFolderPicker);
+
   // Fills in the small "vX.Y.Z" label next to the header title from GET
   // /version (VersionController.kt), which reads the Gradle project version
   // via Spring Boot's build-info bean - see build.gradle.kts's
@@ -1479,6 +2151,40 @@
       versionLabelEl.textContent = data.version ? 'v' + data.version : '';
     } catch (err) {
       console.error('Could not load version:', err);
+    }
+  }
+
+  // Signed-in-user avatar chip + settings popup line (2026-08-22, see
+  // springchat3_authentication.md in project memory). GET /me
+  // (CurrentUserController.kt) reads the email/name/picture straight off the
+  // OIDC session every request already carries - nothing to cache client-side.
+  function applyCurrentUser(data) {
+    const label = data.name ? `${data.name} (${data.email || 'no email'})` : (data.email || '');
+    userMenuBtnEl.title = label;
+    userAvatarEl.textContent = '';
+    if (data.picture) {
+      const img = document.createElement('img');
+      img.src = data.picture;
+      img.alt = '';
+      userAvatarEl.appendChild(img);
+    } else {
+      const initial = (data.name || data.email || '?').trim().charAt(0);
+      userAvatarEl.textContent = initial;
+    }
+    // First name only, right of the avatar (user's own request) - the full
+    // name/email pair is still available via the button's hover title above,
+    // and via the "Signed in as" line in the settings popup for touch users.
+    userFirstnameEl.textContent = (data.name || '').trim().split(/\s+/)[0] || '';
+    signedInEmailEl.textContent = data.email || '(unknown)';
+  }
+
+  async function fetchCurrentUser() {
+    try {
+      const res = await fetch('/me');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      applyCurrentUser(await res.json());
+    } catch (err) {
+      console.error('Could not load current user:', err);
     }
   }
 
@@ -1552,28 +2258,66 @@
     settingsPopupEl.hidden = true;
   }
 
-  settingsBtnEl.addEventListener('click', () => {
-    if (settingsPopupEl.hidden) {
-      openSettingsPopup();
-    } else {
-      closeSettingsPopup();
-    }
-  });
-
   settingsCloseBtnEl.addEventListener('click', closeSettingsPopup);
 
   // Click-outside and Escape both close the popup, same conventions a
   // native <dialog> would give for free - this is a plain positioned <div>
   // instead (see the .settings-popup CSS comment for why), so both need
-  // wiring up by hand.
+  // wiring up by hand. The `e.target !== userMenuSettingsBtnEl` exclusion
+  // (was `e.target !== settingsBtnEl` back when a dedicated gear button
+  // opened this directly, see springchat3_authentication.md v3) matters for
+  // the same reason it always did: that button's own click handler already
+  // ran and set settingsPopupEl.hidden = false by the time this listener
+  // sees the same bubbled click, so without the exclusion this would
+  // immediately close the popup it was just asked to open.
   document.addEventListener('click', (e) => {
-    if (!settingsPopupEl.hidden && !settingsPopupEl.contains(e.target) && e.target !== settingsBtnEl) {
+    if (!settingsPopupEl.hidden && !settingsPopupEl.contains(e.target) && e.target !== userMenuSettingsBtnEl) {
       closeSettingsPopup();
     }
   });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !settingsPopupEl.hidden) closeSettingsPopup();
+  });
+
+  // Account menu (2026-08-22, user's own request) - same
+  // open/close/click-outside/Escape conventions as the settings popup above.
+  // Its "Settings" entry (userMenuSettingsBtnEl, below) is now the only way
+  // to open that popup - v2 kept a separate gear button doing the same
+  // thing, removed in v3 per the user's own follow-up request to consolidate
+  // the two (see springchat3_authentication.md for the full history).
+  function openUserMenu() {
+    userMenuEl.hidden = false;
+  }
+
+  function closeUserMenu() {
+    userMenuEl.hidden = true;
+  }
+
+  userMenuBtnEl.addEventListener('click', () => {
+    if (userMenuEl.hidden) {
+      openUserMenu();
+    } else {
+      closeUserMenu();
+    }
+  });
+
+  userMenuSettingsBtnEl.addEventListener('click', () => {
+    closeUserMenu();
+    openSettingsPopup();
+  });
+
+  // userMenuBtnEl.contains(e.target), not a plain !== check - this button
+  // has child elements (the avatar/firstname spans), so a click on either of
+  // those has e.target pointing at the child, not the button itself.
+  document.addEventListener('click', (e) => {
+    if (!userMenuEl.hidden && !userMenuEl.contains(e.target) && !userMenuBtnEl.contains(e.target)) {
+      closeUserMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !userMenuEl.hidden) closeUserMenu();
   });
 
   toolsEnabledToggleEl.addEventListener('change', async () => {
@@ -1583,7 +2327,7 @@
     try {
       const res = await fetch('/settings/tools', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
         body: JSON.stringify({ enabled }),
       });
       if (!res.ok) throw new Error('Server responded with ' + res.status);
@@ -1610,7 +2354,7 @@
       try {
         const res = await fetch('/settings/model', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...csrfHeader() },
           body: JSON.stringify({ role: selectEl.dataset.role, model }),
         });
         if (!res.ok) throw new Error('Server responded with ' + res.status);
@@ -1622,6 +2366,22 @@
         selectEl.disabled = false;
       }
     });
+  });
+
+  // POST /logout (SecurityConfig.kt) clears the server-side session; the
+  // reload that follows is what actually confirms it worked - an
+  // unauthenticated GET / immediately redirects back to Google's sign-in
+  // (see SecurityConfig's doc comment on why there's no separate /login
+  // page here), which is the expected, correct outcome of signing out, not
+  // an error.
+  signOutBtnEl.addEventListener('click', async () => {
+    signOutBtnEl.disabled = true;
+    try {
+      await fetch('/logout', { method: 'POST', headers: csrfHeader() });
+    } catch (err) {
+      console.error('Sign-out request failed, reloading anyway:', err);
+    }
+    location.reload();
   });
 
   async function fetchDocuments() {
@@ -1646,7 +2406,7 @@
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('/upload', { method: 'POST', body: formData });
+      const res = await fetch('/upload', { method: 'POST', headers: csrfHeader(), body: formData });
       if (!res.ok) throw new Error('Server responded with ' + res.status);
       const doc = await res.json();
       documents.push(doc);
@@ -1659,17 +2419,30 @@
     }
   }
 
+  // Same endpoint regardless of whether [documentId] came from an upload or
+  // a linked Google Drive folder (2026-08-22, see
+  // springchat3_google_drive.md in project memory) - DocumentController.kt's
+  // delete() also drops it from the server-side Drive-link bookkeeping, so
+  // this just needs to remove it from whichever local list actually has it
+  // and re-render both sections. Filters every folder's own `files` array
+  // (2026-08-22, more than one folder can be linked at once - see this
+  // page's Google Drive section for the full story) since which folder (if
+  // any) [documentId] came from isn't tracked client-side.
   async function deleteDocument(documentId) {
     try {
-      const res = await fetch('/documents/' + encodeURIComponent(documentId), { method: 'DELETE' });
+      const res = await fetch('/documents/' + encodeURIComponent(documentId), { method: 'DELETE', headers: csrfHeader() });
       if (!res.ok && res.status !== 404) throw new Error('Server responded with ' + res.status);
     } catch (err) {
       addRow('error', 'Could not delete document: ' + err.message);
       return;
     }
     documents = documents.filter((d) => d.documentId !== documentId);
+    for (const folder of driveStatus.folders) {
+      folder.files = folder.files.filter((d) => d.documentId !== documentId);
+    }
     if (activeDocumentId === documentId) activeDocumentId = null;
     renderDocList();
+    renderDriveSection();
   }
 
   docUploadBtnEl.addEventListener('click', () => docFileInputEl.click());
@@ -1700,10 +2473,31 @@
   // not an in-conversation preview. Falls back to collapsed-by-default on
   // narrow viewports the first time (no stored preference yet), since a
   // fixed 300px panel eats too much of a phone-width screen otherwise.
+  //
+  // Collapsing/expanding now also has to manage the drag-resized width (see
+  // the panel-resize-handle block below): that width is set as an inline
+  // style, which beats .side-panel's own CSS width and its .collapsed:44px
+  // override on specificity regardless of which was declared later - so
+  // collapsing has to explicitly clear it (letting .collapsed's 44px win)
+  // and expanding has to explicitly reapply whatever was last dragged, or a
+  // stored custom width would either leave the "collapsed" panel too wide or
+  // silently vanish the next time it's expanded.
   function setPanelCollapsed(collapsed) {
     sidePanelEl.classList.toggle('collapsed', collapsed);
     panelToggleEl.textContent = collapsed ? '‹' : '›';
     panelToggleEl.title = collapsed ? 'Expand documents panel' : 'Collapse documents panel';
+    panelResizeHandleEl.hidden = collapsed;
+    if (collapsed) {
+      sidePanelEl.style.width = '';
+    } else {
+      let storedWidth = null;
+      try {
+        storedWidth = localStorage.getItem('sidePanelWidth');
+      } catch {
+        // Storage unavailable - falls through to the CSS default (300px).
+      }
+      if (storedWidth) sidePanelEl.style.width = storedWidth + 'px';
+    }
     try {
       localStorage.setItem('sidePanelCollapsed', collapsed ? '1' : '0');
     } catch {
@@ -1714,6 +2508,49 @@
 
   panelToggleEl.addEventListener('click', () => {
     setPanelCollapsed(!sidePanelEl.classList.contains('collapsed'));
+  });
+
+  // Drag-to-resize (2026-08-22, user's own request "make the right panel
+  // expandable with slider") - Pointer Events rather than plain mouse
+  // events, so this also works with touch/pen: setPointerCapture below
+  // keeps move/up events targeted at the handle even if the pointer outruns
+  // it during a fast drag, which plain mouse events listening on the handle
+  // itself wouldn't survive.
+  const PANEL_MIN_WIDTH = 220;
+  const PANEL_MAX_WIDTH = 560;
+  let panelResizeStartX = 0;
+  let panelResizeStartWidth = 0;
+
+  function onPanelResizeMove(e) {
+    // Leave at least ~320px for the chat pane itself even on a narrow
+    // viewport, on top of the fixed PANEL_MAX_WIDTH ceiling.
+    const maxWidth = Math.min(PANEL_MAX_WIDTH, window.innerWidth - 320);
+    const delta = panelResizeStartX - e.clientX;
+    const width = Math.min(maxWidth, Math.max(PANEL_MIN_WIDTH, panelResizeStartWidth + delta));
+    sidePanelEl.style.width = width + 'px';
+  }
+
+  function stopPanelResize() {
+    sidePanelEl.classList.remove('resizing');
+    panelResizeHandleEl.classList.remove('dragging');
+    panelResizeHandleEl.removeEventListener('pointermove', onPanelResizeMove);
+    try {
+      localStorage.setItem('sidePanelWidth', String(Math.round(sidePanelEl.getBoundingClientRect().width)));
+    } catch {
+      // Storage unavailable - the chosen width just won't survive a reload.
+    }
+  }
+
+  panelResizeHandleEl.addEventListener('pointerdown', (e) => {
+    if (sidePanelEl.classList.contains('collapsed')) return;
+    e.preventDefault();
+    panelResizeStartX = e.clientX;
+    panelResizeStartWidth = sidePanelEl.getBoundingClientRect().width;
+    sidePanelEl.classList.add('resizing');
+    panelResizeHandleEl.classList.add('dragging');
+    panelResizeHandleEl.setPointerCapture(e.pointerId);
+    panelResizeHandleEl.addEventListener('pointermove', onPanelResizeMove);
+    panelResizeHandleEl.addEventListener('pointerup', stopPanelResize, { once: true });
   });
 
   let initiallyCollapsed;
@@ -1728,6 +2565,8 @@
   fetchVersion();
   fetchDocuments();
   fetchSettings();
+  fetchCurrentUser();
+  fetchDriveStatus();
 
   inputEl.addEventListener('input', autoGrow);
 

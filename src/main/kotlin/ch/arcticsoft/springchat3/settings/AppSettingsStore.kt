@@ -34,7 +34,13 @@ import java.io.File
  * comment for why that one stays read-only.
  */
 data class AppSettings(
-    val toolsEnabled: Boolean = true,
+    // Defaults to disabled (2026-08-22, was `true` - user's own request "make
+    // Tool use by default disabled" - see springchat3_settings.md in project
+    // memory). Only affects a fresh install with no settings.json yet, or a
+    // load failure (see [loadPersisted] below) - an existing installation
+    // that already persisted `toolsEnabled: true` keeps that value until the
+    // user flips the settings-popup toggle off themselves.
+    val toolsEnabled: Boolean = false,
     val modelOverrides: Map<String, String> = emptyMap(),
 )
 
