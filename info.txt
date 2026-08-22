@@ -17,3 +17,7 @@ keytool -genkeypair \
   -validity 3650 \
   -dname "CN=springchat3.arcticsoft.ch" \
   -ext "SAN=dns:springchat3.arcticsoft.ch"
+
+
+
+  cat file.json | jq

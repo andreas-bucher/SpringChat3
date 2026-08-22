@@ -42,3 +42,10 @@ bin/
 *.p12
 _to_delete/
 .env
+
+### Document Q&A persistence (springchat3_document_qa.md, project memory) ###
+# Default SPRINGCHAT3_DATA_DIR (application.yml) - uploaded documents'
+# extracted text and embedded chunks, persisted locally so they survive a
+# restart. Personal data, not something to track in git.
+/data/
+deploy/nginx

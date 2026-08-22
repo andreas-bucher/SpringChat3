@@ -16,13 +16,6 @@ GA'd July 2026), running against a local [Ollama](https://ollama.com) model.
   WebFlux `POST /chat` endpoint that invokes the agent platform reactively.
 - **`embabel-agent-starter-ollama`**: talks to a local Ollama daemon, no API
   key needed. Configured in `src/main/resources/application.yml`.
-- **`LangfuseTracing.kt`** (`src/main/kotlin/.../config/`): reports every
-  agent action, LLM call, and tool call to [Langfuse](https://langfuse.com)
-  as an OpenTelemetry trace, via Embabel's own `AgenticEventListener` hook
-  (same mechanism `GranularEventLogging.kt` uses for the `Embabel.Llm`/
-  `Embabel.Tools` loggers) rather than generic Spring/Micrometer tracing -
-  see that file's doc comment for why. Configured via `langfuse.*` in
-  `application.yml`; see the Langfuse section below.
 
 ## Prerequisites
 
@@ -66,62 +59,11 @@ list`) - Embabel auto-discovers and registers every local Ollama model by
 its exact tag, so e.g. `ollama pull mistral` is all `OLLAMA_GENERATION_MODEL`
 needs to resolve.
 
-## Langfuse tracing
-
-Every chat turn is reported to [Langfuse](https://langfuse.com) as one
-trace - `classifyIntent -> planTools -> executeTools` (with each tool call
-nested inside it) `-> draftReply -> reviewReply` - with the two LLM-calling
-steps shown as "generation" observations (model, input, output). See
-`LangfuseTracing.kt` (`config` package) for how and why.
-
-1. Run Langfuse self-hosted (e.g. `docker compose up` from the
-   [Langfuse repo](https://github.com/langfuse/langfuse) - defaults to
-   `http://localhost:3000`) or use [Langfuse Cloud](https://cloud.langfuse.com).
-2. Create a project, then grab a public/secret key pair from
-   **Settings -> API Keys**.
-3. Set env vars:
-   ```bash
-   LANGFUSE_PUBLIC_KEY=pk-lf-...
-   LANGFUSE_SECRET_KEY=sk-lf-...
-   # Only needed for Langfuse Cloud or a non-default self-hosted URL/port -
-   # defaults to http://localhost:3000/api/public/otel/v1/traces otherwise:
-   LANGFUSE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
-   ```
-4. Set `LANGFUSE_ENABLED=false` to turn tracing off entirely (e.g. if
-   Langfuse isn't running right now and you'd rather not see export-failure
-   log noise) - the app runs fine either way, since a failed span export
-   never blocks or crashes a chat request.
-5. Set `LANGFUSE_MASK_CONTENT=true` to replace every input/output value this
-   listener sends (trace, generation, and tool spans alike) with a fixed
-   placeholder instead of the real content - off by default, since this
-   app's own data (weather/location/transport queries) isn't sensitive.
-
-This uses Langfuse's current OTLP traces endpoint, not its older, simpler
-Ingestion API (`POST /api/public/ingestion`) - that one is deprecated and
-sunsets on Langfuse Cloud on 2026-11-16.
-
-Each trace shows the user's message and the final reply as the trace's own
-input/output (Langfuse v4 derives these from the root span's
-`langfuse.observation.input`/`output`, since the older dedicated
-`langfuse.trace.input`/`output` attributes are deprecated), and is named
-from a short prefix of the user's message instead of a generic "chat" label.
-
-**Known gap - no token usage/cost**: Embabel's `LlmRequestEvent`/
-`LlmResponseEvent` (1.0.0) don't expose token counts or cost, so
-"generation" observations in Langfuse show model name and input/output but
-no token/cost figures. That's an upstream Embabel limitation, not something
-fixable here - see the KNOWN GAP note in `LangfuseTracing.kt`.
-
-This integration was audited against Langfuse's own instrumentation
-checklist (from its `langfuse/skills` Claude-agent skill) on 2026-08-20;
-see `LangfuseTracing.kt`'s class doc comment and `springchat3_langfuse.md`
-in project memory for the full reasoning behind each item.
-
 ## HTTPS (production deployment)
 
 TLS is end-to-end: nginx terminates client-facing HTTPS for
 `springchat3.arcticsoft.ch` (already handling TLS for `arcticsoft.ch`
-itself, per the Langfuse section above) *and* the app terminates TLS itself
+itself) *and* the app terminates TLS itself
 too, via a password-protected PKCS12 keystore (Reactor Netty). This matters
 for one concrete feature: `static/index.html`'s `getBrowserLocation()` calls
 `navigator.geolocation.getCurrentPosition()`, which browsers only allow from
@@ -241,18 +183,6 @@ point rather than a guaranteed-green build. The most likely trouble spots if
 - The pinned Embabel version (`1.0.0`) and Spring Boot version (`3.5.9`) in
   `build.gradle.kts` - bump if a newer patch/release exists by the time you
   read this.
-- `LangfuseTracing.kt`'s Embabel event class names/signatures (`ActionExecutionStartEvent`,
-  `AgentProcessFinishedEvent`, `ObjectAddedEvent`, etc.) were confirmed
-  against embabel-agent's actual source on GitHub rather than guessed, but
-  the OpenTelemetry SDK calls (`OtlpHttpSpanExporter`, `SdkTracerProvider`,
-  ...) and the exact Langfuse OTel attribute names (`langfuse.observation.*`)
-  were not compile-checked or tested against a live Langfuse instance. One
-  specific thing that couldn't be confirmed: whether `AgentProcessCreationEvent`
-  or the `ObjectAddedEvent` for the initial `ChatRequest` fires first -
-  embabel-agent's concrete `AgentProcess`/blackboard-binding implementation
-  wasn't reachable via GitHub's raw file API to check, only the interface.
-  The code is written to not care either way (see `processSpan()`'s doc
-  comment), but it's worth confirming against the first real trace.
 
 Run `./gradlew build` on a machine with normal internet access first; if
 anything doesn't compile, paste the error back and it's a quick fix.
