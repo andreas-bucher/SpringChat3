@@ -44,29 +44,6 @@ embabel:
     llms:
       generation: ${OLLAMA_GENERATION_MODEL:magistral:24b-small-2506-q4_K_M}
 
-# Langfuse tracing (see LangfuseTracing.kt, config package) - reports every
-# @Action / LLM call / tool call as an OpenTelemetry span over OTLP, so each
-# chat turn shows up in Langfuse as one trace. Defaults assume a self-hosted
-# Langfuse on localhost:3000 (its default docker-compose port); point
-# LANGFUSE_OTLP_ENDPOINT at https://cloud.langfuse.com/api/public/otel/v1/traces
-# (or your region's cloud host) instead if you use Langfuse Cloud. Get
-# LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY from your Langfuse project's
-# Settings -> API Keys page - traces still get sent without them, but
-# Langfuse will likely reject them (401) since it expects Basic auth.
-# Set LANGFUSE_ENABLED=false to turn this off entirely (e.g. if you're not
-# running Langfuse right now and don't want the export-failure log noise).
-langfuse:
-  enabled: ${LANGFUSE_ENABLED:true}
-  otlp-endpoint: ${LANGFUSE_OTLP_ENDPOINT:http://localhost:3000/api/public/otel/v1/traces}
-  public-key: ${LANGFUSE_PUBLIC_KEY:}
-  secret-key: ${LANGFUSE_SECRET_KEY:}
-  # All-or-nothing: when true, every input/output attribute this listener
-  # sets (trace, generation, tool span) is replaced with a fixed placeholder
-  # instead of the real content. Off by default - this app's own data
-  # (weather/location/transport queries) isn't sensitive - see the SENSITIVE
-  # DATA note in LangfuseTracing.kt before pointing this at anything that is.
-  mask-content: ${LANGFUSE_MASK_CONTENT:false}
-
 # Default-deny logging: root at WARN so framework/library startup chatter
 # and internal traces are silent unless something's actually wrong, then
 # explicitly allow-list what's worth seeing. Things worth knowing if you
@@ -80,14 +57,6 @@ langfuse:
 #    result and one LLM-request/response pair per @Action, goal achieved,
 #    process completion). Set it back to INFO if you want that full
 #    narration while developing.
-#  - "Embabel.Llm" / "Embabel.Tools" are two MORE GRANULAR loggers this app
-#    adds itself (GranularEventLogging.kt, config package) alongside
-#    Embabel's default one - a second AgenticEventListener bean that picks
-#    out just LLM request/response traffic and just tool calls and logs
-#    each on its own logger, independent of the main "Embabel" narration.
-#    That's what lets you see prompts/responses and tool calls without
-#    turning the whole play-by-play back on. Add more such loggers in that
-#    file (with a matching entry here) for other event categories.
 #  - org.springframework.ai.retry.RetryUtils logs a WARN (with full stack
 #    trace) on every retried LLM call - left alone here on purpose, since
 #    root: WARN keeps it visible. That's the one that would have made the
@@ -95,9 +64,7 @@ langfuse:
 logging:
   level:
     root: INFO
-    ch.arcticsoft.springchat3: INFO
-    ch.arcticsoft.springchat3.web: INFO
+    ch.arcticsoft.springchat3: DEBUG
+    ch.arcticsoft.springchat3.web: DEBUG
     ch.arcticsoft.springchat3.agent: DEBUG
     Embabel: WARN
-    Embabel.Llm: INFO
-    Embabel.Tools: INFO

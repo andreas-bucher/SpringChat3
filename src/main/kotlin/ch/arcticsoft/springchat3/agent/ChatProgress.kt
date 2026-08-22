@@ -5,7 +5,7 @@ import reactor.core.publisher.Sinks
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * One live progress update pushed to the browser while [ChatAgent2] works
+ * One live progress update pushed to the browser while [ChatAgent] works
  * through a turn, over the NDJSON stream `ChatController`'s `/chat/stream`
  * returns - see index.html's live-trace rendering for how each variant
  * updates the UI.
@@ -21,21 +21,22 @@ import java.util.concurrent.ConcurrentHashMap
  * so there's no need to teach Jackson how to read [type] back into a
  * subtype either.
  *
- * [ToolStarted]/[ToolFinished] carry [index] - [PlannedToolCall]'s position
- * in the plan - rather than relying on arrival order to pair a tool's start
- * with its finish; executeTools2 runs calls sequentially today so order
- * alone would work, but an index makes the frontend's pairing correct even
- * if that ever changes to run calls concurrently.
+ * [ToolStarted]/[ToolFinished] carry [index] - a per-request counter
+ * [ToolCallProgressBridge] assigns itself, in the order it observes each
+ * tool call - rather than relying on arrival order to pair a tool's start
+ * with its finish. [tool] is a real Spring AI tool name (e.g.
+ * `"lookup_place"`) now, not the old hand-maintained `ToolName` enum - see
+ * [ToolExecution]'s doc comment for why.
  */
 sealed class ChatProgressEvent(val type: String) {
     data class StepStarted(val step: String) : ChatProgressEvent("step-started")
     data class StepFinished(val step: String, val seconds: Double) : ChatProgressEvent("step-finished")
-    data class ToolStarted(val index: Int, val tool: ToolName, val query: String) :
+    data class ToolStarted(val index: Int, val tool: String, val input: String) :
         ChatProgressEvent("tool-started")
     data class ToolFinished(
         val index: Int,
-        val tool: ToolName,
-        val query: String,
+        val tool: String,
+        val input: String,
         val seconds: Double,
         val failed: Boolean,
     ) : ChatProgressEvent("tool-finished")
@@ -48,7 +49,7 @@ sealed class ChatProgressEvent(val type: String) {
 }
 
 /**
- * Fan-in point between [ChatAgent2] (emits events as it works, correlated by
+ * Fan-in point between [ChatAgent] (emits events as it works, correlated by
  * [ChatRequest.correlationId]) and `ChatController`'s `/chat/stream`
  * endpoint (opens one sink per request, returns it as the streamed response
  * body, closes it once that request is done).
@@ -59,6 +60,7 @@ sealed class ChatProgressEvent(val type: String) {
  */
 @Component
 class ChatProgressBus {
+
     private val sinks = ConcurrentHashMap<String, Sinks.Many<ChatProgressEvent>>()
 
     fun open(correlationId: String): Sinks.Many<ChatProgressEvent> {

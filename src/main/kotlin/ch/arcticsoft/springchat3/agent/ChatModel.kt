@@ -6,14 +6,13 @@ package ch.arcticsoft.springchat3.agent
  * [latitude]/[longitude] come from the browser's Geolocation API (see
  * static/index.html) - null if the user's browser doesn't support it,
  * hasn't granted permission, or the frontend didn't bother asking (e.g. a
- * plain curl request). Unused by ChatAgent2 now that both the LOCATION and
- * WEATHER/WEATHER_FORECAST tools have been removed - nothing currently
- * reads them, but they're left here rather than deleted in case a future
- * tool needs the browser's location again. index.html still asks for and
- * sends them.
+ * plain curl request). Read by [ChatAgent.analyzeMessage] to construct a
+ * per-request [ch.arcticsoft.springchat3.tools.CurrentLocationTool] - see
+ * that class's doc comment for why the coordinates are baked into the tool
+ * object itself rather than something the LLM supplies as an argument.
  *
  * [correlationId] is set by ChatController's `/chat/stream` endpoint (a
- * fresh random ID per request) so ChatAgent2 can attribute the live
+ * fresh random ID per request) so [ChatAgent] can attribute the live
  * [ChatProgressEvent]s it emits while working (see ChatProgress.kt) to the
  * right in-flight browser connection via [ChatProgressBus]. It's blank for
  * the plain `/chat` endpoint (and for any caller that doesn't set it, e.g. a
@@ -27,61 +26,70 @@ data class ChatRequest(
     val correlationId: String = "",
 )
 
-/** The tools [ChatAgent2.planTools2] can choose from. */
-enum class ToolName {
-    PUBLIC_TRANSPORT,
-}
-
-/** One tool the LLM decided is relevant, with the input it should be called with. */
-data class PlannedToolCall(
-    val tool: ToolName,
-    val query: String,
-    val reason: String,
-)
+/**
+ * [ChatAgent.analyzeMessage]'s own createObject target - the small planning
+ * model's one-line summary of what it did, if anything. Deliberately
+ * lightweight and mostly discarded: the actual tool-call results
+ * [ChatAgent.answer] works from come from [ToolCallProgressBridge]'s capture
+ * of the real tool calls (see that class's doc comment), not from this
+ * model-written note - the note only exists because `createObject` needs
+ * *some* target type, and a short "what did you just do" summary is a cheap
+ * way to keep the small model's own output legible in logs if you go
+ * looking, without asking it to re-digest or summarize raw tool output the
+ * way a dedicated summarization pass would (this app deliberately has none -
+ * see [ChatAgent]'s class doc comment).
+ */
+data class ToolGatheringNote(val note: String = "")
 
 /**
- * Zero or more tool calls the LLM decided would help answer the message.
+ * Raw output of one tool call the LLM made natively via
+ * `PromptRunner.withToolObject(...)` (Spring AI/Embabel's real function
+ * calling - see [ch.arcticsoft.springchat3.tools.GeoTool]'s doc comment),
+ * plus how long it took to run.
  *
- * [timings] is never populated by the LLM (it's not mentioned in the
- * planTools2 prompt) - Jackson just leaves it at its default empty list when
- * parsing the LLM's JSON, and planTools2 attaches its own [StepTiming]
- * afterwards via `.copy(...)`. It exists here, on the plan itself, purely so
- * later steps (executeTools2, answer) - which receive this object from
- * Embabel's blackboard - can carry it forward and append their own; see
- * ChatAgent2 for how it accumulates.
+ * [tool] is the tool's registered name (its `@Tool(name = ...)`, e.g.
+ * `"lookup_place"`) rather than an enum - there's no longer a fixed,
+ * hand-maintained list of tools application code has to switch over, since
+ * dispatch now happens inside Spring AI's own tool-calling machinery, not a
+ * `when (call.tool)` this app writes itself.
+ *
+ * [input] is the tool call's raw argument payload as Embabel's
+ * `ToolCallRequestEvent`/`ToolCallResponseEvent` report it (attested, not
+ * compile-verified, to be the JSON-encoded arguments object, e.g.
+ * `{"place":"Interlaken"}` - see [ToolCallProgressBridge]'s doc comment) -
+ * not a single free-text "query" string the way this app's previous
+ * hand-rolled dispatch worked.
+ *
+ * Captured by [ToolCallProgressBridge] (an `AgenticEventListener`) rather
+ * than built inline in a loop [ChatAgent] itself controls, since the actual
+ * tool dispatch now happens inside `createObject(...)`, not in application
+ * code between two steps of a manual plan/execute split.
  */
-data class ToolPlan(val calls: List<PlannedToolCall>, val timings: List<StepTiming> = emptyList())
-
-/** Raw output of one executed tool call, plus how long it took to run. */
 data class ToolExecution(
-    val tool: ToolName,
-    val query: String,
+    val tool: String,
+    val input: String,
     val rawOutput: String,
     val durationMs: Long,
 )
 
-/** All tool executions for this turn (empty if none were needed). */
+/** All tool executions [ChatAgent.analyzeMessage] made this turn (empty if none were needed). */
 data class ToolResults(val executions: List<ToolExecution>, val timings: List<StepTiming> = emptyList())
 
 /**
  * One tool call surfaced to the UI alongside the reply, so the chat frontend
- * can show what the agent actually did this turn (e.g. a small "used
- * PUBLIC_TRANSPORT: Zürich HB" chip) instead of the tool use being invisible.
+ * can show what the agent actually did this turn (e.g. a small "Lookup
+ * place: Interlaken" chip) instead of the tool use being invisible.
  *
- * [failed] is a best-effort heuristic, not a hard guarantee: executeTools2
- * (see ChatAgent2.kt) always returns a JSON string, so this just checks
- * whether that string looks like one of the `{"error": ...}` shapes the
- * tools/executeTools2 themselves use for both thrown exceptions and
- * graceful not-found/no-result cases - it can't distinguish "tool threw"
- * from "tool legitimately reported a problem", but either way that's the
- * right moment to flag it in the UI.
+ * [failed] is a best-effort heuristic, not a hard guarantee - see
+ * [ToolCallProgressBridge] for how it's derived from the tool call's
+ * `Result<String>`.
  *
- * [seconds] is how long executeTools2 spent on this call, wall-clock, so the
- * UI can show e.g. "Public transport 0.4s".
+ * [seconds] is wall-clock time for this one call, so the UI can show e.g.
+ * "Lookup place 0.4s".
  */
 data class ToolCallSummary(
-    val tool: ToolName,
-    val query: String,
+    val tool: String,
+    val input: String,
     val failed: Boolean,
     val seconds: Double,
 )
@@ -90,9 +98,13 @@ data class ToolCallSummary(
  * Wall-clock time spent in one pipeline step (an @Action method), for the
  * UI's step-by-step timeline - the agent-level equivalent of
  * [ToolCallSummary.seconds] for individual tool calls. [step] is a short,
- * human-readable label (e.g. "Plan tools"), not the Kotlin method/action name.
+ * human-readable label (e.g. "Analyzing message ..."), not the Kotlin
+ * method/action name.
  */
 data class StepTiming(val step: String, val seconds: Double)
+
+/** Just the reply text - what the single answering LLM call is actually asked to produce. */
+data class AnswerText(val text: String)
 
 /**
  * Final reply returned to the caller. [toolCalls] and [steps] are both

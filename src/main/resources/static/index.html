@@ -47,12 +47,6 @@
     font-weight: 600;
   }
 
-  header p {
-    margin: 4px 0 0;
-    font-size: 13px;
-    color: var(--muted);
-  }
-
   #messages {
     flex: 1;
     overflow-y: auto;
@@ -111,9 +105,9 @@
 
   /*
    * Collapsed-by-default disclosure showing the pipeline timeline (see
-   * ChatReply.steps in ChatAgent2.kt) with each turn's tool calls nested
-   * under the "Execute tools" step - a native <details>/<summary> element
-   * so expand/collapse is free (keyboard-accessible, no JS state).
+   * ChatReply.steps in ChatAgent.kt) with each turn's tool calls nested
+   * under the "Analyzing message ..." step - a native <details>/<summary>
+   * element so expand/collapse is free (keyboard-accessible, no JS state).
    */
   .trace summary {
     list-style: none;
@@ -298,7 +292,6 @@
 <div class="app">
   <header>
     <h1>SpringChat3</h1>
-    <p>Local chat agent, served over WebFlux</p>
   </header>
 
   <div id="messages">
@@ -322,24 +315,36 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  // Matches ToolName in ChatModel.kt - falls back to the raw enum value for
-  // anything added there that isn't listed here yet.
+  // Matches each tool's real Spring AI @Tool(name = ...) in GeoTool.kt/
+  // CurrentLocationTool.kt/MeteoSwissWeatherTool.kt now, not a
+  // hand-maintained enum - falls back to the raw tool name for anything
+  // added there that isn't listed here yet.
   const TOOL_LABELS = {
-    PUBLIC_TRANSPORT: 'Public transport',
+    lookup_place: 'Lookup place',
+    get_user_location: 'Get user location',
+    get_meteoswiss_weather: 'MeteoSwiss weather',
   };
 
-  // Step label executeTools2 (ChatAgent2.kt) records - the step whose time
-  // the individual tool calls are a breakdown of, so that's where toolCalls
-  // get nested inside the trace rather than shown as a separate, unrelated
-  // timeline.
-  const EXECUTE_STEP_NAME = 'Execute tools';
+  // Step label ChatAgent.gatherInfo (ChatAgent.kt) records - the step whose
+  // time the individual tool calls are a breakdown of, so that's where
+  // toolCalls get nested inside the trace rather than shown as a separate,
+  // unrelated timeline.
+  const EXECUTE_STEP_NAME = 'Analyzing message ...';
+
+  // get_user_location takes no arguments, so its tool-input payload is
+  // empty/"{}" rather than a place name worth displaying - see
+  // ToolCallProgressBridge.kt for where this string comes from.
+  function toolInputLabel(input) {
+    return input && input !== '{}' && input !== 'null' ? input : '';
+  }
 
   function buildToolRow(call) {
     const row = document.createElement('div');
     row.className = 'trace-tool' + (call.failed ? ' failed' : '');
     row.title = call.failed ? 'This tool call did not return a usable result' : '';
     const label = document.createElement('span');
-    label.textContent = (TOOL_LABELS[call.tool] ?? call.tool) + (call.query ? ': ' + call.query : '');
+    const inputLabel = toolInputLabel(call.input);
+    label.textContent = (TOOL_LABELS[call.tool] ?? call.tool) + (inputLabel ? ': ' + inputLabel : '');
     row.appendChild(label);
     if (typeof call.seconds === 'number') {
       const time = document.createElement('span');
@@ -360,7 +365,7 @@
   }
 
   // Collapsed-by-default disclosure over ChatReply.steps + toolCalls (see
-  // ChatAgent2.kt) - a "1.9s · 2 tools" summary that expands into the full
+  // ChatAgent.kt) - a "1.9s · 2 tools" summary that expands into the full
   // per-step timeline, with tool calls nested under whichever step actually
   // ran them, rather than two permanently-visible, visually-flat chip rows.
   // Returns null when there's nothing to show (e.g. "hello", no tools).
@@ -496,7 +501,7 @@
     live.panel.appendChild(stepRow);
     live.stepStatusEls.set(stepName, status);
 
-    // ChatAgent2.kt's executeTools2 is the one step individual tool calls
+    // ChatAgent.kt's analyzeMessage is the one step individual tool calls
     // belong under - reserve the nested group here so tool-started events
     // (which can arrive interleaved with this step still "running") have
     // somewhere to attach.
@@ -518,12 +523,13 @@
     statusEl.appendChild(time);
   }
 
-  function addLiveTool(live, index, tool, query) {
-    if (!live.toolsGroupEl) return; // defensive: "Execute tools" always starts first
+  function addLiveTool(live, index, tool, input) {
+    if (!live.toolsGroupEl) return; // defensive: "Analyzing message ..." always starts first
     const row = document.createElement('div');
     row.className = 'trace-tool';
     const label = document.createElement('span');
-    label.textContent = (TOOL_LABELS[tool] ?? tool) + (query ? ': ' + query : '');
+    const inputLabel = toolInputLabel(input);
+    label.textContent = (TOOL_LABELS[tool] ?? tool) + (inputLabel ? ': ' + inputLabel : '');
     const status = document.createElement('span');
     status.className = 'trace-status';
     status.appendChild(spinnerEl());
@@ -554,7 +560,7 @@
         finishLiveStatus(live.stepStatusEls.get(event.step), event.seconds);
         break;
       case 'tool-started':
-        addLiveTool(live, event.index, event.tool, event.query);
+        addLiveTool(live, event.index, event.tool, event.input);
         break;
       case 'tool-finished':
         finishLiveTool(live, event.index, event.seconds, event.failed);

@@ -44,25 +44,6 @@ class ChatController(
         return invoke(request)
     }
 
-    /**
-     * Same agent invocation as [chat], but streams [ChatProgressEvent]s as
-     * newline-delimited JSON (one JSON object per line) while the turn is in
-     * progress, instead of making the browser wait for one final response -
-     * see index.html's live-trace rendering, and ChatProgress.kt for why
-     * this needs a per-request [correlationId] rather than something
-     * simpler.
-     *
-     * [ChatAgent2] emits every event up to and including [ChatProgressEvent.Done]
-     * itself (via [progressBus], correlated by [ChatRequest.correlationId])
-     * as it works - this method's own job is just: hand out a fresh
-     * correlation ID, kick off the (blocking) invocation with it, and turn
-     * an exception the invocation itself throws (as opposed to a single
-     * failed tool call, which ChatAgent2 already handles gracefully) into a
-     * [ChatProgressEvent.Failed] event rather than an HTTP error response -
-     * by the time anything's gone wrong here, the response body has already
-     * started streaming, so an HTTP-level error status is no longer an
-     * option anyway.
-     */
     @PostMapping(
         "/chat/stream",
         consumes = [MediaType.APPLICATION_JSON_VALUE],
@@ -78,7 +59,7 @@ class ChatController(
         invoke(request.copy(correlationId = correlationId))
             .subscribe(
                 {
-                    // Success: ChatAgent2.answer already emitted Done onto
+                    // Success: ChatAgent.answer already emitted Done onto
                     // this same sink before returning, so there's nothing
                     // left to push here - just let the stream end.
                     sink.tryEmitComplete()
@@ -95,6 +76,7 @@ class ChatController(
 
     private fun invoke(request: ChatRequest): Mono<ChatReply> =
         Mono.fromCallable {
+            log.debug("invoke...")
             AgentInvocation.builder(agentPlatform)
                 .build(ChatReply::class.java)
                 .invoke(request)
