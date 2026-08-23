@@ -71,18 +71,24 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * **Persisted to disk** via [SimpleVectorStore]'s own confirmed
  * `.save(File)`/`.load(File)` methods, one file per document:
- * `[dataDir]/<documentId>/vectorstore.json`. Write-through, same simple
- * approach as [DocumentStore]'s own persistence: [index] and [remove] each
- * re-save only the *one* document's store they touched, not every document's
- * - fine even as this app's document collection grows, unlike the old
- * shared-file design. A load failure for one document's file logs a warning
- * and starts that document with an empty store rather than failing
- * application startup or affecting any other document.
+ * `vectorstore.json` inside [documentId]'s own directory (resolved via
+ * [DocumentStore.documentDir] since 2026-08-23, so a project-scoped
+ * document's vector store lands in the same place as its `document.json` -
+ * see [vectorStoreFile]). Write-through, same simple approach as
+ * [DocumentStore]'s own persistence: [index] and [remove] each re-save only
+ * the *one* document's store they touched, not every document's - fine even
+ * as this app's document collection grows, unlike the old shared-file
+ * design. A load failure for one document's file logs a warning and starts
+ * that document with an empty store rather than failing application startup
+ * or affecting any other document. **[remove] must be called before
+ * [DocumentStore.remove] for the same [documentId]** - see that method's own
+ * doc comment.
  */
 @Component
 class DocumentIndex(
     private val embeddingModel: EmbeddingModel,
     @Value("\${springchat3.data-dir}") private val dataDir: String,
+    private val documentStore: DocumentStore,
 ) {
     private val log = LoggerFactory.getLogger(DocumentIndex::class.java)
     private val stores = ConcurrentHashMap<String, SimpleVectorStore>()
@@ -106,7 +112,13 @@ class DocumentIndex(
     // once Phase 2 is confirmed working at all.
     private val splitter = TokenTextSplitter.builder().build()
 
-    private fun vectorStoreFile(documentId: String) = File(File(dataDir, documentId), "vectorstore.json")
+    // Delegates to DocumentStore.documentDir (2026-08-23, see that method's
+    // own doc comment) so a project-scoped document's vector store lands
+    // alongside its document.json instead of this class independently
+    // guessing the same path - falls back to the old flat layout only for an
+    // id DocumentStore doesn't recognize at all (defensive, same as before
+    // this feature existed).
+    private fun vectorStoreFile(documentId: String) = File(documentStore.documentDir(documentId) ?: File(dataDir, documentId), "vectorstore.json")
 
     /**
      * Returns [documentId]'s [SimpleVectorStore], constructing and - if a

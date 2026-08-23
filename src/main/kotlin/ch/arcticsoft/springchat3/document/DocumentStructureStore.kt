@@ -48,10 +48,12 @@ data class DocumentStructure(val nodes: List<StructureNode>)
  * a chunk embedding to match against).
  *
  * Same per-document persistence pattern as [DocumentStore]/[DocumentIndex]:
- * `[dataDir]/<documentId>/structure.json`, write-through on [store], deleted
- * (with the directory cleaned up once all three files are gone - see
- * [DocumentStore.remove]'s doc comment for why the order across the three
- * `remove` calls doesn't matter) on [remove]. Unlike those two, this class
+ * `structure.json` inside [documentId]'s own directory (resolved via
+ * [DocumentStore.documentDir] - see [structureFile]), write-through on
+ * [store], deleted (with the directory cleaned up once all three files are
+ * gone - see [DocumentStore.remove]'s own doc comment for why THIS class's
+ * [remove] must be called before [DocumentStore.remove], not after) on
+ * [remove]. Unlike those two, this class
  * keeps an in-memory [cache] populated lazily on first [get] rather than
  * eagerly at construction - structure is looked up far less often (once per
  * chat turn with an attached document, at most) than document metadata
@@ -67,6 +69,7 @@ data class DocumentStructure(val nodes: List<StructureNode>)
 @Component
 class DocumentStructureStore(
     @Value("\${springchat3.data-dir}") private val dataDir: String,
+    private val documentStore: DocumentStore,
 ) {
     private val log = LoggerFactory.getLogger(DocumentStructureStore::class.java)
     private val objectMapper = jacksonObjectMapper()
@@ -76,7 +79,9 @@ class DocumentStructureStore(
         private val EMPTY = DocumentStructure(emptyList())
     }
 
-    private fun structureFile(documentId: String) = File(File(dataDir, documentId), "structure.json")
+    // Delegates to DocumentStore.documentDir - same reasoning as
+    // DocumentIndex.vectorStoreFile's own doc comment (2026-08-23).
+    private fun structureFile(documentId: String) = File(documentStore.documentDir(documentId) ?: File(dataDir, documentId), "structure.json")
 
     /** Persists [structure] for [documentId], overwriting any previous structure for it. */
     fun store(documentId: String, structure: DocumentStructure) {

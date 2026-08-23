@@ -38,6 +38,14 @@ import java.io.File
  * means "pull the latest version," so there's nothing to diff against
  * first, and Drive's own change-detection fields are less reliable for a
  * native Google Doc than the `md5Checksum` a binary PDF gets.
+ *
+ * [projectId] (2026-08-23, user's own request "link a working document...
+ * then save the files in the project folder of the active project" - see
+ * springchat3_projects_panel.md in project memory) is the project that was
+ * active when this Doc was first linked, or null for none - carried forward
+ * on every resync (see [ch.arcticsoft.springchat3.web.DriveController.syncDoc])
+ * rather than re-read from whatever project happens to be active at resync
+ * time, same "fixed at link time" reasoning [DriveLink.projectId] has.
  */
 data class LinkedGoogleDoc(
     val driveFileId: String,
@@ -45,6 +53,7 @@ data class LinkedGoogleDoc(
     val filename: String,
     val linkedAt: Long,
     val lastSyncedAt: Long,
+    val projectId: String? = null,
 )
 
 /**

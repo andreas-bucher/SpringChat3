@@ -365,6 +365,213 @@
   }
 
   /*
+   * Escapes .side-panel's own overflow:hidden (needed the rest of the time
+   * for the width-collapse transition above) while an anchored popup that
+   * lives inside this panel is actually open - toggled by JS alongside
+   * openUserMenu/closeUserMenu and openSettingsPopup/closeSettingsPopup
+   * (2026-08-23, see .user-menu-anchor's own CSS comment below for why
+   * those popups need this now that they live inside the left panel, not
+   * .modal-overlay's own "just go position:fixed and centered" fix for the
+   * exact same underlying problem - a real difference, not an oversight:
+   * these two stay anchored/opening-upward from the account button, which a
+   * centered modal can't do, so toggling overflow is what preserves that
+   * instead of switching them to the modal pattern too).
+   */
+  .side-panel.overlay-open {
+    overflow: visible;
+  }
+
+  /* Left-hand Projects panel (2026-08-23) - same .side-panel behavior, mirrored to the other edge of .layout. */
+  .side-panel--left {
+    border-left: none;
+    border-right: 1px solid var(--border);
+  }
+
+  .panel-empty-hint {
+    color: var(--muted);
+    font-size: 12.5px;
+    padding: 4px 16px 14px;
+    line-height: 1.4;
+  }
+
+  /* "+" next to the Projects section title (2026-08-23) - the title keeps its usual padding, this row just adds the button at its trailing edge. */
+  .panel-section-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-right: 10px;
+  }
+
+  .panel-section-action-btn {
+    /* Cancels .panel-icon-btn's own 6px padding so the glyph lines up with the section title's right edge instead of sitting 6px further in. */
+    margin: -6px -6px -6px 0;
+  }
+
+  .project-item {
+    margin: 6px 12px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .project-item:last-child {
+    margin-bottom: 12px;
+  }
+
+  .project-item:hover {
+    border-color: var(--accent);
+  }
+
+  /* Selected project (2026-08-23, see springchat3_projects_panel.md in project memory) - exclusive, same visual treatment as .doc-item.active. */
+  .project-item.active {
+    background: var(--bubble-assistant);
+    border-color: var(--accent);
+  }
+
+  .project-item-name-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .project-item-name {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* The project's 6-digit id (2026-08-23, see springchat3_projects_panel.md in project memory) - same treatment as .drive-folder-meta. */
+  .project-item-id {
+    font-size: 10.5px;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+
+  .project-item-desc {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 2px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  /*
+   * New Project modal (2026-08-23) - a centered, fixed-position overlay
+   * rather than a popup anchored to the + button: the left panel can be as
+   * narrow as 220px and .side-panel itself clips overflow, so an anchored
+   * dropdown (the pattern .settings-popup uses) would get cut off.
+   */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+  }
+
+  .modal-overlay[hidden] {
+    display: none;
+  }
+
+  .modal-dialog {
+    width: 360px;
+    max-width: calc(100vw - 32px);
+    background: var(--panel);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+    padding: 16px;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .modal-field {
+    display: block;
+    margin-bottom: 12px;
+  }
+
+  .modal-field-label {
+    display: block;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .modal-field input,
+  .modal-field textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    resize: vertical;
+  }
+
+  .modal-field input:focus,
+  .modal-field textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .modal-btn-secondary,
+  .modal-btn-primary {
+    border: none;
+    border-radius: 10px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .modal-btn-secondary {
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .modal-btn-secondary:hover {
+    background: var(--border);
+  }
+
+  .modal-btn-primary {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+
+  .modal-btn-primary:hover {
+    filter: brightness(0.95);
+  }
+
+  /*
    * Drag-to-resize (2026-08-22, user's own request "make the right panel
    * expandable with slider") - a thin flex sibling between .app and
    * #side-panel, not a child of either: a child would need position:relative
@@ -415,7 +622,7 @@
     font-size: 14px;
     font-weight: 600;
     white-space: nowrap;
-    /* "Uploaded Documents" (2026-08-22, was just "Documents" - see springchat3_google_drive.md in project memory) is long enough to need real truncation at the panel's minimum resized width, not just nowrap. */
+    /* "Project ressources" (2026-08-22, was just "Documents" - see springchat3_google_drive.md in project memory) is long enough to need real truncation at the panel's minimum resized width, not just nowrap. */
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
@@ -436,6 +643,34 @@
   }
 
   /*
+   * Pinned to the bottom of #projects-panel's flex column, a sibling of
+   * .side-panel-header/.side-panel-body rather than living inside the
+   * scrollable .side-panel-body (2026-08-23, "Move sign in panel with icon
+   * and user name to the left panel" - see springchat3_projects_panel.md in
+   * project memory and .user-menu-anchor's own CSS comment below for the
+   * full history) - only #projects-panel actually has this element right
+   * now (the account menu is a singleton), but the class is generic/
+   * unprefixed like .side-panel-header/-body themselves in case the
+   * right-hand #side-panel ever grows an analogous footer of its own.
+   */
+  .side-panel-footer {
+    flex-shrink: 0;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Collapsed (44px) - same centering treatment .side-panel.collapsed .side-panel-header already gets, and the firstname is dropped entirely (there's no room, and .user-firstname's own ellipsis-truncation would just show a sliver of it) - only the round avatar stays, same as a collapsed header keeps just its icon buttons. */
+  .side-panel.collapsed .side-panel-footer {
+    padding: 10px 4px;
+    display: flex;
+    justify-content: center;
+  }
+
+  .side-panel.collapsed .user-firstname {
+    display: none;
+  }
+
+  /*
    * Wraps the "Uploaded" list and the Google Drive section below it
    * (2026-08-22, see springchat3_google_drive.md in project memory) - this,
    * not #doc-dropzone, is now the flex:1/scrollable element, since the
@@ -448,6 +683,32 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+  }
+
+  /*
+   * #side-panel-content is the flex:1 element normally (Uploaded/Drive/
+   * Working Documents, stacked - same role .side-panel-body's direct
+   * children had before this wrapper existed), so it still needs its own
+   * flex-direction:column; #side-panel-disabled-hint (2026-08-23, see the
+   * HTML's own comment) takes over that role instead when shown - the two
+   * are always mutually hidden/shown together, never both visible.
+   */
+  #side-panel-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .side-panel-disabled-hint {
+    flex: 1;
+    margin: auto;
+    max-width: 220px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 24px 16px;
   }
 
   .panel-icon-btn {
@@ -839,7 +1100,13 @@
     flex-shrink: 0;
   }
 
-  .drive-folder-actions button {
+  /* button, plus a (2026-08-23, buildWebPageCard's own ↗ "open in a new
+     tab" action - the only .drive-folder-actions entry that isn't a button,
+     since a linked web page, unlike a Drive folder, has its own single URL
+     worth opening directly - see springchat3_projects_panel.md in project
+     memory) - same selector list as :hover/:disabled below so both element
+     types stay visually identical. */
+  .drive-folder-actions button, .drive-folder-actions a {
     border: none;
     background: none;
     cursor: pointer;
@@ -847,9 +1114,12 @@
     font-size: 13px;
     padding: 5px 6px;
     border-radius: 7px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
   }
 
-  .drive-folder-actions button:hover {
+  .drive-folder-actions button:hover, .drive-folder-actions a:hover {
     color: var(--text);
     background: var(--panel);
   }
@@ -874,6 +1144,43 @@
 
   .drive-folder-files .doc-empty-hint {
     padding: 6px 8px 10px;
+  }
+
+  /*
+   * Linked web pages (2026-08-23, user's own follow-up "Adapt the Look and
+   * feel from linked web pages. Make it same as for synced Google Drive
+   * Folders" - see springchat3_projects_panel.md in project memory) render
+   * via buildWebPageCard as a .drive-folder-card too, reusing that class's
+   * border/margin plus its header's icon/info/name/meta/actions layout -
+   * .webpage-card itself needs no rules of its own beyond .active below,
+   * everything else comes from .drive-folder-card/-header/-icon/-info/
+   * -name/-meta/-actions already above. .webpage-card-header is a plain
+   * <div>, not buildDriveFolderCard's <summary> - a linked web page has no
+   * nested file list to expand/collapse the way a Drive folder does, so the
+   * ▸ chevron .drive-folder-header::before draws (meaningful only on an
+   * actual <details> disclosure widget) is suppressed here rather than left
+   * as a dead, non-functional affordance.
+   */
+  .webpage-card-header::before {
+    content: none;
+  }
+
+  /*
+   * Unlike a Drive folder card (never itself selectable - only the
+   * individual .doc-item files inside are, via buildDocItem's own click
+   * handler), a whole web-page card doubles as its own single-document
+   * selection target (buildWebPageCard's own click handler toggles
+   * activeDocumentIds exactly like buildDocItem's does) - .active reuses
+   * .doc-item.active's exact background/border-color values so a selected
+   * web page looks the same as a selected document everywhere else in this
+   * panel, just applied to the outer card/header instead of a flat row.
+   */
+  .webpage-card.active {
+    border-color: var(--accent);
+  }
+
+  .webpage-card.active > .webpage-card-header {
+    background: var(--bubble-assistant);
   }
 
   .drive-badge {
@@ -944,19 +1251,19 @@
    * anchor the account menu itself opens from, and the only way to reach it
    * is that menu's "Settings" entry (openSettingsPopup(), called from
    * userMenuSettingsBtnEl's click handler further down). Anchored to open
-   * upward from there rather than fixed to the viewport - this works
-   * regardless of where .app actually sits in the viewport (it's centered,
-   * max-width 720px, so a viewport-fixed position would drift on wide
-   * screens).
+   * upward from there rather than fixed to the viewport - originally this
+   * worked regardless of where .app actually sits in the viewport (it's
+   * centered, max-width 720px, so a viewport-fixed position would drift on
+   * wide screens); still true after the 2026-08-23 move below, just
+   * anchored to a fixed-width panel instead of a centered one now.
    */
 
   /*
    * Signed-in-user account menu (2026-08-22, see springchat3_authentication.md
-   * in project memory) - sits at the bottom-left of the composer row (first
-   * flex child of form#composer). v1 was just a non-interactive avatar; v2
-   * (same day, user's own request "add additionally the firstname right of
-   * the icon... the icon + firstname shall be clickable... a menu opens with
-   * the entry Settings") turned it into a real trigger for a small dropdown,
+   * in project memory). v1 was just a non-interactive avatar; v2 (same day,
+   * user's own request "add additionally the firstname right of the icon...
+   * the icon + firstname shall be clickable... a menu opens with the entry
+   * Settings") turned it into a real trigger for a small dropdown,
    * .user-menu - back then it sat alongside a separate gear button that also
    * opened the settings popup directly. v3 (same day, user's own request
    * "The Settings icon and functionality shall be moved to the Settings menu
@@ -964,6 +1271,30 @@
    * entirely - this is now the only way into settings. The gear glyph itself
    * moved along with it (user's own follow-up, same day) into the "Settings"
    * menu item as a .user-menu-item-icon, rather than disappearing outright.
+   *
+   * v4 (2026-08-23, user's own request "Move sign in panel with icon and
+   * user name to the left panel" - see springchat3_projects_panel.md in
+   * project memory): relocated from being form#composer's first flex child
+   * to a new .side-panel-footer at the bottom of #projects-panel (see that
+   * class's own CSS comment). .user-menu-anchor/.user-menu/.settings-popup
+   * themselves needed NO positioning changes for this move - .user-menu-anchor
+   * is still `position: relative`, .user-menu/.settings-popup are still
+   * `position: absolute; bottom: calc(100% + 8px)` opening upward from it,
+   * and the anchor is still at the bottom of its container either way, so
+   * the geometry carries over exactly. The one real problem: #projects-panel
+   * is a .side-panel, and .side-panel has `overflow: hidden` (needed for its
+   * own width-collapse transition) - left as-is, that would clip both popups
+   * the instant they're open (.settings-popup is 480px wide; the panel can
+   * be resized down to 220px, see PANEL_MIN_WIDTH - it was ALREADY going to
+   * overflow the panel's own bounds even before considering the clipping
+   * itself), the exact failure mode the New Project modal's own CSS comment
+   * already warned about for anything anchored inside this panel. Fixed via
+   * `.side-panel.overlay-open` (see that class's own CSS comment) rather
+   * than switching these two to the centered `.modal-overlay`/`.modal-dialog`
+   * pattern that modal already uses to dodge the same problem - deliberately
+   * keeping their existing anchored/opens-upward feel instead of also
+   * changing how they look/behave, since only their positioning was ever
+   * broken by the move, not their existing design.
    */
   .user-avatar {
     width: 26px;
@@ -1238,16 +1569,41 @@
 </head>
 <body>
 <div class="layout">
-  <div class="app">
-    <header>
-      <h1>SpringChat3<span id="version-label" class="version-label"></span></h1>
-    </header>
-
-    <div id="messages">
-      <div id="empty-state">Say hello to get started.</div>
+  <aside id="projects-panel" class="side-panel side-panel--left">
+    <div class="side-panel-header">
+      <h2>Projects</h2>
+      <div class="side-panel-header-actions">
+        <button id="projects-toggle" type="button" class="panel-icon-btn" title="Collapse projects panel">‹</button>
+      </div>
     </div>
-
-    <form id="composer">
+    <div class="side-panel-body">
+      <div class="panel-section-title panel-section-title-row">
+        <span>Projects</span>
+        <button id="new-project-btn" type="button" class="panel-icon-btn panel-section-action-btn" title="New project">＋</button>
+      </div>
+      <div id="projects-list">
+        <div id="projects-empty-hint" class="panel-empty-hint">No projects yet.</div>
+      </div>
+      <div class="panel-divider"></div>
+      <div class="panel-section-title">Chats</div>
+      <div class="panel-empty-hint">No past chats yet.</div>
+    </div>
+    <!--
+      Signed-in-user account menu (2026-08-23, user's own request "Move sign
+      in panel with icon and user name to the left panel" - see
+      springchat3_projects_panel.md in project memory) - moved here from its
+      original spot as form#composer's first child (see this block's own
+      more detailed CSS comment, still on .user-menu-anchor/.user-menu/
+      .settings-popup below, for the full pre-move history). A new
+      .side-panel-footer sibling to .side-panel-header/.side-panel-body,
+      pinned to the bottom of the flex column the same way the header is
+      pinned to the top - not inside .side-panel-body, since that's the
+      scrollable Projects/Chats list and this should stay fixed in view
+      regardless of scroll position, the same reason a chat app's own
+      account entry always sits outside its scrollable channel/conversation
+      list.
+    -->
+    <div class="side-panel-footer">
       <div class="user-menu-anchor">
         <button id="user-menu-btn" type="button" class="user-menu-btn">
           <span id="user-avatar" class="user-avatar"></span>
@@ -1292,6 +1648,21 @@
           <div id="settings-error" class="settings-error" hidden></div>
         </div>
       </div>
+    </div>
+  </aside>
+
+  <div id="projects-panel-resize-handle" class="panel-resize-handle" title="Drag to resize"></div>
+
+  <div class="app">
+    <header>
+      <h1>SpringChat3<span id="version-label" class="version-label"></span></h1>
+    </header>
+
+    <div id="messages">
+      <div id="empty-state">Say hello to get started.</div>
+    </div>
+
+    <form id="composer">
       <textarea id="input" placeholder="Message SpringChat3…" rows="1" autofocus></textarea>
       <button id="send" type="submit">Send</button>
     </form>
@@ -1301,35 +1672,110 @@
 
   <aside id="side-panel" class="side-panel">
     <div class="side-panel-header">
-      <h2>Uploaded Documents</h2>
+      <h2>Project ressources</h2>
       <div class="side-panel-header-actions">
         <button id="doc-upload-btn" type="button" class="panel-icon-btn" title="Upload a PDF">＋</button>
         <button id="panel-toggle" type="button" class="panel-icon-btn" title="Collapse panel">›</button>
       </div>
     </div>
     <div class="side-panel-body">
-      <div id="doc-dropzone" class="doc-dropzone">
-        <div class="doc-empty-hint">No PDFs uploaded yet.<br>Drag one here, or click ＋ above.</div>
-      </div>
-      <input type="file" id="doc-file-input" accept="application/pdf" hidden>
+      <!--
+        Shown instead of #side-panel-content whenever no project is active
+        (2026-08-23, user's own request "When no project in left panel,
+        right panel should be disabled" - see springchat3_projects_panel.md
+        in project memory) - every resource in this panel now belongs to a
+        project (see that same file's v7 entry), so there's nothing
+        meaningful to show or upload/link into without one selected.
+      -->
+      <div id="side-panel-disabled-hint" class="side-panel-disabled-hint" hidden>Select or create a project on the left to view and manage its resources.</div>
+      <div id="side-panel-content">
+        <div class="panel-section-title">Uploaded Documents</div>
+        <div id="doc-dropzone" class="doc-dropzone">
+          <div class="doc-empty-hint">No PDFs uploaded yet.<br>Drag one here, or click ＋ above.</div>
+        </div>
+        <input type="file" id="doc-file-input" accept="application/pdf" hidden>
 
-      <div class="panel-divider"></div>
-      <div class="panel-section-title">Google Drive</div>
-      <div id="drive-link-row" class="drive-connect-row" title="Link a Google Drive folder">
-        <span class="drive-icon">🔗</span>
-        <span>Link a Google Drive folder</span>
-      </div>
-      <div id="drive-folder-list"></div>
+        <div class="panel-divider"></div>
+        <div class="panel-section-title">Google Drive</div>
+        <div id="drive-link-row" class="drive-connect-row" title="Link a Google Drive folder">
+          <span class="drive-icon">🔗</span>
+          <span>Link a Google Drive folder</span>
+        </div>
+        <div id="drive-folder-list"></div>
 
-      <div class="panel-divider"></div>
-      <div class="panel-section-title">Working Documents</div>
-      <div id="workingdoc-link-row" class="drive-connect-row" title="Link a Google Doc">
-        <span class="drive-icon">🔗</span>
-        <span>Link a Google Doc</span>
+        <div class="panel-divider"></div>
+        <div class="panel-section-title">Working Documents</div>
+        <div id="workingdoc-link-row" class="drive-connect-row" title="Link a Google Doc">
+          <span class="drive-icon">🔗</span>
+          <span>Link a Google Doc</span>
+        </div>
+        <div id="workingdoc-list"></div>
+
+        <!--
+          "Web Pages" section (2026-08-23, user's own request "add new
+          section 'WEB PAGES'... similar as 'GOOGLE DRIVE'... Button is Link
+          a Web Page. When clicked a popup opens and the user can enter an
+          url" - see springchat3_projects_panel.md in project memory).
+          Same section shape as Google Drive/Working Documents above
+          (title + a connect-row that opens a linking flow + a list below
+          it) - the link flow itself is a plain URL-entry popup
+          (#link-webpage-overlay below), not a Picker, since there's no
+          Google account/OAuth involved in fetching an arbitrary public URL.
+        -->
+        <div class="panel-divider"></div>
+        <div class="panel-section-title">Web Pages</div>
+        <div id="webpage-link-row" class="drive-connect-row" title="Link a web page">
+          <span class="drive-icon">🔗</span>
+          <span>Link a Web Page</span>
+        </div>
+        <div id="webpage-list"></div>
       </div>
-      <div id="workingdoc-list"></div>
     </div>
   </aside>
+</div>
+
+<div id="link-webpage-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3>Link a Web Page</h3>
+      <button id="link-webpage-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
+    </div>
+    <form id="link-webpage-form">
+      <label class="modal-field">
+        <span class="modal-field-label">URL</span>
+        <input type="url" id="link-webpage-url" required placeholder="https://example.com/article">
+      </label>
+      <div id="link-webpage-error" class="settings-error" hidden></div>
+      <div class="modal-actions">
+        <button type="button" id="link-webpage-cancel-btn" class="modal-btn-secondary">Cancel</button>
+        <button type="submit" id="link-webpage-submit-btn" class="modal-btn-primary">Link</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="new-project-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3>New Project</h3>
+      <button id="new-project-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
+    </div>
+    <form id="new-project-form">
+      <label class="modal-field">
+        <span class="modal-field-label">Name</span>
+        <input type="text" id="new-project-name" required maxlength="80" placeholder="Project name">
+      </label>
+      <label class="modal-field">
+        <span class="modal-field-label">Description</span>
+        <textarea id="new-project-description" rows="3" maxlength="280" placeholder="Short description (optional)"></textarea>
+      </label>
+      <div id="new-project-error" class="settings-error" hidden></div>
+      <div class="modal-actions">
+        <button type="button" id="new-project-cancel-btn" class="modal-btn-secondary">Cancel</button>
+        <button type="submit" id="new-project-submit-btn" class="modal-btn-primary">Create</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script>
@@ -1341,9 +1787,25 @@
   const sidePanelEl = document.getElementById('side-panel');
   const panelToggleEl = document.getElementById('panel-toggle');
   const panelResizeHandleEl = document.getElementById('panel-resize-handle');
+  const projectsPanelEl = document.getElementById('projects-panel');
+  const projectsToggleEl = document.getElementById('projects-toggle');
+  const projectsPanelResizeHandleEl = document.getElementById('projects-panel-resize-handle');
+  const projectsListEl = document.getElementById('projects-list');
+  const projectsEmptyHintEl = document.getElementById('projects-empty-hint');
+  const newProjectBtnEl = document.getElementById('new-project-btn');
+  const newProjectOverlayEl = document.getElementById('new-project-overlay');
+  const newProjectFormEl = document.getElementById('new-project-form');
+  const newProjectNameEl = document.getElementById('new-project-name');
+  const newProjectDescriptionEl = document.getElementById('new-project-description');
+  const newProjectCloseBtnEl = document.getElementById('new-project-close-btn');
+  const newProjectCancelBtnEl = document.getElementById('new-project-cancel-btn');
+  const newProjectSubmitBtnEl = document.getElementById('new-project-submit-btn');
+  const newProjectErrorEl = document.getElementById('new-project-error');
   const docUploadBtnEl = document.getElementById('doc-upload-btn');
   const docFileInputEl = document.getElementById('doc-file-input');
   const docDropzoneEl = document.getElementById('doc-dropzone');
+  const sidePanelContentEl = document.getElementById('side-panel-content');
+  const sidePanelDisabledHintEl = document.getElementById('side-panel-disabled-hint');
   const versionLabelEl = document.getElementById('version-label');
   const userMenuBtnEl = document.getElementById('user-menu-btn');
   const userAvatarEl = document.getElementById('user-avatar');
@@ -1364,6 +1826,15 @@
   const driveFolderListEl = document.getElementById('drive-folder-list');
   const workingDocLinkRowEl = document.getElementById('workingdoc-link-row');
   const workingDocListEl = document.getElementById('workingdoc-list');
+  const webPageLinkRowEl = document.getElementById('webpage-link-row');
+  const webPageListEl = document.getElementById('webpage-list');
+  const linkWebPageOverlayEl = document.getElementById('link-webpage-overlay');
+  const linkWebPageFormEl = document.getElementById('link-webpage-form');
+  const linkWebPageUrlEl = document.getElementById('link-webpage-url');
+  const linkWebPageCloseBtnEl = document.getElementById('link-webpage-close-btn');
+  const linkWebPageCancelBtnEl = document.getElementById('link-webpage-cancel-btn');
+  const linkWebPageSubmitBtnEl = document.getElementById('link-webpage-submit-btn');
+  const linkWebPageErrorEl = document.getElementById('link-webpage-error');
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -2042,9 +2513,36 @@
   // of a single value.
   let documents = [];
   let activeDocumentIds = new Set();
+  // Linked web pages (2026-08-23, "Web Pages" - see this section's own
+  // opening HTML comment / springchat3_projects_panel.md in project
+  // memory) - mirrors driveStatus.workingDocuments's shape (WebPageStatus
+  // from GET/POST /webpages) but kept as its own array rather than folded
+  // into driveStatus, since linking a web page involves no Drive/OAuth
+  // flow at all - it's a wholly separate, simpler feature that happens to
+  // render in the same right-panel section style.
+  let webPages = [];
 
   function formatCharCount(n) {
     return (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)) + ' chars';
+  }
+
+  // The right panel shows only the selected project's own resources
+  // (2026-08-23, user's own request "The right panel shall display the
+  // project resources of the selected project of the left panel... when the
+  // user selects another project... the right panel shall be refreshed" -
+  // see springchat3_projects_panel.md in project memory). renderDocList/
+  // renderDriveSection/renderWorkingDocsSection below all filter their
+  // source list through this one helper rather than each re-implementing the
+  // same comparison - `|| null` normalizes an absent/undefined `projectId`
+  // (a document/folder/Doc ingested with no active project, or a
+  // pre-2026-08-23 one from before this field existed) to `null`, matching
+  // `activeProjectId`'s own "nothing selected" value. `activeProjectId`
+  // itself is declared further down in this script (see that variable's own
+  // doc comment) - safe to forward-reference here since this function is
+  // only ever called later, after the whole script (and that declaration)
+  // has already run, same as `uploadDocument`'s own forward reference to it.
+  function matchesActiveProject(itemProjectId) {
+    return (itemProjectId || null) === activeProjectId;
   }
 
   // [badge] (e.g. "DRIVE", see buildDriveDocItem below/springchat3_google_drive.md
@@ -2070,6 +2568,15 @@
   // buildWorkingDocItem from WorkingDocumentStatus.driveFileId) rendered as
   // a second "open" icon alongside the existing PDF one, opening the actual
   // live Doc rather than this app's last-synced PDF snapshot of it.
+  //
+  // (2026-08-23: this used to also take a 5th [viewUrl] param for a linked
+  // web page - see springchat3_projects_panel.md in project memory - that
+  // REPLACED the default `/documents/{id}/file` view-link target with the
+  // page's own URL, since a web page has no PDF of its own to serve.
+  // Removed, unused, once Web Pages switched to buildWebPageCard's own
+  // .drive-folder-card-styled rendering the same day - see that function's
+  // own doc comment - which builds its own ↗ view link directly rather than
+  // going through buildDocItem at all.)
   function buildDocItem(doc, badge, onSync, driveDocUrl) {
     const item = document.createElement('div');
     item.className = 'doc-item' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
@@ -2181,10 +2688,19 @@
     // document is folded into ChatAgent.answer's prompt per turn (see
     // ChatRequest.documentIds's doc comment, 2026-08-22 multi-document
     // change; this used to be an exclusive single-selection toggle before
-    // that). Re-renders both lists, not just this one, since
-    // activeDocumentIds is shared across the "Uploaded" list and the
-    // Google Drive section - the newly (in)active document could live in
-    // either.
+    // that). Re-renders every list built via buildDocItem, not just this
+    // one, since activeDocumentIds is shared across all of them - the
+    // newly (in)active document could live in the plain "Uploaded" list, a
+    // Google Drive folder card, Working Documents, or (2026-08-23, fixed
+    // alongside the user's own bug report "it should be possible to select
+    // the web page" - see springchat3_projects_panel.md in project memory;
+    // Working Documents had this exact same gap, silently, since it never
+    // got its own render call added here either) Web Pages. Skipping any
+    // one of these left that list's own .doc-item.active highlight
+    // (background/border - see that class's own CSS) stuck stale until
+    // some unrelated re-render happened to touch it, which read as "you
+    // can't select this item" even though activeDocumentIds itself was
+    // updated correctly and the chat request already included it.
     item.addEventListener('click', () => {
       if (activeDocumentIds.has(doc.documentId)) {
         activeDocumentIds.delete(doc.documentId);
@@ -2193,6 +2709,8 @@
       }
       renderDocList();
       renderDriveSection();
+      renderWorkingDocsSection();
+      renderWebPagesSection();
     });
 
     return item;
@@ -2200,13 +2718,14 @@
 
   function renderDocList() {
     docDropzoneEl.innerHTML = '';
-    if (!documents.length) {
+    const visible = documents.filter((doc) => matchesActiveProject(doc.projectId));
+    if (!visible.length) {
       const hint = document.createElement('div');
       hint.className = 'doc-empty-hint';
       hint.innerHTML = 'No PDFs uploaded yet.<br>Drag one here, or click ＋ above.';
       docDropzoneEl.appendChild(hint);
     } else {
-      for (const doc of documents) {
+      for (const doc of visible) {
         docDropzoneEl.appendChild(buildDocItem(doc));
       }
     }
@@ -2467,7 +2986,7 @@
   // `link`).
   function renderDriveSection() {
     driveFolderListEl.innerHTML = '';
-    for (const folder of driveStatus.folders) {
+    for (const folder of driveStatus.folders.filter((f) => matchesActiveProject(f.projectId))) {
       driveFolderListEl.appendChild(buildDriveFolderCard(folder));
     }
   }
@@ -2510,7 +3029,7 @@
   // nothing further inside it to show as "still loading").
   function renderWorkingDocsSection() {
     workingDocListEl.innerHTML = '';
-    for (const doc of driveStatus.workingDocuments) {
+    for (const doc of driveStatus.workingDocuments.filter((d) => matchesActiveProject(d.projectId))) {
       workingDocListEl.appendChild(doc.syncing ? buildSyncingWorkingDocPlaceholder(doc) : buildWorkingDocItem(doc));
     }
   }
@@ -2684,14 +3203,24 @@
     // `{ folders: [...] }` literal would otherwise silently drop.
     driveStatus = {
       ...driveStatus,
-      folders: [...driveStatus.folders, { folderId, folderName, lastSyncedAt: null, files: [], syncing: true }],
+      // projectId on the placeholder itself (2026-08-23, see this section's
+      // own opening comment) - without it, renderDriveSection's
+      // matchesActiveProject filter would drop this placeholder as soon as
+      // it's rendered (an undefined projectId only matches "no project
+      // active"), hiding the in-progress "linking…" card while a project IS
+      // active.
+      folders: [...driveStatus.folders, { folderId, folderName, lastSyncedAt: null, files: [], syncing: true, projectId: activeProjectId }],
     };
     renderDriveSection();
     try {
       const res = await fetch('/drive/link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-        body: JSON.stringify({ folderId, folderName }),
+        // projectId (2026-08-23, see this section's own opening comment) is
+        // whatever project is active in the left panel right now - fixed at
+        // link time server-side (DriveLink.projectId), not re-read on a
+        // later "Sync now".
+        body: JSON.stringify({ folderId, folderName, projectId: activeProjectId }),
       });
       if (!res.ok) throw new Error('Server responded with ' + res.status);
       // POST /drive/link now responds as soon as the folder is linked and
@@ -2795,14 +3324,18 @@
   async function linkGoogleDoc(fileId, fileName) {
     driveStatus = {
       ...driveStatus,
-      workingDocuments: [...driveStatus.workingDocuments, { documentId: null, filename: fileName, lastSyncedAt: null, syncing: true }],
+      // projectId on the placeholder - same reasoning as linkDriveFolder's
+      // own placeholder above.
+      workingDocuments: [...driveStatus.workingDocuments, { documentId: null, filename: fileName, lastSyncedAt: null, syncing: true, projectId: activeProjectId }],
     };
     renderWorkingDocsSection();
     try {
       const res = await fetch('/drive/link-doc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-        body: JSON.stringify({ fileId, fileName }),
+        // projectId - same "active project at link time" value linkDriveFolder
+        // sends above (2026-08-23, see this section's own opening comment).
+        body: JSON.stringify({ fileId, fileName, projectId: activeProjectId }),
       });
       if (!res.ok) throw new Error(await readErrorMessage(res));
       driveStatus = await res.json();
@@ -2816,6 +3349,210 @@
   }
 
   workingDocLinkRowEl.addEventListener('click', openGoogleDocPicker);
+
+  // "Web Pages" (2026-08-23, user's own request "add new section 'WEB
+  // PAGES'... similar as 'GOOGLE DRIVE'... Button is Link a Web Page. When
+  // clicked a popup opens and the user can enter an url" - see
+  // springchat3_projects_panel.md in project memory). Unlike every Drive
+  // flow above, there's no Picker/OAuth round trip and no background sync -
+  // POST /webpages hands the URL to a self-hosted Firecrawl instance
+  // (WebPageController.kt server-side) and indexes the returned markdown
+  // right there, so the whole link happens in one request/response - no placeholder-card
+  // "syncing" state to render while linking, just a disabled submit button
+  // on the modal itself (see the submit handler below).
+  //
+  // A linked page renders as a .drive-folder-card-styled card via
+  // buildWebPageCard (2026-08-23, user's own follow-up "Adapt the Look and
+  // feel from linked web pages. Make it same as for synced Google Drive
+  // Folders" - see springchat3_projects_panel.md in project memory, and
+  // that card's own CSS comment for the full reasoning) - this replaced an
+  // earlier version that rendered via buildDocItem's plain flat row
+  // (badge 'WEB', same shape buildWorkingDocItem/a Drive-folder's own files
+  // still use). Kept as its own function rather than adding yet another
+  // buildDocItem param, since a web-page card's structure genuinely
+  // diverges from buildDocItem's row (a header block with its own
+  // icon/info/actions layout, not a single flat line) - forcing the two
+  // through one shared builder would leave more special-casing inside
+  // buildDocItem than duplicating this much smaller, self-contained
+  // function does.
+  function buildWebPageCard(page) {
+    const card = document.createElement('div');
+    card.className = 'drive-folder-card webpage-card' + (activeDocumentIds.has(page.documentId) ? ' active' : '');
+    card.title = page.title;
+
+    const header = document.createElement('div');
+    header.className = 'drive-folder-header webpage-card-header';
+
+    const icon = document.createElement('span');
+    icon.className = 'drive-folder-icon';
+    icon.textContent = '🌐';
+    header.appendChild(icon);
+
+    const info = document.createElement('div');
+    info.className = 'drive-folder-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'drive-folder-name';
+    nameEl.textContent = page.title;
+    info.appendChild(nameEl);
+    const metaEl = document.createElement('div');
+    metaEl.className = 'drive-folder-meta';
+    metaEl.textContent = formatSyncedAt(page.lastSyncedAt) + ' · ' + formatCharCount(page.characterCount);
+    info.appendChild(metaEl);
+    header.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'drive-folder-actions';
+
+    // "Open in a new tab" (buildDocItem's own ↗ view link has the same
+    // idea/title text for a PDF - this is its web-page counterpart, opening
+    // [page.url] itself rather than a PDF snapshot this document never has).
+    const viewLink = document.createElement('a');
+    viewLink.href = page.url;
+    viewLink.target = '_blank';
+    viewLink.rel = 'noopener';
+    viewLink.title = 'Open web page in a new tab';
+    viewLink.textContent = '↗';
+    viewLink.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the card active/inactive
+    });
+    actions.appendChild(viewLink);
+
+    const syncBtn = document.createElement('button');
+    syncBtn.type = 'button';
+    syncBtn.title = 'Re-sync this web page';
+    syncBtn.textContent = '↻';
+    syncBtn.addEventListener('click', async (e) => {
+      e.stopPropagation(); // don't also toggle the card active/inactive
+      syncBtn.disabled = true;
+      syncBtn.classList.add('spinning');
+      try {
+        const res = await fetch('/webpages/sync/' + encodeURIComponent(page.documentId), { method: 'POST', headers: csrfHeader() });
+        if (!res.ok) throw new Error(await readErrorMessage(res));
+        const updated = await res.json();
+        webPages = webPages.map((p) => (p.documentId === updated.documentId ? updated : p));
+        renderWebPagesSection();
+      } catch (err) {
+        addRow('error', 'Could not re-sync web page: ' + err.message);
+      } finally {
+        syncBtn.disabled = false;
+        syncBtn.classList.remove('spinning');
+      }
+    });
+    actions.appendChild(syncBtn);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.title = 'Delete this web page';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the card active/inactive
+      deleteDocument(page.documentId);
+    });
+    actions.appendChild(removeBtn);
+
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    // Selection (2026-08-23, same shared-activeDocumentIds toggle
+    // buildDocItem's own click handler documents in full - re-renders all
+    // four document lists since the newly (in)active document could live in
+    // any of them, including this one).
+    card.addEventListener('click', () => {
+      if (activeDocumentIds.has(page.documentId)) {
+        activeDocumentIds.delete(page.documentId);
+      } else {
+        activeDocumentIds.add(page.documentId);
+      }
+      renderDocList();
+      renderDriveSection();
+      renderWorkingDocsSection();
+      renderWebPagesSection();
+    });
+
+    return card;
+  }
+
+  function renderWebPagesSection() {
+    webPageListEl.innerHTML = '';
+    for (const page of webPages.filter((p) => matchesActiveProject(p.projectId))) {
+      webPageListEl.appendChild(buildWebPageCard(page));
+    }
+  }
+
+  async function fetchWebPages() {
+    try {
+      const res = await fetch('/webpages');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      webPages = await res.json();
+    } catch (err) {
+      console.error('Could not load linked web pages:', err);
+    }
+    renderWebPagesSection();
+  }
+
+  function showLinkWebPageError(message) {
+    linkWebPageErrorEl.textContent = message;
+    linkWebPageErrorEl.hidden = false;
+  }
+
+  function clearLinkWebPageError() {
+    linkWebPageErrorEl.textContent = '';
+    linkWebPageErrorEl.hidden = true;
+  }
+
+  function openLinkWebPageModal() {
+    linkWebPageFormEl.reset();
+    clearLinkWebPageError();
+    linkWebPageOverlayEl.hidden = false;
+    linkWebPageUrlEl.focus();
+  }
+
+  function closeLinkWebPageModal() {
+    linkWebPageOverlayEl.hidden = true;
+  }
+
+  webPageLinkRowEl.addEventListener('click', openLinkWebPageModal);
+  linkWebPageCloseBtnEl.addEventListener('click', closeLinkWebPageModal);
+  linkWebPageCancelBtnEl.addEventListener('click', closeLinkWebPageModal);
+
+  // Backdrop click / Escape close this modal too - duplicated rather than
+  // shared with the New Project modal's own identical-looking listeners
+  // (openNewProjectModal/closeNewProjectModal below) - this codebase's
+  // established "one small listener per modal" precedent, not a shared
+  // generic modal helper.
+  linkWebPageOverlayEl.addEventListener('click', (e) => {
+    if (e.target === linkWebPageOverlayEl) closeLinkWebPageModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !linkWebPageOverlayEl.hidden) closeLinkWebPageModal();
+  });
+
+  linkWebPageFormEl.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = linkWebPageUrlEl.value.trim();
+    if (!url) return;
+    clearLinkWebPageError();
+    linkWebPageSubmitBtnEl.disabled = true;
+    try {
+      const res = await fetch('/webpages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        // projectId - same "active project at link time" convention every
+        // other link-a-thing flow in this panel follows (linkDriveFolder/
+        // linkGoogleDoc above).
+        body: JSON.stringify({ url, projectId: activeProjectId }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      webPages.push(await res.json());
+      renderWebPagesSection();
+      closeLinkWebPageModal();
+    } catch (err) {
+      showLinkWebPageError('Could not link web page: ' + err.message);
+    } finally {
+      linkWebPageSubmitBtnEl.disabled = false;
+    }
+  });
 
   // Fills in the small "vX.Y.Z" label next to the header title from GET
   // /version (VersionController.kt), which reads the Gradle project version
@@ -2928,14 +3665,27 @@
     }
   }
 
+  // .side-panel.overlay-open (2026-08-23, see #projects-panel's own CSS
+  // comment for the full "why") has to reflect BOTH popups' state at once,
+  // not just whichever one this call happens to be opening/closing - it's a
+  // single shared class on the one shared ancestor (#projects-panel), so
+  // e.g. closeUserMenu() right after openSettingsPopup() (see
+  // userMenuSettingsBtnEl's click handler below) must not remove it while
+  // the settings popup it just opened is still up.
+  function updateProjectsPanelOverlayOpen() {
+    projectsPanelEl.classList.toggle('overlay-open', !userMenuEl.hidden || !settingsPopupEl.hidden);
+  }
+
   function openSettingsPopup() {
     clearSettingsError();
     settingsPopupEl.hidden = false;
+    updateProjectsPanelOverlayOpen();
     fetchSettings();
   }
 
   function closeSettingsPopup() {
     settingsPopupEl.hidden = true;
+    updateProjectsPanelOverlayOpen();
   }
 
   settingsCloseBtnEl.addEventListener('click', closeSettingsPopup);
@@ -2968,10 +3718,12 @@
   // the two (see springchat3_authentication.md for the full history).
   function openUserMenu() {
     userMenuEl.hidden = false;
+    updateProjectsPanelOverlayOpen();
   }
 
   function closeUserMenu() {
     userMenuEl.hidden = true;
+    updateProjectsPanelOverlayOpen();
   }
 
   userMenuBtnEl.addEventListener('click', () => {
@@ -3083,12 +3835,21 @@
   // means you want to ask about it next; whatever else was already
   // selected stays selected (2026-08-22 multi-document change - see
   // activeDocumentIds' own doc comment).
+  //
+  // projectId (2026-08-23, user's own request "when uploading a file...
+  // then save the files in the project folder of the active project" - see
+  // springchat3_projects_panel.md in project memory) is sent as a query
+  // param, not a second multipart part - upload()'s own doc comment
+  // (DocumentController.kt) explains why: avoiding Spring WebFlux
+  // multipart-text-part binding, which this app has never relied on
+  // elsewhere.
   async function uploadDocument(file) {
     docUploadBtnEl.disabled = true;
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('/upload', { method: 'POST', headers: csrfHeader(), body: formData });
+      const url = activeProjectId ? '/upload?projectId=' + encodeURIComponent(activeProjectId) : '/upload';
+      const res = await fetch(url, { method: 'POST', headers: csrfHeader(), body: formData });
       if (!res.ok) throw new Error('Server responded with ' + res.status);
       const doc = await res.json();
       documents.push(doc);
@@ -3097,7 +3858,14 @@
     } catch (err) {
       addRow('error', 'Could not upload ' + file.name + ': ' + err.message);
     } finally {
-      docUploadBtnEl.disabled = false;
+      // updateSidePanelEnabled() (2026-08-23), not a bare `docUploadBtnEl.disabled
+      // = false` - if the user deselected the active project while this
+      // upload was still in flight (unlikely, but the button/dropzone that
+      // triggered this call are only reachable while a project IS active -
+      // see that function's own doc comment), re-enabling the button
+      // unconditionally here would leave it clickable with no project to
+      // upload into.
+      updateSidePanelEnabled();
     }
   }
 
@@ -3127,10 +3895,12 @@
       folder.files = folder.files.filter((d) => d.documentId !== documentId);
     }
     driveStatus.workingDocuments = driveStatus.workingDocuments.filter((d) => d.documentId !== documentId);
+    webPages = webPages.filter((p) => p.documentId !== documentId);
     activeDocumentIds.delete(documentId);
     renderDocList();
     renderDriveSection();
     renderWorkingDocsSection();
+    renderWebPagesSection();
   }
 
   docUploadBtnEl.addEventListener('click', () => docFileInputEl.click());
@@ -3250,11 +4020,280 @@
   }
   setPanelCollapsed(initiallyCollapsed);
 
+  // Left-hand Projects panel (2026-08-23, placeholder UI - no backend yet):
+  // same collapse/resize behavior as the right-hand documents panel above,
+  // under its own localStorage keys. Being on the opposite edge flips two
+  // things: the resize delta's sign (dragging right *grows* this panel,
+  // where it *shrinks* the right one) and which chevron means "expand".
+  function setProjectsPanelCollapsed(collapsed) {
+    projectsPanelEl.classList.toggle('collapsed', collapsed);
+    projectsToggleEl.textContent = collapsed ? '›' : '‹';
+    projectsToggleEl.title = collapsed ? 'Expand projects panel' : 'Collapse projects panel';
+    projectsPanelResizeHandleEl.hidden = collapsed;
+    if (collapsed) {
+      projectsPanelEl.style.width = '';
+    } else {
+      let storedWidth = null;
+      try {
+        storedWidth = localStorage.getItem('projectsPanelWidth');
+      } catch {
+        // Storage unavailable - falls through to the CSS default (300px).
+      }
+      if (storedWidth) projectsPanelEl.style.width = storedWidth + 'px';
+    }
+    try {
+      localStorage.setItem('projectsPanelCollapsed', collapsed ? '1' : '0');
+    } catch {
+      // Storage unavailable (private browsing, etc.) - the collapse choice
+      // just won't survive a reload, which is a harmless degradation.
+    }
+  }
+
+  projectsToggleEl.addEventListener('click', () => {
+    setProjectsPanelCollapsed(!projectsPanelEl.classList.contains('collapsed'));
+  });
+
+  let projectsPanelResizeStartX = 0;
+  let projectsPanelResizeStartWidth = 0;
+
+  function onProjectsPanelResizeMove(e) {
+    const maxWidth = Math.min(PANEL_MAX_WIDTH, window.innerWidth - 320);
+    const delta = e.clientX - projectsPanelResizeStartX;
+    const width = Math.min(maxWidth, Math.max(PANEL_MIN_WIDTH, projectsPanelResizeStartWidth + delta));
+    projectsPanelEl.style.width = width + 'px';
+  }
+
+  function stopProjectsPanelResize() {
+    projectsPanelEl.classList.remove('resizing');
+    projectsPanelResizeHandleEl.classList.remove('dragging');
+    projectsPanelResizeHandleEl.removeEventListener('pointermove', onProjectsPanelResizeMove);
+    try {
+      localStorage.setItem('projectsPanelWidth', String(Math.round(projectsPanelEl.getBoundingClientRect().width)));
+    } catch {
+      // Storage unavailable - the chosen width just won't survive a reload.
+    }
+  }
+
+  projectsPanelResizeHandleEl.addEventListener('pointerdown', (e) => {
+    if (projectsPanelEl.classList.contains('collapsed')) return;
+    e.preventDefault();
+    projectsPanelResizeStartX = e.clientX;
+    projectsPanelResizeStartWidth = projectsPanelEl.getBoundingClientRect().width;
+    projectsPanelEl.classList.add('resizing');
+    projectsPanelResizeHandleEl.classList.add('dragging');
+    projectsPanelResizeHandleEl.setPointerCapture(e.pointerId);
+    projectsPanelResizeHandleEl.addEventListener('pointermove', onProjectsPanelResizeMove);
+    projectsPanelResizeHandleEl.addEventListener('pointerup', stopProjectsPanelResize, { once: true });
+  });
+
+  let projectsInitiallyCollapsed;
+  try {
+    const stored = localStorage.getItem('projectsPanelCollapsed');
+    projectsInitiallyCollapsed = stored !== null ? stored === '1' : window.matchMedia('(max-width: 700px)').matches;
+  } catch {
+    projectsInitiallyCollapsed = false;
+  }
+  setProjectsPanelCollapsed(projectsInitiallyCollapsed);
+
+  // New Project modal (2026-08-23, user's own request "Add a + button right
+  // to the menu PROJECTS... popup... project name and short description can
+  // be entered") - backed by real persistence since the same-day follow-up
+  // request ("the project shall get a unique 6 digit identifier... a
+  // project folder shall be created... in the project folder the project
+  // meta data are stored" - see springchat3_projects_panel.md in project
+  // memory): GET/POST /projects (ProjectController.kt/ProjectStore.kt), same
+  // fetch/render convention as fetchDocuments()/renderDocList() below.
+  let projects = [];
+
+  // Active project (2026-08-23, user's own request "In Projects Menu, all
+  // projects are enlisted. only one of the projects can be active.") - a
+  // single nullable id, not a Set: unlike activeDocumentIds (which moved to
+  // multi-select, see that variable's own doc comment), this is
+  // deliberately exclusive - selecting a project clears whatever else was
+  // selected, same as activeDocumentIds' own single-id behavior before that
+  // change. Sent to the server on every upload/Drive-folder-link/Working-
+  // Document-link since v7 (see uploadDocument/linkDriveFolder/linkGoogleDoc
+  // below), and drives which project's resources the right panel shows
+  // since v8 (see matchesActiveProject) and whether it's usable at all since
+  // v9 below (see updateSidePanelEnabled).
+  let activeProjectId = null;
+
+  // The right panel is disabled - its three resource sections hidden behind
+  // a plain explanatory message, and its own "+" upload button disabled -
+  // whenever no project is active (2026-08-23, user's own request "When no
+  // project in left panel, right panel should be disabled" - see
+  // springchat3_projects_panel.md in project memory): every resource there
+  // now belongs to a project (v7), so there's nothing meaningful to show or
+  // upload/link into without one selected. In practice this should rarely be
+  // seen once at least one project exists, since fetchProjects() below
+  // auto-selects the first project on load (same request, "When user logs
+  // in a project shall be selected. Choose first.") - it's mainly visible
+  // for a brand new user with zero projects yet, or if the user manually
+  // deselects the active project by clicking it again.
+  //
+  // Deliberately doesn't touch #drive-link-row/#workingdoc-link-row's own
+  // `disabled` state directly (they're plain `<div>`s, not real `<button>`
+  // elements, so there's no such attribute to set) - hiding their whole
+  // container (#side-panel-content) makes them unreachable regardless, same
+  // effect without needing a second, parallel disabling mechanism.
+  function updateSidePanelEnabled() {
+    const enabled = activeProjectId !== null;
+    sidePanelContentEl.hidden = !enabled;
+    sidePanelDisabledHintEl.hidden = enabled;
+    docUploadBtnEl.disabled = !enabled;
+  }
+  updateSidePanelEnabled();
+
+  function buildProjectItem(project) {
+    const item = document.createElement('div');
+    item.className = 'project-item' + (project.projectId === activeProjectId ? ' active' : '');
+    const nameRow = document.createElement('div');
+    nameRow.className = 'project-item-name-row';
+    const name = document.createElement('div');
+    name.className = 'project-item-name';
+    name.textContent = project.name;
+    nameRow.appendChild(name);
+    const id = document.createElement('span');
+    id.className = 'project-item-id';
+    id.textContent = '#' + project.projectId;
+    nameRow.appendChild(id);
+    item.appendChild(nameRow);
+    if (project.description) {
+      const desc = document.createElement('div');
+      desc.className = 'project-item-desc';
+      desc.textContent = project.description;
+      item.appendChild(desc);
+    }
+    // Click toggles this project's active state, exclusively - picking a
+    // different project silently drops the previous selection, and
+    // clicking the already-active one deselects it entirely. Also refreshes
+    // the right panel's three resource lists (2026-08-23, user's own request
+    // "The right panel shall display the project resources of the selected
+    // project... when the user selects another project... the right panel
+    // shall be refreshed" - see springchat3_projects_panel.md in project
+    // memory) - documents/driveStatus themselves are unchanged (already hold
+    // every project's resources, fetched once - see matchesActiveProject's
+    // own doc comment), so this only needs to re-render, not re-fetch.
+    item.addEventListener('click', () => {
+      activeProjectId = activeProjectId === project.projectId ? null : project.projectId;
+      renderProjects();
+      renderDocList();
+      renderDriveSection();
+      renderWorkingDocsSection();
+      renderWebPagesSection();
+      updateSidePanelEnabled();
+    });
+    return item;
+  }
+
+  function renderProjects() {
+    projectsListEl.querySelectorAll('.project-item').forEach((el) => el.remove());
+    projectsEmptyHintEl.hidden = projects.length > 0;
+    for (const project of projects) {
+      projectsListEl.appendChild(buildProjectItem(project));
+    }
+  }
+
+  async function fetchProjects() {
+    try {
+      const res = await fetch('/projects');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      projects = await res.json();
+    } catch (err) {
+      console.error('Could not load projects:', err);
+      projects = [];
+    }
+    // Auto-select the first project on load (2026-08-23, user's own request
+    // "When user logs in a project shall be selected. Choose first." - see
+    // springchat3_projects_panel.md in project memory; the app is already
+    // fully gated behind Google sign-in before this script ever runs - see
+    // SecurityConfig's own doc comment - so "logs in" and "this page loads"
+    // are the same moment here, there's no separate login step to hook).
+    // Only when nothing is already selected (a re-fetch mid-session, if this
+    // function is ever called again later, must not silently override a
+    // choice the user already made) and there's at least one project to
+    // pick (an empty list leaves activeProjectId null, same as before this
+    // feature - updateSidePanelEnabled() below then keeps the right panel
+    // disabled, which is the correct state for a brand new user with no
+    // projects yet). "First" is projects[0] - GET /projects's own order,
+    // oldest-created first (see ProjectStore.list()'s own doc comment).
+    if (activeProjectId === null && projects.length > 0) {
+      activeProjectId = projects[0].projectId;
+    }
+    renderProjects();
+    renderDocList();
+    renderDriveSection();
+    renderWorkingDocsSection();
+    renderWebPagesSection();
+    updateSidePanelEnabled();
+  }
+
+  function showNewProjectError(message) {
+    newProjectErrorEl.textContent = message;
+    newProjectErrorEl.hidden = false;
+  }
+
+  function clearNewProjectError() {
+    newProjectErrorEl.textContent = '';
+    newProjectErrorEl.hidden = true;
+  }
+
+  function openNewProjectModal() {
+    newProjectFormEl.reset();
+    clearNewProjectError();
+    newProjectOverlayEl.hidden = false;
+    newProjectNameEl.focus();
+  }
+
+  function closeNewProjectModal() {
+    newProjectOverlayEl.hidden = true;
+  }
+
+  newProjectBtnEl.addEventListener('click', openNewProjectModal);
+  newProjectCloseBtnEl.addEventListener('click', closeNewProjectModal);
+  newProjectCancelBtnEl.addEventListener('click', closeNewProjectModal);
+
+  // Backdrop click closes the modal - e.target is the overlay itself only
+  // when the click landed outside .modal-dialog, since a click inside it
+  // bubbles up with e.target set to whatever was actually clicked there.
+  newProjectOverlayEl.addEventListener('click', (e) => {
+    if (e.target === newProjectOverlayEl) closeNewProjectModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !newProjectOverlayEl.hidden) closeNewProjectModal();
+  });
+
+  newProjectFormEl.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = newProjectNameEl.value.trim();
+    if (!name) return;
+    clearNewProjectError();
+    newProjectSubmitBtnEl.disabled = true;
+    try {
+      const res = await fetch('/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ name, description: newProjectDescriptionEl.value.trim() }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      projects.push(await res.json());
+      renderProjects();
+      closeNewProjectModal();
+    } catch (err) {
+      showNewProjectError('Could not create project: ' + err.message);
+    } finally {
+      newProjectSubmitBtnEl.disabled = false;
+    }
+  });
+
   fetchVersion();
   fetchDocuments();
   fetchSettings();
   fetchCurrentUser();
   fetchDriveStatus();
+  fetchWebPages();
+  fetchProjects();
 
   inputEl.addEventListener('input', autoGrow);
 

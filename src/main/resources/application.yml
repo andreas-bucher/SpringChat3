@@ -81,3 +81,22 @@ springchat3:
     # springchat3_google_drive.md in project memory. No default (fails fast
     # if unset), same convention as the other required secrets above.
     picker-api-key: ${GOOGLE_PICKER_API_KEY}
+  firecrawl:
+    # Local/self-hosted Firecrawl instance (2026-08-23, "Web Pages" - see
+    # springchat3_projects_panel.md in project memory) - WebPageController
+    # POSTs {base-url}/v2/scrape to fetch+convert a linked URL to markdown,
+    # replacing this app's own earlier direct-fetch-plus-Jsoup approach
+    # (no JS rendering, only basic User-Agent-based anti-bot resilience -
+    # see WebPageController's own doc comment for the real digitec.ch 403
+    # that motivated switching). Same localhost-default-with-env-override
+    # convention as OLLAMA_BASE_URL above - the user's own instance runs on
+    # port 3002.
+    base-url: ${FIRECRAWL_BASE_URL:http://localhost:3002}
+    # Empty by default - a self-hosted Firecrawl instance started with
+    # USE_DB_AUTHENTICATION=false (a common self-hosted default, and what
+    # the user's own instance appears to be running with, since no key was
+    # given) needs no API key at all; WebPageController only sends an
+    # Authorization header when this is non-blank. Set FIRECRAWL_API_KEY if
+    # this instance requires one, or if this ever points at Firecrawl's
+    # hosted cloud API instead (which always requires one).
+    api-key: ${FIRECRAWL_API_KEY:}

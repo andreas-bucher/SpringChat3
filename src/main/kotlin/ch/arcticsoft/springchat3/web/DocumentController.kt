@@ -7,6 +7,7 @@ import ch.arcticsoft.springchat3.document.DocumentStructureStore
 import ch.arcticsoft.springchat3.document.DocumentSummary
 import ch.arcticsoft.springchat3.document.DriveLinkStore
 import ch.arcticsoft.springchat3.document.PdfTextExtractor
+import ch.arcticsoft.springchat3.document.WebPageStore
 import ch.arcticsoft.springchat3.document.WorkingDocumentStore
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
 import org.springframework.web.bind.annotation.RestController
 import reactor.core.publisher.Mono
@@ -40,6 +42,16 @@ import reactor.core.scheduler.Schedulers
  * Spring AI's own docs before writing) - it's long-standing, stable Spring
  * Framework core API, not a fast-moving library, so confidence is high, but
  * flag this first if `./gradlew compileKotlin` fails here.
+ *
+ * [upload]'s optional `projectId` (2026-08-23, user's own request "when
+ * uploading a file... save the files in the project folder of the active
+ * project" - see springchat3_projects_panel.md in project memory) is a plain
+ * `?projectId=...` query parameter, not a second multipart part - deliberately,
+ * to avoid needing to verify how Spring WebFlux binds a plain *text*
+ * multipart part (unclear/unconfirmed, unlike the well-established
+ * `FilePart` binding above), when a query parameter alongside a multipart
+ * body is ordinary, unambiguous `@RequestParam` binding with no such
+ * uncertainty.
  */
 @RestController
 class DocumentController(
@@ -50,6 +62,7 @@ class DocumentController(
     private val documentStructureStore: DocumentStructureStore,
     private val driveLinkStore: DriveLinkStore,
     private val workingDocumentStore: WorkingDocumentStore,
+    private val webPageStore: WebPageStore,
 ) {
     private val log = LoggerFactory.getLogger(DocumentController::class.java)
 
@@ -68,7 +81,10 @@ class DocumentController(
     }
 
     @PostMapping("/upload", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
-    fun upload(@RequestPart("file") filePart: FilePart): Mono<DocumentSummary> =
+    fun upload(
+        @RequestPart("file") filePart: FilePart,
+        @RequestParam(required = false) projectId: String?,
+    ): Mono<DocumentSummary> =
         DataBufferUtils.join(filePart.content())
             .map { buffer ->
                 val bytes = ByteArray(buffer.readableByteCount())
@@ -93,7 +109,7 @@ class DocumentController(
                     Mono.fromCallable {
                         val pages = pdfTextExtractor.extractPages(bytes)
                         val text = pages.joinToString("\n\n") { it.text.orEmpty() }
-                        val documentId = documentStore.store(filePart.filename(), text, bytes)
+                        val documentId = documentStore.store(filePart.filename(), text, bytes, projectId)
                         documentIndex.index(documentId, pages)
                         // Structure extraction (2026-08-22, see
                         // springchat3_document_qa.md in project memory) reads
@@ -116,7 +132,7 @@ class DocumentController(
                             pages.size,
                             documentId,
                         )
-                        DocumentSummary(documentId, filePart.filename(), text.length)
+                        DocumentSummary(documentId, filePart.filename(), text.length, projectId)
                     }.subscribeOn(Schedulers.boundedElastic())
                 }
             }
@@ -131,25 +147,30 @@ class DocumentController(
      * since a later same-day change allows more than one folder to be
      * linked at once) OR any individually-linked Google Doc (2026-08-22,
      * "Working Documents" - see springchat3_working_documents.md in project
-     * memory, same reasoning: it belongs in its own section, not this one).
-     * [DocumentStore] itself makes no such distinction - a Drive-sourced or
-     * linked-Doc document is stored there exactly like an uploaded one,
-     * since both go through the same ingestion pipeline (see
+     * memory, same reasoning: it belongs in its own section, not this one)
+     * OR any linked web page (2026-08-23, "Web Pages" - see
+     * springchat3_projects_panel.md in project memory, same reasoning again:
+     * it belongs in the "Web Pages" section, not this one).
+     * [DocumentStore] itself makes no such distinction - a Drive-sourced,
+     * linked-Doc, or linked-web-page document is stored there exactly like
+     * an uploaded one, since all go through the same ingestion pipeline (see
      * [ch.arcticsoft.springchat3.web.DriveController]'s own doc comment) -
-     * so the filtering has to happen here, against [DriveLinkStore]'s and
-     * [WorkingDocumentStore]'s own separate bookkeeping of which
-     * `documentId`s came from each. Without it, such a file would show up
-     * twice: once here (labeled as if uploaded) and once in its own
-     * "Google Drive" folder card or "Working Documents" row. A plain
-     * (non-`Mono`) return type is fine here: every store involved only ever
-     * does a fast in-memory read, so there's no blocking work to shift off
-     * the Netty event-loop thread the way [upload]'s PDFBox parsing needs.
+     * so the filtering has to happen here, against [DriveLinkStore]'s,
+     * [WorkingDocumentStore]'s, and [WebPageStore]'s own separate
+     * bookkeeping of which `documentId`s came from each. Without it, such a
+     * file would show up twice: once here (labeled as if uploaded) and once
+     * in its own "Google Drive" folder card, "Working Documents" row, or
+     * "Web Pages" row. A plain (non-`Mono`) return type is fine here: every
+     * store involved only ever does a fast in-memory read, so there's no
+     * blocking work to shift off the Netty event-loop thread the way
+     * [upload]'s PDFBox parsing needs.
      */
     @GetMapping("/documents")
     fun list(): List<DocumentSummary> {
         val driveDocumentIds = driveLinkStore.getAll().flatMap { it.files }.map { it.documentId }.toSet()
         val workingDocumentIds = workingDocumentStore.getAll().map { it.documentId }.toSet()
-        return documentStore.list().filterNot { it.documentId in driveDocumentIds || it.documentId in workingDocumentIds }
+        val webPageDocumentIds = webPageStore.getAll().map { it.documentId }.toSet()
+        return documentStore.list().filterNot { it.documentId in driveDocumentIds || it.documentId in workingDocumentIds || it.documentId in webPageDocumentIds }
     }
 
     /**
@@ -212,17 +233,35 @@ class DocumentController(
      * springchat3_working_documents.md in project memory) - unlike a
      * Drive *folder*, there's no lighter "unlink but keep the document"
      * case for a single linked Doc (see [WorkingDocumentStore.remove]'s own
-     * doc comment), so this same × delete is its only removal path.
+     * doc comment), so this same × delete is its only removal path. Likewise
+     * drops [id] from [WebPageStore] if it's a linked web page (2026-08-23,
+     * "Web Pages" - see springchat3_projects_panel.md in project memory) -
+     * same "no lighter unlink-but-keep case" reasoning as a linked Doc, a
+     * harmless no-op for any other document type.
+     *
+     * **Call order (2026-08-23, changed alongside project-scoped document
+     * storage): [documentIndex]/[documentStructureStore] are removed BEFORE
+     * [documentStore] itself, not after** - see [DocumentStore.remove]'s own
+     * doc comment for why this now matters (they resolve their own files via
+     * [DocumentStore.documentDir], which needs [id]'s entry to still exist).
+     * The existence check that used to be [DocumentStore.remove]'s own
+     * return value is now a separate [DocumentStore.get] up front instead.
+     * [webPageStore] doesn't need this ordering - it only ever tracks its
+     * own `List<LinkedWebPage>`, never resolves anything via
+     * [DocumentStore.documentDir], same as [driveLinkStore]/
+     * [workingDocumentStore] here.
      */
     @DeleteMapping("/documents/{id}")
     fun delete(@PathVariable id: String): ResponseEntity<Void> =
-        if (documentStore.remove(id)) {
+        if (documentStore.get(id) == null) {
+            ResponseEntity.notFound().build()
+        } else {
             documentIndex.remove(id)
             documentStructureStore.remove(id)
+            documentStore.remove(id)
             driveLinkStore.untrackDocument(id)
             workingDocumentStore.remove(id)
+            webPageStore.remove(id)
             ResponseEntity.noContent().build()
-        } else {
-            ResponseEntity.notFound().build()
         }
 }

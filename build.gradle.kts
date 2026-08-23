@@ -110,6 +110,16 @@ dependencies {
     // still show.
     implementation("org.apache.pdfbox:pdfbox:3.0.7")
 
+    // (2026-08-23: the "Web Pages" feature's own HTML-extraction dependency,
+    // org.jsoup:jsoup, that used to sit here was removed - WebPageController
+    // now hands URL fetching+extraction off to a self-hosted Firecrawl
+    // instance over plain HTTP (see WebPageController.kt's own doc comment
+    // and springchat3.firecrawl.* in application.yml) instead of doing its
+    // own GET+Jsoup-parse, so no HTML-parsing library is needed in this
+    // process at all anymore. WebPageTextExtractor.kt, the class that used
+    // to depend on jsoup, was moved to _to_delete/ rather than deleted, per
+    // this repo's own established convention for retiring dead code.)
+
     // Document-Q&A "Phase 2" (2026-08-22, see springchat3_document_qa.md in
     // project memory): real chunking + local embeddings + retrieval,
     // replacing Phase 1's full-text-stuffing-with-truncation. Both entries

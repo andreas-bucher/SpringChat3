@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import java.io.File
+import kotlin.random.Random
 
 /**
  * One PDF this app has already pulled in from one of the linked Google Drive
@@ -38,7 +39,36 @@ data class DriveSyncedFile(
  * "the" link. [lastSyncedAt] is null only in the brief window before this
  * particular folder's very first sync (kicked off automatically right after
  * linking - see [ch.arcticsoft.springchat3.web.DriveController.link])
- * actually completes.
+ * actually completes. [projectId] (2026-08-23, user's own request "link a
+ * google drive folder... then save the files in the project folder of the
+ * active project" - see springchat3_projects_panel.md in project memory) is
+ * the project that was active when this folder was linked, or null for none
+ * - fixed at link time (see [DriveLinkStore.link]) and reused for every
+ * later sync of this same folder, so a folder's files always land in one
+ * consistent place regardless of whatever project happens to be active in
+ * the browser when a later "Sync now" runs.
+ *
+ * [driveFolderLocalId] (2026-08-23, user's own request "When sync a google
+ * drive folder. add a new folder with the name 'gdrive-'+6 digits. save the
+ * files in that folder" - see springchat3_projects_panel.md in project
+ * memory) is a random 6-digit id, generated once when this folder is first
+ * linked (see [DriveLinkStore.link]/[DriveLinkStore.generateDriveFolderLocalId])
+ * and reused for every later sync - same "fixed at link time" treatment
+ * [projectId] already gets, for the same reason (a folder's synced files
+ * should always land in one consistent place, not move around depending on
+ * what happens to be active later). Doubles as this folder's own on-disk
+ * directory name, `gdrive-<driveFolderLocalId>` - see
+ * [ch.arcticsoft.springchat3.document.DocumentStore]'s own doc comment for
+ * where that directory sits (nested inside the active project's own folder
+ * if [projectId] is set, otherwise directly under the data directory).
+ * Nullable only so a folder linked before this feature existed still
+ * deserializes cleanly (missing JSON key -> null, plain Jackson behavior,
+ * not the Kotlin-default-parameter mechanism this project avoids relying on
+ * - see [ch.arcticsoft.springchat3.web.CreateProjectRequest]'s own doc
+ * comment) - such a folder simply keeps landing its synced files in the old,
+ * ungrouped location until unlinked and relinked, same "not worth writing
+ * one-time migration code" precedent [DocumentStore] already follows for its
+ * own pre-project-scoping documents.
  */
 data class DriveLink(
     val folderId: String,
@@ -46,6 +76,8 @@ data class DriveLink(
     val linkedAt: Long,
     val lastSyncedAt: Long? = null,
     val files: List<DriveSyncedFile> = emptyList(),
+    val projectId: String? = null,
+    val driveFolderLocalId: String? = null,
 )
 
 /**
@@ -150,6 +182,30 @@ class DriveLinkStore(
     fun get(folderId: String): DriveLink? = links.find { it.folderId == folderId }
 
     /**
+     * A random 6-digit id ("100000".."999999") for [DriveLink.driveFolderLocalId] -
+     * same generation shape as [ch.arcticsoft.springchat3.project.ProjectStore.generateProjectId],
+     * just checked against this store's own in-memory [links] rather than
+     * also the filesystem: unlike a project id (always `[dataDir]/projects/<id>`,
+     * one fixed location), a Drive-folder-link id's actual directory depends
+     * on which project (if any) was active at link time - see
+     * [ch.arcticsoft.springchat3.document.DocumentStore]'s own doc comment -
+     * so there's no single path to existence-check here the way
+     * [ProjectStore] can. Collisions are astronomically unlikely across the
+     * ~900000 possible ids at this app's real scale regardless. Not called
+     * under any lock - unlike [ProjectStore.create], concurrent folder-link
+     * requests aren't otherwise guarded in this class either (see this
+     * class's own doc comment on the known unlink/relink race), so this
+     * doesn't introduce a new risk beyond what already exists here.
+     */
+    private fun generateDriveFolderLocalId(): String {
+        repeat(50) {
+            val candidate = Random.nextInt(100000, 1000000).toString()
+            if (links.none { it.driveFolderLocalId == candidate }) return candidate
+        }
+        error("Could not generate a unique 6-digit Drive-folder-link id after 50 attempts")
+    }
+
+    /**
      * Links [folderId]/[folderName] as an ADDITIONAL folder alongside
      * whatever else is already linked (2026-08-22 - see this class's own
      * doc comment for why this used to replace the single existing link
@@ -158,13 +214,22 @@ class DriveLinkStore(
      * already-synced [DriveLink.files] back to empty; the Picker flow
      * shouldn't normally offer an already-linked folder again, but this
      * keeps a double-click or a stale-UI race harmless instead of silently
-     * wiping real sync state. Does NOT itself ingest any files - see
-     * [ch.arcticsoft.springchat3.web.DriveController.link], which calls this
-     * and then immediately syncs just this folder.
+     * wiping real sync state - including [DriveLink.projectId] itself: a
+     * repeat "link" call with a *different* project now active does NOT
+     * move an already-linked folder to that project, same "don't silently
+     * touch already-real state" spirit. Does NOT itself ingest any files -
+     * see [ch.arcticsoft.springchat3.web.DriveController.link], which calls
+     * this and then immediately syncs just this folder.
      */
-    fun link(folderId: String, folderName: String): DriveLink {
+    fun link(folderId: String, folderName: String, projectId: String? = null): DriveLink {
         get(folderId)?.let { return it }
-        val fresh = DriveLink(folderId = folderId, folderName = folderName, linkedAt = System.currentTimeMillis())
+        val fresh = DriveLink(
+            folderId = folderId,
+            folderName = folderName,
+            linkedAt = System.currentTimeMillis(),
+            projectId = projectId,
+            driveFolderLocalId = generateDriveFolderLocalId(),
+        )
         links = links + fresh
         persist()
         return fresh
