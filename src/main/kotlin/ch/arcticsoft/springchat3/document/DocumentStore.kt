@@ -59,7 +59,19 @@ data class ExtractedDocument(
     val uploadedAt: Long,
     val projectId: String? = null,
     val driveFolderLocalId: String? = null,
+    val rawFilename: String = DEFAULT_RAW_FILENAME,
 )
+
+/**
+ * What [ExtractedDocument.rawFilename] defaults to - the name every raw
+ * document byte-blob was unconditionally stored under before uploaded Word
+ * documents existed (2026-08-23, see
+ * [ch.arcticsoft.springchat3.web.WordDocumentController]), when a document's
+ * raw bytes were always a PDF. Kept as the default so every already-persisted
+ * `document.json` (none of which has this field) keeps resolving to the file
+ * that's actually on disk next to it, with no migration pass.
+ */
+const val DEFAULT_RAW_FILENAME = "document.pdf"
 
 /**
  * One stored document's identity/metadata for the UI's document list (see
@@ -194,8 +206,8 @@ class DocumentStore(
     private fun documentFile(documentId: String, projectId: String?, driveFolderLocalId: String?) =
         File(documentDirFor(documentId, projectId, driveFolderLocalId), "document.json")
 
-    private fun documentPdfFile(documentId: String, projectId: String?, driveFolderLocalId: String?) =
-        File(documentDirFor(documentId, projectId, driveFolderLocalId), "document.pdf")
+    private fun documentRawFile(documentId: String, projectId: String?, driveFolderLocalId: String?, rawFilename: String) =
+        File(documentDirFor(documentId, projectId, driveFolderLocalId), rawFilename)
 
     private fun loadPersisted(): LinkedHashMap<String, ExtractedDocument> {
         val root = File(dataDir)
@@ -252,13 +264,13 @@ class DocumentStore(
         }
     }
 
-    private fun persistBytes(documentId: String, projectId: String?, driveFolderLocalId: String?, bytes: ByteArray) {
+    private fun persistBytes(documentId: String, projectId: String?, driveFolderLocalId: String?, rawFilename: String, bytes: ByteArray) {
         try {
             val dir = documentDirFor(documentId, projectId, driveFolderLocalId)
             dir.mkdirs()
-            documentPdfFile(documentId, projectId, driveFolderLocalId).writeBytes(bytes)
+            documentRawFile(documentId, projectId, driveFolderLocalId, rawFilename).writeBytes(bytes)
         } catch (e: Exception) {
-            log.warn("Could not persist raw PDF bytes for document {} to {}", documentId, documentPdfFile(documentId, projectId, driveFolderLocalId), e)
+            log.warn("Could not persist raw bytes for document {} to {}", documentId, documentRawFile(documentId, projectId, driveFolderLocalId, rawFilename), e)
         }
     }
 
@@ -289,13 +301,20 @@ class DocumentStore(
      * the exact same state [getBytes] already handles for any pre-2026-08-22
      * document that predates bytes being stored at all.
      */
-    fun store(filename: String, text: String, bytes: ByteArray?, projectId: String? = null, driveFolderLocalId: String? = null): String {
+    fun store(
+        filename: String,
+        text: String,
+        bytes: ByteArray?,
+        projectId: String? = null,
+        driveFolderLocalId: String? = null,
+        rawFilename: String = DEFAULT_RAW_FILENAME,
+    ): String {
         val documentId = UUID.randomUUID().toString()
-        val document = ExtractedDocument(filename, text, System.currentTimeMillis(), projectId, driveFolderLocalId)
+        val document = ExtractedDocument(filename, text, System.currentTimeMillis(), projectId, driveFolderLocalId, rawFilename)
         documents[documentId] = document
         persist(documentId, document)
         if (bytes != null) {
-            persistBytes(documentId, projectId, driveFolderLocalId, bytes)
+            persistBytes(documentId, projectId, driveFolderLocalId, rawFilename, bytes)
         }
         return documentId
     }
@@ -314,12 +333,12 @@ class DocumentStore(
      */
     fun getBytes(documentId: String): ByteArray? {
         val document = documents[documentId] ?: return null
-        val file = documentPdfFile(documentId, document.projectId, document.driveFolderLocalId)
+        val file = documentRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename)
         if (!file.exists()) return null
         return try {
             file.readBytes()
         } catch (e: Exception) {
-            log.warn("Could not read raw PDF bytes for document {} from {}", documentId, file, e)
+            log.warn("Could not read raw bytes for document {} from {}", documentId, file, e)
             null
         }
     }
@@ -357,7 +376,7 @@ class DocumentStore(
     fun remove(documentId: String): Boolean {
         val document = documents.remove(documentId) ?: return false
         documentFile(documentId, document.projectId, document.driveFolderLocalId).delete()
-        documentPdfFile(documentId, document.projectId, document.driveFolderLocalId).delete()
+        documentRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename).delete()
         documentDirFor(documentId, document.projectId, document.driveFolderLocalId).delete()
         // Does not also try to delete the now-possibly-empty gdrive-<id>
         // folder itself (2026-08-23, see this class's own doc comment) -

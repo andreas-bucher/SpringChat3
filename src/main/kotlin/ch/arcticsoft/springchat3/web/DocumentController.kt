@@ -8,6 +8,7 @@ import ch.arcticsoft.springchat3.document.DocumentSummary
 import ch.arcticsoft.springchat3.document.DriveLinkStore
 import ch.arcticsoft.springchat3.document.PdfTextExtractor
 import ch.arcticsoft.springchat3.document.WebPageStore
+import ch.arcticsoft.springchat3.document.WordDocumentStore
 import ch.arcticsoft.springchat3.document.WorkingDocumentStore
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
@@ -63,6 +64,7 @@ class DocumentController(
     private val driveLinkStore: DriveLinkStore,
     private val workingDocumentStore: WorkingDocumentStore,
     private val webPageStore: WebPageStore,
+    private val wordDocumentStore: WordDocumentStore,
 ) {
     private val log = LoggerFactory.getLogger(DocumentController::class.java)
 
@@ -78,6 +80,15 @@ class DocumentController(
          * Bump this if a real document gets rejected that shouldn't be.
          */
         private const val MAX_PDF_BYTES = 20 * 1024 * 1024 // 20 MB
+
+        /**
+         * OOXML's own media type for a `.docx` - served by [file] for an
+         * uploaded Word document (2026-08-23, see [WordDocumentStore]),
+         * alongside `Content-Disposition: attachment` rather than the
+         * `inline` a PDF gets: no browser renders a Word file in a tab, so
+         * `inline` would just produce a download with a worse filename.
+         */
+        private const val DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     }
 
     @PostMapping("/upload", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
@@ -150,7 +161,11 @@ class DocumentController(
      * memory, same reasoning: it belongs in its own section, not this one)
      * OR any linked web page (2026-08-23, "Web Pages" - see
      * springchat3_projects_panel.md in project memory, same reasoning again:
-     * it belongs in the "Web Pages" section, not this one).
+     * it belongs in the "Web Pages" section, not this one) OR any uploaded
+     * Word document (2026-08-23, see [WordDocumentStore] - it belongs in
+     * the "Working Documents" section alongside the linked Google Docs,
+     * per the user's own choice when asked where an upload should be
+     * listed).
      * [DocumentStore] itself makes no such distinction - a Drive-sourced,
      * linked-Doc, or linked-web-page document is stored there exactly like
      * an uploaded one, since all go through the same ingestion pipeline (see
@@ -170,7 +185,13 @@ class DocumentController(
         val driveDocumentIds = driveLinkStore.getAll().flatMap { it.files }.map { it.documentId }.toSet()
         val workingDocumentIds = workingDocumentStore.getAll().map { it.documentId }.toSet()
         val webPageDocumentIds = webPageStore.getAll().map { it.documentId }.toSet()
-        return documentStore.list().filterNot { it.documentId in driveDocumentIds || it.documentId in workingDocumentIds || it.documentId in webPageDocumentIds }
+        val wordDocumentIds = wordDocumentStore.getAll().map { it.documentId }.toSet()
+        return documentStore.list().filterNot {
+            it.documentId in driveDocumentIds ||
+                it.documentId in workingDocumentIds ||
+                it.documentId in webPageDocumentIds ||
+                it.documentId in wordDocumentIds
+        }
     }
 
     /**
@@ -201,9 +222,12 @@ class DocumentController(
     fun file(@PathVariable id: String): ResponseEntity<ByteArray> {
         val document = documentStore.get(id) ?: return ResponseEntity.notFound().build()
         val bytes = documentStore.getBytes(id) ?: return ResponseEntity.notFound().build()
+        val isWord = document.rawFilename.endsWith(".docx", ignoreCase = true)
+        val disposition =
+            if (isWord) ContentDisposition.attachment() else ContentDisposition.inline()
         return ResponseEntity.ok()
-            .contentType(MediaType.APPLICATION_PDF)
-            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(document.filename).build().toString())
+            .contentType(if (isWord) MediaType.parseMediaType(DOCX_CONTENT_TYPE) else MediaType.APPLICATION_PDF)
+            .header(HttpHeaders.CONTENT_DISPOSITION, disposition.filename(document.filename).build().toString())
             .body(bytes)
     }
 
@@ -237,7 +261,10 @@ class DocumentController(
      * drops [id] from [WebPageStore] if it's a linked web page (2026-08-23,
      * "Web Pages" - see springchat3_projects_panel.md in project memory) -
      * same "no lighter unlink-but-keep case" reasoning as a linked Doc, a
-     * harmless no-op for any other document type.
+     * harmless no-op for any other document type. Likewise drops [id] from
+     * [WordDocumentStore] if it was an uploaded Word document (2026-08-23),
+     * which - having no remote source at all - has that same single removal
+     * path.
      *
      * **Call order (2026-08-23, changed alongside project-scoped document
      * storage): [documentIndex]/[documentStructureStore] are removed BEFORE
@@ -262,6 +289,7 @@ class DocumentController(
             driveLinkStore.untrackDocument(id)
             workingDocumentStore.remove(id)
             webPageStore.remove(id)
+            wordDocumentStore.remove(id)
             ResponseEntity.noContent().build()
         }
 }

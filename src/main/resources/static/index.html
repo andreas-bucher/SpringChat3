@@ -947,93 +947,13 @@
   }
 
   /*
-   * "Open in Google Docs" (2026-08-22, Working Documents - user's own
-   * follow-up "for working documents we add icon to open as Google Doc") -
-   * only ever rendered for a Working Document row (buildDocItem's optional
-   * [driveDocUrl] param), linking to the actual live Google Doc rather than
-   * .doc-item-view's exported-PDF snapshot. Same hover-to-reveal treatment
-   * and neutral color as .doc-item-view - this is a second, complementary
-   * way to open the same underlying document, not a destructive action.
-   *
-   * Renders an inline SVG pencil (see buildDocItem's gdocLink.innerHTML),
-   * not an emoji - a plain stroke="currentColor" icon inherits this class's
-   * own `color` the way "↗"/"↻" text glyphs naturally do, so it dims/
-   * brightens on hover exactly like every other row icon; an emoji like
-   * "📝" renders in its own fixed colors regardless of `color` and reads
-   * inconsistently with the rest of this monochrome icon row (user's own
-   * follow-up, "use another edit icon. a simple edit icon black/white",
-   * after seeing the emoji version). display: inline-flex here just centers
-   * that SVG inside the same padded hit-box .doc-item-view/-sync already
-   * use for a text glyph.
+   * (2026-08-23: .doc-item-gdoc - the inline-SVG pencil "open in Google
+   * Docs" link - and .doc-item-sync - the ↻ resync button - used to sit
+   * here. Both were only ever rendered on a linked Google Doc's flat row,
+   * and that row became a .drive-folder-card-styled card the same day (see
+   * buildWorkingDocCard), where both actions live in .drive-folder-actions
+   * and inherit its styling instead. Removed rather than left as dead CSS.)
    */
-  .doc-item-gdoc {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    background: none;
-    cursor: pointer;
-    color: var(--muted);
-    font-size: 13px;
-    flex-shrink: 0;
-    padding: 2px 5px;
-    border-radius: 6px;
-    visibility: hidden;
-    text-decoration: none;
-  }
-
-  .doc-item:hover .doc-item-gdoc,
-  .doc-item.active .doc-item-gdoc {
-    visibility: visible;
-  }
-
-  .doc-item-gdoc:hover {
-    color: var(--text);
-    background: var(--panel);
-  }
-
-  /*
-   * Re-syncs a linked Google Doc's content (2026-08-22, Working Documents -
-   * "Enable to link a Google Doc from Google Drive" - see
-   * springchat3_working_documents.md in project memory) - only ever
-   * rendered for a Working Document row (buildDocItem's optional [onSync]
-   * param), never for a plain uploaded or Drive-folder-sourced document.
-   * Same hover-to-reveal treatment and neutral color as .doc-item-view -
-   * this isn't destructive either. .spinning reuses the same @keyframes
-   * spin the Google Drive folder card's own ↻ Sync button already uses.
-   */
-  .doc-item-sync {
-    border: none;
-    background: none;
-    cursor: pointer;
-    color: var(--muted);
-    font-size: 13px;
-    flex-shrink: 0;
-    padding: 2px 5px;
-    border-radius: 6px;
-    visibility: hidden;
-  }
-
-  .doc-item:hover .doc-item-sync,
-  .doc-item.active .doc-item-sync {
-    visibility: visible;
-  }
-
-  .doc-item-sync:hover {
-    color: var(--text);
-    background: var(--panel);
-  }
-
-  .doc-item-sync:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .doc-item-sync.spinning {
-    display: inline-block;
-    animation: spin 0.8s linear infinite;
-    visibility: visible;
-  }
 
   /* Only used when a .doc-item carries a badge (currently just the "DRIVE" badge below) - .doc-item-name keeps its own plain, unwrapped styling otherwise. */
   .doc-item-name-row {
@@ -1083,6 +1003,52 @@
     flex-shrink: 0;
   }
 
+  /*
+   * Each right-panel resource section is a <details> whose <summary> is the
+   * section title (2026-08-23, user's own request "make the sections
+   * UPLOADED DOCUMENTS, GOOGLE DRIVE, WORKING DOCUMENTS, WEB PAGES
+   * collapsable") - same native-disclosure plus custom-chevron approach
+   * .drive-folder-card/.trace already use, so all three levels of
+   * collapsing on this page look and behave alike.
+   */
+  .panel-section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex-shrink: 0;
+  }
+
+  .panel-section-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+
+  .panel-section-summary::-webkit-details-marker { display: none; }
+
+  .panel-section-summary::before {
+    content: '▸';
+    font-size: 9px;
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+  }
+
+  .panel-section[open] > .panel-section-summary::before {
+    transform: rotate(90deg);
+  }
+
+  .panel-section-summary:hover {
+    color: var(--text);
+  }
+
+  /* Collapsed sections shouldn't leave the title's own bottom padding butting straight against the next divider. */
+  .panel-section:not([open]) > .panel-section-summary {
+    padding-bottom: 10px;
+  }
+
   .drive-connect-row {
     margin: 6px 12px 12px;
     padding: 12px;
@@ -1103,10 +1069,17 @@
     color: var(--accent);
   }
 
-  /* While a link is being established (Picker open, or /drive/link in flight) - not a full disabled state, just visually damped so a second click doesn't fire a second picker/request. */
+  /* While a link is being established (Picker open, or /drive/link in flight) - not a full disabled state, just visually damped so a second click doesn't fire a second picker/request. Also used by the Word-upload box (2026-08-23) while its own upload is in flight, same meaning. */
   .drive-connect-row.linking {
     cursor: default;
     opacity: 0.6;
+  }
+
+  /* Drag-over feedback for the Word-upload box (2026-08-23) - same treatment .doc-dropzone.drag-over gets, since both are drop targets. */
+  .drive-connect-row.drag-over {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: #eef3fe;
   }
 
   .drive-connect-row .drive-icon {
@@ -1244,8 +1217,36 @@
    * actual <details> disclosure widget) is suppressed here rather than left
    * as a dead, non-functional affordance.
    */
-  .webpage-card-header::before {
+  .webpage-card-header::before,
+  .workingdoc-card-header::before {
     content: none;
+  }
+
+  /*
+   * Working Documents - a linked Google Doc and an uploaded Word file -
+   * render as the same kind of card (2026-08-23, user's own follow-up "use
+   * for uploaded document same look and feel as for files synced from
+   * google drive folder", answered as "its own bordered card" + "apply to
+   * the linked Google Docs too" when asked). Structurally identical to
+   * .webpage-card above (a .drive-folder-card that is a plain <div>, not a
+   * <details>, so its chevron is suppressed just above) - it gets its own
+   * class name purely so the two features stay independently adjustable.
+   *
+   * .drive-folder-name-row exists because these cards, unlike a Drive
+   * folder or a web page, still need the small DOC/WORD badge that told the
+   * two apart back when they were flat .doc-item rows: the badge sits beside
+   * the name, and the name itself keeps .drive-folder-name's own ellipsis
+   * truncation via min-width:0 on the flex row.
+   */
+  .drive-folder-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .drive-folder-name-row .drive-folder-name {
+    min-width: 0;
   }
 
   /*
@@ -1258,11 +1259,13 @@
    * web page looks the same as a selected document everywhere else in this
    * panel, just applied to the outer card/header instead of a flat row.
    */
-  .webpage-card.active {
+  .webpage-card.active,
+  .workingdoc-card.active {
     border-color: var(--accent);
   }
 
-  .webpage-card.active > .webpage-card-header {
+  .webpage-card.active > .webpage-card-header,
+  .workingdoc-card.active > .workingdoc-card-header {
     background: var(--bubble-assistant);
   }
 
@@ -1775,27 +1778,57 @@
       -->
       <div id="side-panel-disabled-hint" class="side-panel-disabled-hint" hidden>Select or create a project on the left to view and manage its resources.</div>
       <div id="side-panel-content">
-        <div class="panel-section-title">Uploaded Documents</div>
-        <div id="doc-dropzone" class="doc-dropzone">
-          <div class="doc-empty-hint">No PDFs uploaded yet.<br>Drag one here, or click ＋ above.</div>
-        </div>
+        <!--
+          Every resource section is a collapsable <details> (2026-08-23,
+          user's own request "In the right panel. make the sections UPLOADED
+          DOCUMENTS, GOOGLE DRIVE, WORKING DOCUMENTS, WEB PAGES
+          collapsable"). data-section identifies each section in the
+          collapsedPanelSections localStorage entry that remembers which
+          ones the user left closed - see the script below.
+        -->
+        <details class="panel-section" data-section="documents" open>
+          <summary class="panel-section-title panel-section-summary">Uploaded Documents</summary>
+          <div id="doc-dropzone" class="doc-dropzone">
+            <div class="doc-empty-hint">No PDFs uploaded yet.<br>Drag one here, or click ＋ above.</div>
+          </div>
+        </details>
         <input type="file" id="doc-file-input" accept="application/pdf" hidden>
 
         <div class="panel-divider"></div>
-        <div class="panel-section-title">Google Drive</div>
-        <div id="drive-link-row" class="drive-connect-row" title="Link a Google Drive folder">
-          <span class="drive-icon">🔗</span>
-          <span>Link a Google Drive folder</span>
-        </div>
-        <div id="drive-folder-list"></div>
+        <details class="panel-section" data-section="drive" open>
+          <summary class="panel-section-title panel-section-summary">Google Drive</summary>
+          <div id="drive-link-row" class="drive-connect-row" title="Link a Google Drive folder">
+            <span class="drive-icon">🔗</span>
+            <span>Link a Google Drive folder</span>
+          </div>
+          <div id="drive-folder-list"></div>
+        </details>
 
         <div class="panel-divider"></div>
-        <div class="panel-section-title">Working Documents</div>
-        <div id="workingdoc-link-row" class="drive-connect-row" title="Link a Google Doc">
-          <span class="drive-icon">🔗</span>
-          <span>Link a Google Doc</span>
-        </div>
-        <div id="workingdoc-list"></div>
+        <details class="panel-section" data-section="workingdocs" open>
+          <summary class="panel-section-title panel-section-summary">Working Documents</summary>
+          <div id="workingdoc-link-row" class="drive-connect-row" title="Link a Google Doc">
+            <span class="drive-icon">🔗</span>
+            <span>Link a Google Doc</span>
+          </div>
+          <!--
+            Second box in this section (2026-08-23, user's own request "under
+            Working Documents, below the box to link Google Docs, add a 2nd
+            box to upload MS Word document") - a plain .docx upload, no
+            Picker/OAuth involved, so it's a `drive-connect-row` purely for
+            the shared dashed-box look, not because anything Drive-related
+            happens behind it. Also a drop target, same as the Uploaded
+            Documents dropzone above. Backed by WordDocumentController.kt
+            (POST /word-documents); the uploaded file is listed in this same
+            section's list below, alongside the linked Google Docs.
+          -->
+          <div id="word-upload-row" class="drive-connect-row" title="Upload a Word document">
+            <span class="drive-icon">📄</span>
+            <span>Upload a Word document</span>
+          </div>
+          <input type="file" id="word-file-input" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+          <div id="workingdoc-list"></div>
+        </details>
 
         <!--
           "Web Pages" section (2026-08-23, user's own request "add new
@@ -1809,12 +1842,14 @@
           Google account/OAuth involved in fetching an arbitrary public URL.
         -->
         <div class="panel-divider"></div>
-        <div class="panel-section-title">Web Pages</div>
-        <div id="webpage-link-row" class="drive-connect-row" title="Link a web page">
-          <span class="drive-icon">🔗</span>
-          <span>Link a Web Page</span>
-        </div>
-        <div id="webpage-list"></div>
+        <details class="panel-section" data-section="webpages" open>
+          <summary class="panel-section-title panel-section-summary">Web Pages</summary>
+          <div id="webpage-link-row" class="drive-connect-row" title="Link a web page">
+            <span class="drive-icon">🔗</span>
+            <span>Link a Web Page</span>
+          </div>
+          <div id="webpage-list"></div>
+        </details>
       </div>
     </div>
   </aside>
@@ -1914,6 +1949,8 @@
   const driveLinkRowEl = document.getElementById('drive-link-row');
   const driveFolderListEl = document.getElementById('drive-folder-list');
   const workingDocLinkRowEl = document.getElementById('workingdoc-link-row');
+  const wordUploadRowEl = document.getElementById('word-upload-row');
+  const wordFileInputEl = document.getElementById('word-file-input');
   const workingDocListEl = document.getElementById('workingdoc-list');
   const webPageLinkRowEl = document.getElementById('webpage-link-row');
   const webPageListEl = document.getElementById('webpage-list');
@@ -2638,6 +2675,21 @@
   // render in the same right-panel section style.
   let webPages = [];
 
+  // Uploaded Word documents (2026-08-23, "add a 2nd box to upload MS Word
+  // document") - WordDocumentStatus from GET/POST /word-documents. Its own
+  // array rather than part of driveStatus.workingDocuments for the same
+  // reason webPages is its own: no Drive/OAuth flow behind it at all. Both
+  // lists render into the one "Working Documents" section, appended after
+  // the linked Google Docs - see renderWorkingDocsSection().
+  //
+  // wordUploading holds the filename of an upload currently in flight (or
+  // null), so the list can show a placeholder row for it - the same
+  // optimistic feedback linkGoogleDoc gives with its own `syncing` entries,
+  // just tracked separately since an upload has no server-side entry to
+  // carry the flag on until it finishes.
+  let wordDocuments = [];
+  let wordUploading = null;
+
   function formatCharCount(n) {
     return (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)) + ' chars';
   }
@@ -2707,32 +2759,15 @@
   // class's own CSS comment) so the badge sits inline right after it without
   // disturbing .doc-item-name's own ellipsis truncation in the no-badge case.
   //
-  // [onSync] (2026-08-22, Working Documents - "Enable to link a Google Doc
-  // from Google Drive" - see springchat3_working_documents.md in project
-  // memory) is also optional, and only ever passed for a linked Google Doc
-  // row (see buildWorkingDocItem below) - when present it renders an extra
-  // ↻ .doc-item-sync button between the view-in-tab link and the × delete
-  // button, calling it (an async function POSTing /drive/doc-sync/{id}) on
-  // click. A plain uploaded or Drive-folder-sourced document passes nothing
-  // here and renders exactly as before this feature.
-  //
-  // [driveDocUrl] (2026-08-22, Working Documents - user's own follow-up
-  // "for working documents we add icon to open as Google Doc") is likewise
-  // optional and only ever passed for a linked Google Doc row - a
-  // `https://docs.google.com/document/d/{id}/edit` link (built by
-  // buildWorkingDocItem from WorkingDocumentStatus.driveFileId) rendered as
-  // a second "open" icon alongside the existing PDF one, opening the actual
-  // live Doc rather than this app's last-synced PDF snapshot of it.
-  //
-  // (2026-08-23: this used to also take a 5th [viewUrl] param for a linked
-  // web page - see springchat3_projects_panel.md in project memory - that
-  // REPLACED the default `/documents/{id}/file` view-link target with the
-  // page's own URL, since a web page has no PDF of its own to serve.
-  // Removed, unused, once Web Pages switched to buildWebPageCard's own
-  // .drive-folder-card-styled rendering the same day - see that function's
-  // own doc comment - which builds its own ↗ view link directly rather than
-  // going through buildDocItem at all.)
-  function buildDocItem(doc, badge, onSync, driveDocUrl) {
+  // (2026-08-23: this used to take three more params - [viewUrl] for a
+  // linked web page, then [onSync]/[driveDocUrl] for a linked Google Doc's
+  // ↻ resync and "open in Google Docs" actions. All three went away as
+  // those two features moved to their own .drive-folder-card-styled cards -
+  // buildWebPageCard, then buildWorkingDocCard - each of which builds its
+  // own action icons rather than going through this flat row at all. What's
+  // left uses buildDocItem: a plain uploaded PDF, and the files inside a
+  // Drive folder card.)
+  function buildDocItem(doc, badge) {
     const item = document.createElement('div');
     item.className = 'doc-item' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
     item.title = doc.filename;
@@ -2779,53 +2814,12 @@
     viewLink.href = '/documents/' + encodeURIComponent(doc.documentId) + '/file';
     viewLink.target = '_blank';
     viewLink.rel = 'noopener';
-    viewLink.title = driveDocUrl ? 'Open exported PDF in a new tab' : 'Open PDF in a new tab';
+    viewLink.title = 'Open PDF in a new tab';
     viewLink.textContent = '↗';
     viewLink.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the item active/inactive
     });
     item.appendChild(viewLink);
-
-    if (driveDocUrl) {
-      const gdocLink = document.createElement('a');
-      gdocLink.className = 'doc-item-gdoc';
-      gdocLink.href = driveDocUrl;
-      gdocLink.target = '_blank';
-      gdocLink.rel = 'noopener';
-      gdocLink.title = 'Open in Google Docs';
-      // Plain stroke="currentColor" pencil, not an emoji - see this class's
-      // own CSS comment for why (inherits .doc-item-gdoc's color/hover
-      // treatment the way a text glyph does; an emoji can't).
-      gdocLink.innerHTML =
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-        '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>' +
-        '</svg>';
-      gdocLink.addEventListener('click', (e) => {
-        e.stopPropagation(); // don't also toggle the item active/inactive
-      });
-      item.appendChild(gdocLink);
-    }
-
-    if (onSync) {
-      const syncBtn = document.createElement('button');
-      syncBtn.type = 'button';
-      syncBtn.className = 'doc-item-sync';
-      syncBtn.textContent = '↻';
-      syncBtn.title = 'Re-sync this Google Doc';
-      syncBtn.addEventListener('click', async (e) => {
-        e.stopPropagation(); // don't also toggle the item active/inactive
-        syncBtn.disabled = true;
-        syncBtn.classList.add('spinning');
-        try {
-          await onSync();
-        } finally {
-          syncBtn.disabled = false;
-          syncBtn.classList.remove('spinning');
-        }
-      });
-      item.appendChild(syncBtn);
-    }
 
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
@@ -2939,6 +2933,13 @@
 
   function formatSyncedAt(ts) {
     return ts ? 'Synced ' + new Date(ts).toLocaleString() : 'Not yet synced';
+  }
+
+  // An uploaded Word document has no sync history to report (2026-08-23),
+  // so its card's meta line says when it was uploaded instead - same shape
+  // as formatSyncedAt above so the two read alike side by side.
+  function formatUploadedAt(ts) {
+    return ts ? 'Uploaded ' + new Date(ts).toLocaleString() : 'Uploaded';
   }
 
   // Builds one linked folder's card fresh, including its own sync/unlink
@@ -3146,24 +3147,108 @@
     }
   }
 
-  // A linked Google Doc (2026-08-22, Working Documents - "Enable to link a
-  // Google Doc from Google Drive" - see springchat3_working_documents.md in
-  // project memory) renders as a single flat row, not a folder-style card -
-  // unlike a Google Drive folder, it has no nested file list of its own, so
-  // buildDocItem's existing row (icon, filename, char count, view-in-tab
-  // link, × delete) already covers everything except the ↻ resync button
-  // (passed as buildDocItem's [onSync] callback) and the "open in Google
-  // Docs" link (passed as its [driveDocUrl] param, 2026-08-22 - user's own
-  // follow-up "for working documents we add icon to open as Google Doc" -
-  // built from WorkingDocumentStatus.driveFileId, Drive's own stable file
-  // id, not documentId, which changes on every resync - see
-  // WorkingDocumentStore's own doc comment). "DOC" badge distinguishes it
-  // from a plain upload or a Drive-folder-sourced "DRIVE" one.
-  function buildWorkingDocItem(doc) {
-    return buildDocItem(
-      doc,
-      'DOC',
-      async () => {
+  /*
+   * Both kinds of Working Document - a linked Google Doc and an uploaded
+   * Word file - render as a .drive-folder-card-styled card (2026-08-23,
+   * user's own follow-up "use for uploaded document same look and feel as
+   * for files synced from google drive folder"; asked which of the two
+   * readings they meant, they chose "its own bordered card" and "apply it
+   * to the linked Google Docs too"). Same treatment buildWebPageCard
+   * already gives a linked web page - a plain <div>, not
+   * buildDriveFolderCard's <details>/<summary>, since neither has a nested
+   * file list to disclose - so the whole right panel is now cards, with
+   * flat .doc-item rows left only INSIDE a Drive folder card and in the
+   * Uploaded Documents dropzone.
+   *
+   * [kind] is 'gdoc' or 'word'. What actually differs between them: the
+   * DOC/WORD badge, the meta line ("Synced …" vs. "Uploaded …" - a Word
+   * upload has no source to have synced FROM), and the actions - a linked
+   * Doc gets ↗ exported PDF, the pencil "open in Google Docs" link, ↻
+   * resync and ×; an upload gets only ↗ download and ×, since there's
+   * nothing live behind it (see WordDocumentStore.kt's own doc comment).
+   */
+  function buildWorkingDocCard(doc, kind) {
+    const isWord = kind === 'word';
+    const card = document.createElement('div');
+    card.className = 'drive-folder-card workingdoc-card' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
+    card.title = doc.filename;
+
+    const header = document.createElement('div');
+    header.className = 'drive-folder-header workingdoc-card-header';
+
+    const icon = document.createElement('span');
+    icon.className = 'drive-folder-icon';
+    icon.textContent = '📄';
+    header.appendChild(icon);
+
+    const info = document.createElement('div');
+    info.className = 'drive-folder-info';
+    const nameRow = document.createElement('div');
+    nameRow.className = 'drive-folder-name-row';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'drive-folder-name';
+    nameEl.textContent = doc.filename;
+    nameRow.appendChild(nameEl);
+    const badgeEl = document.createElement('span');
+    badgeEl.className = 'drive-badge';
+    badgeEl.textContent = isWord ? 'WORD' : 'DOC';
+    nameRow.appendChild(badgeEl);
+    info.appendChild(nameRow);
+    const metaEl = document.createElement('div');
+    metaEl.className = 'drive-folder-meta';
+    metaEl.textContent = (isWord ? formatUploadedAt(doc.uploadedAt) : formatSyncedAt(doc.lastSyncedAt)) +
+      ' · ' + formatCharCount(doc.characterCount);
+    info.appendChild(metaEl);
+    header.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'drive-folder-actions';
+
+    // Same GET /documents/{id}/file endpoint either way - it serves a
+    // linked Doc's exported PDF inline and an uploaded .docx as a download
+    // (DocumentController.file picks both from the stored raw filename), so
+    // only the wording differs here.
+    const viewLink = document.createElement('a');
+    viewLink.href = '/documents/' + encodeURIComponent(doc.documentId) + '/file';
+    viewLink.target = '_blank';
+    viewLink.rel = 'noopener';
+    viewLink.title = isWord ? 'Download the Word file' : 'Open exported PDF in a new tab';
+    viewLink.textContent = '↗';
+    viewLink.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the card active/inactive
+    });
+    actions.appendChild(viewLink);
+
+    if (!isWord) {
+      // "Open in Google Docs" (2026-08-22, user's own follow-up "for working
+      // documents we add icon to open as Google Doc") - built from
+      // driveFileId, Drive's own stable id, not documentId, which changes on
+      // every resync (see WorkingDocumentStore.kt). Plain
+      // stroke="currentColor" pencil rather than an emoji so it inherits the
+      // action row's own color/hover treatment.
+      const gdocLink = document.createElement('a');
+      gdocLink.href = 'https://docs.google.com/document/d/' + encodeURIComponent(doc.driveFileId) + '/edit';
+      gdocLink.target = '_blank';
+      gdocLink.rel = 'noopener';
+      gdocLink.title = 'Open in Google Docs';
+      gdocLink.innerHTML =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>' +
+        '</svg>';
+      gdocLink.addEventListener('click', (e) => {
+        e.stopPropagation(); // don't also toggle the card active/inactive
+      });
+      actions.appendChild(gdocLink);
+
+      const syncBtn = document.createElement('button');
+      syncBtn.type = 'button';
+      syncBtn.title = 'Re-sync this Google Doc';
+      syncBtn.textContent = '↻';
+      syncBtn.addEventListener('click', async (e) => {
+        e.stopPropagation(); // don't also toggle the card active/inactive
+        syncBtn.disabled = true;
+        syncBtn.classList.add('spinning');
         try {
           const res = await fetch('/drive/doc-sync/' + encodeURIComponent(doc.documentId), { method: 'POST', headers: csrfHeader() });
           if (!res.ok) throw new Error(await readErrorMessage(res));
@@ -3171,48 +3256,103 @@
           renderWorkingDocsSection();
         } catch (err) {
           addRow('error', 'Could not re-sync Google Doc: ' + err.message);
+        } finally {
+          syncBtn.disabled = false;
+          syncBtn.classList.remove('spinning');
         }
-      },
-      'https://docs.google.com/document/d/' + encodeURIComponent(doc.driveFileId) + '/edit',
-    );
+      });
+      actions.appendChild(syncBtn);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.title = isWord ? 'Delete this Word document' : 'Delete this Google Doc';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the card active/inactive
+      deleteDocument(doc.documentId);
+    });
+    actions.appendChild(removeBtn);
+
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    // Selection - the same shared-activeDocumentIds toggle buildDocItem's
+    // own click handler documents in full, re-rendering all four document
+    // lists since the newly (in)active document could live in any of them.
+    card.addEventListener('click', () => {
+      if (activeDocumentIds.has(doc.documentId)) {
+        activeDocumentIds.delete(doc.documentId);
+      } else {
+        activeDocumentIds.add(doc.documentId);
+      }
+      renderDocList();
+      renderDriveSection();
+      renderWorkingDocsSection();
+      renderWebPagesSection();
+    });
+
+    return card;
   }
 
-  // Placeholder rows while linking (see linkGoogleDoc below) render with a
-  // "Linking…" hint in place of the normal char-count meta line, same idea
-  // as buildDriveFolderCard's own folder.syncing branch, just without a
-  // nested files area to also swap out (a linked Doc IS the item, there's
-  // nothing further inside it to show as "still loading").
+  // Linked Google Docs first, then uploaded Word documents (2026-08-23,
+  // "add a 2nd box to upload MS Word document"), then a placeholder card for
+  // an upload still in flight - both kinds share buildWorkingDocCard above.
   function renderWorkingDocsSection() {
     workingDocListEl.innerHTML = '';
     for (const doc of driveStatus.workingDocuments.filter((d) => matchesActiveProject(d.projectId))) {
-      workingDocListEl.appendChild(doc.syncing ? buildSyncingWorkingDocPlaceholder(doc) : buildWorkingDocItem(doc));
+      workingDocListEl.appendChild(doc.syncing ? buildPendingWorkingDocCard(doc.filename, 'Linking…') : buildWorkingDocCard(doc, 'gdoc'));
+    }
+    for (const doc of wordDocuments.filter((d) => matchesActiveProject(d.projectId))) {
+      workingDocListEl.appendChild(buildWorkingDocCard(doc, 'word'));
+    }
+    if (wordUploading) {
+      workingDocListEl.appendChild(buildPendingWorkingDocCard(wordUploading, 'Uploading…'));
     }
   }
 
-  function buildSyncingWorkingDocPlaceholder(doc) {
-    const item = document.createElement('div');
-    item.className = 'doc-item';
-    item.title = doc.filename;
+  // Same card, minus every action and with the char-count meta line replaced
+  // by a progress hint - shown while a Google Doc is being linked (see
+  // linkGoogleDoc) or a Word file uploaded, i.e. before there's a real
+  // server-side entry to render. Same idea as buildDriveFolderCard's own
+  // folder.syncing branch.
+  function buildPendingWorkingDocCard(filename, hint) {
+    const card = document.createElement('div');
+    card.className = 'drive-folder-card workingdoc-card';
+    card.title = filename;
+
+    const header = document.createElement('div');
+    header.className = 'drive-folder-header workingdoc-card-header';
+
     const icon = document.createElement('span');
-    icon.className = 'doc-item-icon';
+    icon.className = 'drive-folder-icon';
     icon.textContent = '📄';
-    item.appendChild(icon);
-    const info = document.createElement('span');
-    info.className = 'doc-item-info';
-    const name = document.createElement('span');
-    name.className = 'doc-item-name';
-    name.textContent = doc.filename;
-    info.appendChild(name);
-    const meta = document.createElement('span');
-    meta.className = 'doc-item-meta';
-    meta.textContent = 'Linking…';
-    info.appendChild(meta);
-    item.appendChild(info);
-    const spinner = document.createElement('span');
-    spinner.className = 'doc-item-sync spinning';
+    header.appendChild(icon);
+
+    const info = document.createElement('div');
+    info.className = 'drive-folder-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'drive-folder-name';
+    nameEl.textContent = filename;
+    info.appendChild(nameEl);
+    const metaEl = document.createElement('div');
+    metaEl.className = 'drive-folder-meta';
+    metaEl.textContent = hint;
+    info.appendChild(metaEl);
+    header.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'drive-folder-actions';
+    const spinner = document.createElement('button');
+    spinner.type = 'button';
+    spinner.disabled = true;
+    spinner.className = 'spinning';
     spinner.textContent = '↻';
-    item.appendChild(spinner);
-    return item;
+    actions.appendChild(spinner);
+    header.appendChild(actions);
+
+    card.appendChild(header);
+    return card;
   }
 
   async function fetchDriveStatus() {
@@ -3452,8 +3592,8 @@
   // had already put the actual reason in the response body). Falls back to
   // the plain status-based message when the body isn't JSON or has no
   // `message` field (e.g. a plain 404/500 with no body) - shared by
-  // linkGoogleDoc and buildWorkingDocItem's resync handler below, the two
-  // call sites that can hit handleDocSyncError's 422.
+  // linkGoogleDoc and buildWorkingDocCard's resync handler, the two call
+  // sites that can hit handleDocSyncError's 422.
   async function readErrorMessage(res) {
     try {
       const body = await res.json();
@@ -3474,8 +3614,8 @@
   // rendered immediately, then replaced wholesale (success) or filtered
   // back out (failure) once the real response arrives. documentId is null
   // on the placeholder itself since the real one doesn't exist until
-  // ingestion actually runs server-side - buildSyncingWorkingDocPlaceholder
-  // never needs it (no delete/sync affordance on a not-yet-real entry).
+  // ingestion actually runs server-side - buildPendingWorkingDocCard never
+  // needs it (no delete/sync affordance on a not-yet-real entry).
   async function linkGoogleDoc(fileId, fileName) {
     driveStatus = {
       ...driveStatus,
@@ -3522,7 +3662,7 @@
   // Folders" - see springchat3_projects_panel.md in project memory, and
   // that card's own CSS comment for the full reasoning) - this replaced an
   // earlier version that rendered via buildDocItem's plain flat row
-  // (badge 'WEB', same shape buildWorkingDocItem/a Drive-folder's own files
+  // (badge 'WEB', the same flat shape a Drive folder's own nested files
   // still use). Kept as its own function rather than adding yet another
   // buildDocItem param, since a web-page card's structure genuinely
   // diverges from buildDocItem's row (a header block with its own
@@ -3971,6 +4111,72 @@
     location.reload();
   });
 
+  async function fetchWordDocuments() {
+    try {
+      const res = await fetch('/word-documents');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      wordDocuments = await res.json();
+    } catch (err) {
+      console.error('Could not load uploaded Word documents:', err);
+    }
+    renderWorkingDocsSection();
+  }
+
+  // POST /word-documents (WordDocumentController.kt) - same multipart +
+  // ?projectId= shape as uploadDocument's own /upload call above, and the
+  // same "select it right away" follow-up, so an uploaded Word file is
+  // immediately part of the next question's context. Server-side errors
+  // come back as {"message": ...} (the convention this app's newer
+  // endpoints use), read via the shared readErrorMessage helper.
+  async function uploadWordDocument(file) {
+    if (wordUploading) return;
+    wordUploading = file.name;
+    wordUploadRowEl.classList.add('linking');
+    renderWorkingDocsSection();
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const url = activeProjectId ? '/word-documents?projectId=' + encodeURIComponent(activeProjectId) : '/word-documents';
+      const res = await fetch(url, { method: 'POST', headers: csrfHeader(), body: formData });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      const doc = await res.json();
+      wordDocuments.push(doc);
+      activeDocumentIds.add(doc.documentId);
+    } catch (err) {
+      addRow('error', 'Could not upload ' + file.name + ': ' + err.message);
+    } finally {
+      wordUploading = null;
+      wordUploadRowEl.classList.remove('linking');
+      renderWorkingDocsSection();
+    }
+  }
+
+  wordUploadRowEl.addEventListener('click', () => {
+    if (wordUploading) return;
+    wordFileInputEl.click();
+  });
+
+  wordFileInputEl.addEventListener('change', () => {
+    const file = wordFileInputEl.files[0];
+    wordFileInputEl.value = ''; // reset so picking the same file again still fires 'change'
+    if (file) uploadWordDocument(file);
+  });
+
+  // Drop target too, same four-event preventDefault() dance the Uploaded
+  // Documents dropzone needs (see its own comment) or the browser navigates
+  // to the dropped file instead.
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach((evt) => {
+    wordUploadRowEl.addEventListener(evt, (e) => e.preventDefault());
+  });
+  wordUploadRowEl.addEventListener('dragenter', () => wordUploadRowEl.classList.add('drag-over'));
+  wordUploadRowEl.addEventListener('dragover', () => wordUploadRowEl.classList.add('drag-over'));
+  wordUploadRowEl.addEventListener('dragleave', () => wordUploadRowEl.classList.remove('drag-over'));
+  wordUploadRowEl.addEventListener('drop', (e) => {
+    wordUploadRowEl.classList.remove('drag-over');
+    const file = e.dataTransfer?.files?.[0];
+    if (file) uploadWordDocument(file);
+  });
+
   async function fetchDocuments() {
     try {
       const res = await fetch('/documents');
@@ -4050,6 +4256,7 @@
       folder.files = folder.files.filter((d) => d.documentId !== documentId);
     }
     driveStatus.workingDocuments = driveStatus.workingDocuments.filter((d) => d.documentId !== documentId);
+    wordDocuments = wordDocuments.filter((d) => d.documentId !== documentId);
     webPages = webPages.filter((p) => p.documentId !== documentId);
     activeDocumentIds.delete(documentId);
     renderDocList();
@@ -4079,6 +4286,34 @@
     docDropzoneEl.classList.remove('drag-over');
     const file = e.dataTransfer?.files?.[0];
     if (file) uploadDocument(file);
+  });
+
+  // Per-section collapse state for the right panel's four resource sections
+  // (2026-08-23, "make the sections ... collapsable"), keyed by each
+  // <details>' data-section. Same localStorage pattern - and same
+  // storage-unavailable tolerance - as collapsedDriveFolderIds above; the
+  // <details> elements do the actual expanding/collapsing themselves, this
+  // only remembers the choice.
+  const panelSectionEls = Array.from(sidePanelContentEl.querySelectorAll('.panel-section'));
+  let collapsedPanelSections = new Set();
+  try {
+    const stored = localStorage.getItem('collapsedPanelSections');
+    if (stored) collapsedPanelSections = new Set(JSON.parse(stored));
+  } catch {
+    // Storage unavailable, or a corrupt stored value - every section stays
+    // expanded, same as a first-ever visit.
+  }
+  panelSectionEls.forEach((sectionEl) => {
+    sectionEl.open = !collapsedPanelSections.has(sectionEl.dataset.section);
+    sectionEl.addEventListener('toggle', () => {
+      if (sectionEl.open) collapsedPanelSections.delete(sectionEl.dataset.section);
+      else collapsedPanelSections.add(sectionEl.dataset.section);
+      try {
+        localStorage.setItem('collapsedPanelSections', JSON.stringify(Array.from(collapsedPanelSections)));
+      } catch {
+        // Storage unavailable - the choice just won't survive a reload.
+      }
+    });
   });
 
   // Collapse state persists across reloads via localStorage - safe here
@@ -4723,6 +4958,7 @@
   fetchSettings();
   fetchCurrentUser();
   fetchDriveStatus();
+  fetchWordDocuments();
   fetchWebPages();
   // fetchProjects()'s first-project auto-select now also calls
   // renderActiveThread(), which reads chatHistory - sequenced (not fired in

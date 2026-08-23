@@ -110,6 +110,21 @@ dependencies {
     // still show.
     implementation("org.apache.pdfbox:pdfbox:3.0.7")
 
+    // Word (.docx) text extraction for the "upload MS Word document" box in
+    // the right panel's Working Documents section (2026-08-23) - see
+    // WordTextExtractor.kt / WordDocumentController.kt. BOM-managed (no
+    // explicit version), same as spring-ai-pdf-document-reader above.
+    // Provides org.springframework.ai.reader.tika.TikaDocumentReader
+    // (Apache Tika under the hood, so it also covers .doc/.pptx/.odt should
+    // those ever be wanted). Both the artifact coordinate and the API shape
+    // (TikaDocumentReader(Resource) + .get(): List<Document> returning
+    // exactly ONE Document for the whole file, not one per page) were
+    // confirmed against Spring AI's own API docs AND its source at this
+    // version tag before writing code against them, per this project's
+    // standard for external API shapes (see
+    // springchat3_native_tool_calling.md risk #6 in project memory).
+    implementation("org.springframework.ai:spring-ai-tika-document-reader")
+
     // (2026-08-23: the "Web Pages" feature's own HTML-extraction dependency,
     // org.jsoup:jsoup, that used to sit here was removed - WebPageController
     // now hands URL fetching+extraction off to a self-hosted Firecrawl
