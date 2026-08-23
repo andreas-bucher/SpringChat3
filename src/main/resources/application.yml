@@ -63,7 +63,7 @@ embabel:
   models:
     default-llm: ${OLLAMA_MODEL:granite4.1:3b}
     llms:
-      generation: ${OLLAMA_GENERATION_MODEL:magistral:24b-small-2506-q4_K_M}
+      generation: ${OLLAMA_GENERATION_MODEL:TechyShishy/ministral-3:8b-reasoning-2512-q8_0}
       document-search-strategy: ${OLLAMA_DOC_STRATEGY_MODEL:granite4.1:3b}
 
 springchat3:

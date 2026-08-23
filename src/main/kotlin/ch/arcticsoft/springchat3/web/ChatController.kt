@@ -4,6 +4,7 @@ import ch.arcticsoft.springchat3.agent.ChatProgressBus
 import ch.arcticsoft.springchat3.agent.ChatProgressEvent
 import ch.arcticsoft.springchat3.agent.ChatReply
 import ch.arcticsoft.springchat3.agent.ChatRequest
+import ch.arcticsoft.springchat3.chat.ChatHistoryStore
 import com.embabel.agent.api.invocation.AgentInvocation
 import com.embabel.agent.core.AgentPlatform
 import org.slf4j.LoggerFactory
@@ -29,6 +30,7 @@ import java.util.UUID
 class ChatController(
     private val agentPlatform: AgentPlatform,
     private val progressBus: ChatProgressBus,
+    private val chatHistoryStore: ChatHistoryStore,
 ) {
 
     private val log = LoggerFactory.getLogger(ChatController::class.java)
@@ -81,4 +83,17 @@ class ChatController(
                 .build(ChatReply::class.java)
                 .invoke(request)
         }.subscribeOn(Schedulers.boundedElastic())
+            // Captures this turn for the left panel's per-project "Chats"
+            // history (2026-08-23, see springchat3_projects_panel.md in
+            // project memory) - one shared call site for both /chat and
+            // /chat/stream, since both route through this same private
+            // helper. Runs only on success (doOnNext), same as ChatAgent's
+            // own Done event this Mono resolves alongside (see
+            // ChatProgressEvent.Done's own doc comment) - a failed turn has
+            // no assistant reply worth recording. request.sessionId is
+            // passed through so the turn lands in the right session file
+            // (2026-08-23, see ChatRequest.sessionId's own doc comment).
+            .doOnNext { reply ->
+                chatHistoryStore.recordTurn(request.sessionId, request.projectId, request.message, reply.text)
+            }
 }

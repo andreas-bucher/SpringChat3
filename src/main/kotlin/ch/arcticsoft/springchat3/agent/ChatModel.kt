@@ -44,6 +44,43 @@ data class ChatRequest(
      * app round-trips through the small tool-selection model's own context.
      */
     val documentIds: List<String> = emptyList(),
+    /**
+     * Whichever project was active in the browser (index.html's
+     * `activeProjectId`) when this message was sent, or null if none was -
+     * only possible before a first project exists, since
+     * [ch.arcticsoft.springchat3.web.ProjectController]'s own frontend
+     * caller auto-selects one otherwise (see springchat3_projects_panel.md
+     * v10 in project memory). Not read by [ChatAgent] at all - the only
+     * consumer is [ChatController], which passes it straight through to
+     * [ch.arcticsoft.springchat3.chat.ChatHistoryStore.recordTurn] so the
+     * captured turn is tagged with the right project (2026-08-23, user's own
+     * request "the chat history shall be by project" - see
+     * springchat3_projects_panel.md in project memory), the same "fixed at
+     * the moment of the action, not re-read later" convention every other
+     * `projectId` field in this app already follows.
+     */
+    val projectId: String? = null,
+    /**
+     * Whichever chat session was active in the browser (index.html's
+     * `activeSessionId`) when this message was sent - a `crypto.randomUUID()`
+     * minted once when the page first loads, or freshly re-minted whenever
+     * the user clicks "New Chat" (2026-08-23, user's own request "add a chat
+     * sessionId to the chat-history, append questions and answer to the same
+     * chat session. only when new chat sessions is create, start with new
+     * chat-history, save in new file." - see springchat3_projects_panel.md
+     * in project memory). Not read by [ChatAgent] at all - the only consumer
+     * is [ChatController], which passes it straight through to
+     * [ch.arcticsoft.springchat3.chat.ChatHistoryStore.recordTurn] so every
+     * turn from the same browser session lands in the same session file,
+     * the same "fixed at the moment of the action, not re-read later"
+     * convention [projectId] above already follows. Defaults to blank for
+     * any caller that doesn't set it (e.g. a raw curl request, or a browser
+     * tab left open from before this field existed) -
+     * [ch.arcticsoft.springchat3.chat.ChatHistoryStore] folds a blank id
+     * into one shared fallback session per project rather than rejecting it
+     * - see that class's own doc comment.
+     */
+    val sessionId: String = "",
 )
 
 /**

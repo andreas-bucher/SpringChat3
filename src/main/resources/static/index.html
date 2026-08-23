@@ -44,6 +44,10 @@
   }
 
   header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     padding: 20px 4px 14px;
     border-bottom: 1px solid var(--border);
   }
@@ -52,6 +56,30 @@
     margin: 0;
     font-size: 18px;
     font-weight: 600;
+  }
+
+  /*
+   * "New Chat" (2026-08-23, user's own request "add a chat sessionId to the
+   * chat-history, append questions and answer to the same chat session.
+   * only when new chat sessions is create, start with new chat-history,
+   * save in new file." - see springchat3_projects_panel.md in project
+   * memory) - styled distinctly from the small .panel-icon-btn buttons
+   * (e.g. #new-project-btn) since this sits in the main content area as a
+   * primary action, not a small panel-header icon.
+   */
+  #new-chat-btn {
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 8px;
+  }
+
+  #new-chat-btn:hover {
+    background: var(--bg);
   }
 
   /*
@@ -461,6 +489,61 @@
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+  }
+
+  /*
+   * Chat history, grouped by project (2026-08-23, user's own request "the
+   * chat history shall be by project. can you capture the chat history and
+   * enlist below the project name." - see springchat3_projects_panel.md in
+   * project memory). renderChatHistory() builds one .chat-history-group per
+   * project that has at least one captured turn - the project's own name as
+   * .chat-history-group-title, directly above that project's
+   * .chat-history-item rows - "enlist below the project name" taken
+   * literally, inside the existing "Chat History" section (labeled "Chats"
+   * until 2026-08-23, user's own request "Change on UI panel left 'CHATS'
+   * to CHAT HISTORY'" - see springchat3_projects_panel.md in project
+   * memory) rather than nested into
+   * #projects-list itself, so the already-working exclusive-select
+   * .project-item rows above stay untouched.
+   */
+  .chat-history-group {
+    margin: 10px 12px 0;
+  }
+
+  .chat-history-group:last-child {
+    margin-bottom: 12px;
+  }
+
+  .chat-history-group-title {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--muted);
+    padding: 0 2px 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Clicking a row re-fills the composer with that past question (see index.html's own click handler) rather than doing nothing - cursor: pointer signals that. */
+  .chat-history-item {
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .chat-history-item:hover {
+    background: var(--panel);
+  }
+
+  .chat-history-more-hint {
+    padding: 2px 8px 0;
+    font-size: 11px;
+    color: var(--muted);
   }
 
   /*
@@ -1585,8 +1668,10 @@
         <div id="projects-empty-hint" class="panel-empty-hint">No projects yet.</div>
       </div>
       <div class="panel-divider"></div>
-      <div class="panel-section-title">Chats</div>
-      <div class="panel-empty-hint">No past chats yet.</div>
+      <div class="panel-section-title">Chat History</div>
+      <div id="chats-list">
+        <div id="chats-empty-hint" class="panel-empty-hint">No past chats yet.</div>
+      </div>
     </div>
     <!--
       Signed-in-user account menu (2026-08-23, user's own request "Move sign
@@ -1598,7 +1683,7 @@
       .side-panel-footer sibling to .side-panel-header/.side-panel-body,
       pinned to the bottom of the flex column the same way the header is
       pinned to the top - not inside .side-panel-body, since that's the
-      scrollable Projects/Chats list and this should stay fixed in view
+      scrollable Projects/Chat History list and this should stay fixed in view
       regardless of scroll position, the same reason a chat app's own
       account entry always sits outside its scrollable channel/conversation
       list.
@@ -1656,6 +1741,7 @@
   <div class="app">
     <header>
       <h1>SpringChat3<span id="version-label" class="version-label"></span></h1>
+      <button id="new-chat-btn" type="button">New Chat</button>
     </header>
 
     <div id="messages">
@@ -1784,6 +1870,7 @@
   const formEl = document.getElementById('composer');
   const inputEl = document.getElementById('input');
   const sendEl = document.getElementById('send');
+  const newChatBtnEl = document.getElementById('new-chat-btn');
   const sidePanelEl = document.getElementById('side-panel');
   const panelToggleEl = document.getElementById('panel-toggle');
   const panelResizeHandleEl = document.getElementById('panel-resize-handle');
@@ -1792,6 +1879,8 @@
   const projectsPanelResizeHandleEl = document.getElementById('projects-panel-resize-handle');
   const projectsListEl = document.getElementById('projects-list');
   const projectsEmptyHintEl = document.getElementById('projects-empty-hint');
+  const chatsListEl = document.getElementById('chats-list');
+  const chatsEmptyHintEl = document.getElementById('chats-empty-hint');
   const newProjectBtnEl = document.getElementById('new-project-btn');
   const newProjectOverlayEl = document.getElementById('new-project-overlay');
   const newProjectFormEl = document.getElementById('new-project-form');
@@ -1838,6 +1927,20 @@
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  // Rebuilds the #empty-state placeholder from scratch. The original node
+  // (captured once as emptyStateEl at script load, above) gets permanently
+  // removed the first time any message is ever rendered into #messages, so
+  // there's nothing left to re-insert once that's happened - this recreates
+  // it identically instead. Used by renderActiveThread() below whenever a
+  // project switch lands on one with no captured history yet.
+  function showEmptyState() {
+    messagesEl.innerHTML = '';
+    const div = document.createElement('div');
+    div.id = 'empty-state';
+    div.textContent = 'Say hello to get started.';
+    messagesEl.appendChild(div);
   }
 
   // Matches each tool's real Spring AI @Tool(name = ...) in GeoTool.kt/
@@ -2206,7 +2309,7 @@
   }
 
   function addRow(role, text, toolCalls, steps, retrieval) {
-    if (emptyStateEl) emptyStateEl.remove();
+    document.getElementById('empty-state')?.remove();
     const row = document.createElement('div');
     row.className = 'row ' + role;
 
@@ -2249,7 +2352,7 @@
   // shows up, same for tool calls nested under "Execute tools". Replaces
   // the old plain three-dot typing indicator.
   function addLiveProgressRow() {
-    if (emptyStateEl) emptyStateEl.remove();
+    document.getElementById('empty-state')?.remove();
     const row = document.createElement('div');
     row.className = 'row assistant';
     const col = document.createElement('div');
@@ -2428,11 +2531,24 @@
   // ChatProgress.kt) to applyProgressEvent as it arrives, so the live panel
   // fills in incrementally instead of the browser waiting for one final
   // response. A chunk boundary can land mid-object, hence the line buffer.
-  async function streamChat(live, message, location, documentIds) {
+  //
+  // sessionId is always sent (unlike documentIds/projectId, which are
+  // omitted when empty/absent) since activeSessionId always holds a value
+  // once the page has loaded (2026-08-23, see that variable's own doc
+  // comment) - ChatController passes it straight through to
+  // ChatHistoryStore.recordTurn so this turn lands in the right session
+  // file.
+  async function streamChat(live, message, location, documentIds, projectId, sessionId) {
     const res = await fetch('/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-      body: JSON.stringify({ message, ...(location ?? {}), ...(documentIds && documentIds.length ? { documentIds } : {}) }),
+      body: JSON.stringify({
+        message,
+        sessionId,
+        ...(location ?? {}),
+        ...(documentIds && documentIds.length ? { documentIds } : {}),
+        ...(projectId ? { projectId } : {}),
+      }),
     });
 
     if (!res.ok || !res.body) {
@@ -2543,6 +2659,45 @@
   // has already run, same as `uploadDocument`'s own forward reference to it.
   function matchesActiveProject(itemProjectId) {
     return (itemProjectId || null) === activeProjectId;
+  }
+
+  // Bug fix (2026-08-23, user's own report "Document search: enlist
+  // incorrect documents" - the chat model's own answer was correct, using
+  // whatever was actually selected, but the trace's "Document search: ..."
+  // row could list a document the user could no longer even see selected).
+  // Root cause: activeDocumentIds is one flat Set shared across every
+  // project (see its own doc comment below) and was never pruned when
+  // activeProjectId changed - a document selected while an earlier project
+  // was active stayed in the Set after switching to a different project,
+  // invisibly, since renderDocList/renderDriveSection/
+  // renderWorkingDocsSection/renderWebPagesSection all filter what's
+  // *rendered* through matchesActiveProject, but nothing filtered the
+  // underlying Set itself. The next message sent from the new project would
+  // then still include that stale id in documentIds, and ChatAgent.answer's
+  // retrieval.filenames (correctly, on the backend's own terms) named
+  // exactly what it was given - the defect was upstream of the backend
+  // entirely.
+  //
+  // Called from every place activeProjectId itself changes (same four call
+  // sites renderActiveThread() was added to) - drops any selected id whose
+  // owning document/Drive file/Working Document/Web Page doesn't belong to
+  // the now-active project, using the exact same per-source matchesActiveProject
+  // checks the four render functions already use, so "still selected" and
+  // "still visible" can never drift apart again.
+  function pruneActiveDocumentSelection() {
+    const visible = new Set([
+      ...documents.filter((doc) => matchesActiveProject(doc.projectId)).map((doc) => doc.documentId),
+      ...driveStatus.folders
+        .filter((f) => matchesActiveProject(f.projectId))
+        .flatMap((f) => f.files.map((file) => file.documentId)),
+      ...driveStatus.workingDocuments
+        .filter((d) => matchesActiveProject(d.projectId))
+        .map((d) => d.documentId),
+      ...webPages.filter((p) => matchesActiveProject(p.projectId)).map((p) => p.documentId),
+    ]);
+    for (const id of Array.from(activeDocumentIds)) {
+      if (!visible.has(id)) activeDocumentIds.delete(id);
+    }
   }
 
   // [badge] (e.g. "DRIVE", see buildDriveDocItem below/springchat3_google_drive.md
@@ -4118,6 +4273,32 @@
   // v9 below (see updateSidePanelEnabled).
   let activeProjectId = null;
 
+  // Chat session id (2026-08-23, user's own request "add a chat sessionId
+  // to the chat-history, append questions and answer to the same chat
+  // session. only when new chat sessions is create, start with new
+  // chat-history, save in new file." - see springchat3_projects_panel.md in
+  // project memory) - sent as-is on every /chat/stream call (see
+  // streamChat's own doc comment) so every turn from this browser tab lands
+  // in the same session file (ChatHistoryStore.recordTurn) until "New Chat"
+  // is clicked (see newChatBtnEl's own listener below), which mints a fresh
+  // one. Deliberately independent of activeProjectId/activeDocumentIds -
+  // switching projects does NOT start a new session, only the button does,
+  // per the user's own answer that this is a storage-only change for now
+  // (no session list/browse UI yet).
+  let activeSessionId = crypto.randomUUID();
+
+  // Every captured chat message, across every project, fetched wholesale
+  // from GET /chat-history (2026-08-23, user's own request "the chat
+  // history shall be by project. can you capture the chat history and
+  // enlist below the project name." - see springchat3_projects_panel.md in
+  // project memory) - same "fetch everything once, group/filter in JS"
+  // convention `documents`/`driveStatus`/`webPages` already follow.
+  // renderChatHistory() below only ever renders `role === 'user'` entries;
+  // the sibling `role === 'assistant'` entries are fetched too but currently
+  // unused by any renderer - kept only because ChatHistoryStore.recordTurn
+  // stores both halves of a turn, not filtered out here.
+  let chatHistory = [];
+
   // The right panel is disabled - its three resource sections hidden behind
   // a plain explanatory message, and its own "+" upload button disabled -
   // whenever no project is active (2026-08-23, user's own request "When no
@@ -4176,12 +4357,14 @@
     // own doc comment), so this only needs to re-render, not re-fetch.
     item.addEventListener('click', () => {
       activeProjectId = activeProjectId === project.projectId ? null : project.projectId;
+      pruneActiveDocumentSelection();
       renderProjects();
       renderDocList();
       renderDriveSection();
       renderWorkingDocsSection();
       renderWebPagesSection();
       updateSidePanelEnabled();
+      renderActiveThread();
     });
     return item;
   }
@@ -4192,6 +4375,208 @@
     for (const project of projects) {
       projectsListEl.appendChild(buildProjectItem(project));
     }
+  }
+
+  // Cap per project group so one very chatty project can't push every other
+  // project's own history out of view below the fold - the same "no silent
+  // truncation" spirit as everywhere else in this app, just made visible via
+  // .chat-history-more-hint's own "+N earlier" line rather than a hard limit
+  // with no indication anything was left out. Counts sessions, not
+  // individual entries, since 2026-08-23 (see renderChatHistory's own doc
+  // comment).
+  const CHAT_HISTORY_MAX_PER_PROJECT = 8;
+
+  // One clickable past-session row (2026-08-23, user's own request "On the
+  // left panel on the chat history, enlist the sessions once and not all
+  // entries of the session. when clicking on the session in the chat
+  // history, then in the middle panel the whole chat session should be
+  // displayed." - see springchat3_projects_panel.md in project memory).
+  // Used to be one row per captured *question* (labeled with that
+  // question's own text, and clicking it refilled the composer with it) -
+  // now one row per *session*, labeled with the session's own derived
+  // [session.sessionName] (see ChatHistoryEntry.sessionName's own doc
+  // comment in ChatHistoryStore.kt), and clicking it shows that session's
+  // whole transcript in the middle panel via renderSessionThread() instead.
+  // Composer refill is gone along with it - there's no longer one single
+  // question a click could refill it with.
+  //
+  // If the session belongs to a different project than the one currently
+  // active, switches to that project first - the same exclusive-selection
+  // assignment + five-function re-render chain buildProjectItem's own click
+  // handler uses, so the right panel's resources stay consistent - then
+  // makes the clicked session the active one (so a message typed next
+  // continues *this* session, the same way "New Chat" starts a fresh one -
+  // see activeSessionId's own doc comment) before rendering its transcript.
+  function buildChatHistoryItem(session) {
+    const item = document.createElement('div');
+    item.className = 'chat-history-item';
+    item.textContent = session.sessionName;
+    item.title = new Date(session.lastTimestamp).toLocaleString() + '\n\n' + session.sessionName;
+    item.addEventListener('click', () => {
+      const sessionProjectId = session.projectId || null;
+      if (sessionProjectId !== activeProjectId) {
+        activeProjectId = sessionProjectId;
+        pruneActiveDocumentSelection();
+        renderProjects();
+        renderDocList();
+        renderDriveSection();
+        renderWorkingDocsSection();
+        renderWebPagesSection();
+        updateSidePanelEnabled();
+      }
+      activeSessionId = session.sessionId;
+      renderSessionThread(session.sessionId);
+    });
+    return item;
+  }
+
+  // Groups chatHistory by project, then by session within it - one
+  // .chat-history-group per project that has at least one captured session,
+  // one .chat-history-item row per session (2026-08-23, user's own request
+  // "enlist the sessions once and not all entries of the session" - see
+  // springchat3_projects_panel.md in project memory; used to be one row per
+  // captured question before that) - in the same project order as the
+  // Projects list above (projects' own GET /projects order,
+  // oldest-created-first), sessions within a project ordered most-recently-
+  // active first. Rebuilds from scratch on every call (discard-and-rebuild,
+  // same as renderProjects/renderDocList/etc.) rather than patching in
+  // place - this feature's scale (a handful of projects, a modest number of
+  // sessions each) doesn't warrant anything fancier.
+  function renderChatHistory() {
+    chatsListEl.querySelectorAll('.chat-history-group').forEach((el) => el.remove());
+    const questions = chatHistory.filter((entry) => entry.role === 'user');
+    let anyGroup = false;
+    for (const project of projects) {
+      const projectQuestions = questions.filter((entry) => (entry.projectId || null) === project.projectId);
+      // One summary row per distinct sessionId - lastTimestamp (the latest
+      // question's own timestamp within that session) both orders the
+      // sessions below and, via .title, shows when the session was last
+      // used.
+      const sessionsById = new Map();
+      for (const entry of projectQuestions) {
+        const existing = sessionsById.get(entry.sessionId);
+        if (!existing || entry.timestamp > existing.lastTimestamp) {
+          sessionsById.set(entry.sessionId, {
+            sessionId: entry.sessionId,
+            projectId: entry.projectId,
+            sessionName: entry.sessionName,
+            lastTimestamp: entry.timestamp,
+          });
+        }
+      }
+      const sessions = Array.from(sessionsById.values()).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+      if (sessions.length === 0) continue;
+      anyGroup = true;
+      const group = document.createElement('div');
+      group.className = 'chat-history-group';
+      const title = document.createElement('div');
+      title.className = 'chat-history-group-title';
+      title.textContent = project.name;
+      group.appendChild(title);
+      for (const session of sessions.slice(0, CHAT_HISTORY_MAX_PER_PROJECT)) {
+        group.appendChild(buildChatHistoryItem(session));
+      }
+      if (sessions.length > CHAT_HISTORY_MAX_PER_PROJECT) {
+        const moreHint = document.createElement('div');
+        moreHint.className = 'chat-history-more-hint';
+        moreHint.textContent = '+' + (sessions.length - CHAT_HISTORY_MAX_PER_PROJECT) + ' earlier';
+        group.appendChild(moreHint);
+      }
+      chatsListEl.appendChild(group);
+    }
+    chatsEmptyHintEl.hidden = anyGroup;
+  }
+
+  // Refills the middle chat thread with the most recently captured turn for
+  // whichever project is now active (2026-08-23, user's own request "When
+  // the user switches projects, the chat thread in the middle need to
+  // change... updated to the last chat history entry from that project.").
+  // Shows only the single latest user+assistant pair (grouped by turnId),
+  // not the full history, per the literal wording of that request - the
+  // Chat History section in the left panel is still where the fuller per-project
+  // history lives (as one row per session, see renderChatHistory's own doc
+  // comment). Falls back to the empty-state placeholder when no project is
+  // active, or the active project has no captured history yet.
+  //
+  // Deliberately only called from the places activeProjectId itself changes
+  // via a *project* switch (a project click, the auto-select on load, and
+  // creating a new project) - NOT from a chat-history-item (session) click,
+  // which calls renderSessionThread() below directly for the specific
+  // session that was clicked - and NOT from fetchChatHistory()'s post-send
+  // refresh below, which would otherwise reset the live in-progress view
+  // built incrementally by addRow()/streamChat() as the conversation
+  // happens.
+  //
+  // Picks (or creates) which session becomes "the" active session for
+  // activeProjectId, then delegates to renderSessionThread() below for the
+  // actual rendering (2026-08-23, user's own request "when switching the
+  // project, the latest session of that project shall get active. If for
+  // that project is not session yet, then create a new session." - see
+  // springchat3_projects_panel.md in project memory). Used to show only the
+  // single latest turn for whichever project was active; now that switching
+  // projects also decides *which session* is active going forward (so a
+  // message typed next continues it, same as clicking a session row in the
+  // Chat History section does), showing that session's whole transcript is the
+  // consistent choice rather than reverting to a one-turn preview.
+  function renderActiveThread() {
+    if (activeProjectId === null) {
+      showEmptyState();
+      return;
+    }
+    const questions = chatHistory.filter(
+      (entry) => entry.role === 'user' && (entry.projectId || null) === activeProjectId
+    );
+    if (questions.length === 0) {
+      // No captured session for this project at all yet - mint a fresh one
+      // (same crypto.randomUUID() "New Chat" itself uses - see
+      // activeSessionId's own doc comment) rather than leaving activeSessionId
+      // pointing at whatever project was active before this switch.
+      activeSessionId = crypto.randomUUID();
+      showEmptyState();
+      return;
+    }
+    const latestQuestion = questions.reduce((latest, entry) =>
+      !latest || entry.timestamp > latest.timestamp ? entry : latest
+    );
+    activeSessionId = latestQuestion.sessionId;
+    renderSessionThread(activeSessionId);
+  }
+
+  // Refills the middle chat thread with EVERY turn belonging to one chat
+  // session, not just its latest (2026-08-23, user's own request "when
+  // clicking on the session in the chat history, then in the middle panel
+  // the whole chat session should be displayed." - see
+  // springchat3_projects_panel.md in project memory) - the session-specific
+  // renderer renderActiveThread() above now delegates to once it's decided
+  // which session is active. No sort needed: entries for one session already
+  // come back from GET /chat-history in the chronological order
+  // ChatHistoryStore.recordTurn appended them in (user, then assistant, per
+  // turn, oldest turn first) and Array#filter preserves that relative order.
+  // Falls back to the empty-state placeholder if the session somehow has no
+  // entries (defensive only - a session only ever appears in the Chat History list,
+  // and so is only ever clickable, once it has at least one).
+  function renderSessionThread(sessionId) {
+    const entries = chatHistory.filter((entry) => entry.sessionId === sessionId);
+    if (entries.length === 0) {
+      showEmptyState();
+      return;
+    }
+    messagesEl.innerHTML = '';
+    for (const entry of entries) {
+      addRow(entry.role, entry.text);
+    }
+  }
+
+  async function fetchChatHistory() {
+    try {
+      const res = await fetch('/chat-history');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      chatHistory = await res.json();
+    } catch (err) {
+      console.error('Could not load chat history:', err);
+      chatHistory = [];
+    }
+    renderChatHistory();
   }
 
   async function fetchProjects() {
@@ -4220,12 +4605,22 @@
     if (activeProjectId === null && projects.length > 0) {
       activeProjectId = projects[0].projectId;
     }
+    pruneActiveDocumentSelection();
     renderProjects();
     renderDocList();
     renderDriveSection();
     renderWorkingDocsSection();
     renderWebPagesSection();
     updateSidePanelEnabled();
+    // Chat-history grouping is keyed off the `projects` array itself (for
+    // each group's name/order), not just `activeProjectId` - re-render here
+    // too so a re-fetch that changes the project list also refreshes it.
+    renderChatHistory();
+    // Also refills the middle thread for whichever project just became
+    // active (the auto-select above, on a fresh page load) - relies on
+    // chatHistory already being populated, which the boot sequence below
+    // guarantees by awaiting fetchChatHistory() before this function runs.
+    renderActiveThread();
   }
 
   function showNewProjectError(message) {
@@ -4253,6 +4648,18 @@
   newProjectCloseBtnEl.addEventListener('click', closeNewProjectModal);
   newProjectCancelBtnEl.addEventListener('click', closeNewProjectModal);
 
+  // "New Chat" (2026-08-23, see activeSessionId's own doc comment) - mints a
+  // fresh session id and clears the middle thread back to the empty state.
+  // Deliberately does not touch activeProjectId/activeDocumentIds (a new
+  // chat session stays within whichever project/documents are currently
+  // selected) and does not call renderActiveThread() (which would just
+  // redraw the previous session's last turn from chatHistory) - showEmptyState()
+  // directly is what actually clears the thread here.
+  newChatBtnEl.addEventListener('click', () => {
+    activeSessionId = crypto.randomUUID();
+    showEmptyState();
+  });
+
   // Backdrop click closes the modal - e.target is the overlay itself only
   // when the click landed outside .modal-dialog, since a click inside it
   // bubbles up with e.target set to whatever was actually clicked there.
@@ -4277,8 +4684,32 @@
         body: JSON.stringify({ name, description: newProjectDescriptionEl.value.trim() }),
       });
       if (!res.ok) throw new Error(await readErrorMessage(res));
-      projects.push(await res.json());
+      const created = await res.json();
+      projects.push(created);
+      // Newly created project becomes the active one (2026-08-23, user's own
+      // request "When a new project is added, then select these project" -
+      // see springchat3_projects_panel.md in project memory) - same
+      // exclusive-selection assignment buildProjectItem's own click handler
+      // and fetchProjects()'s first-project auto-select both use, and the
+      // same full re-render chain both of those call afterward (the right
+      // panel's three resource lists all need to reflect the switch, and
+      // updateSidePanelEnabled() needs to re-check now that a project is
+      // definitely active - relevant the very first time ever, when this is
+      // also the user's first project and the panel was disabled until now).
+      activeProjectId = created.projectId;
+      pruneActiveDocumentSelection();
       renderProjects();
+      renderDocList();
+      renderDriveSection();
+      renderWorkingDocsSection();
+      renderWebPagesSection();
+      updateSidePanelEnabled();
+      renderChatHistory();
+      // A brand new project has no captured history yet, so this always
+      // falls into renderActiveThread()'s empty-state branch today - called
+      // anyway for consistency with the other three activeProjectId-change
+      // sites, and correct if this project is ever revisited later.
+      renderActiveThread();
       closeNewProjectModal();
     } catch (err) {
       showNewProjectError('Could not create project: ' + err.message);
@@ -4293,7 +4724,11 @@
   fetchCurrentUser();
   fetchDriveStatus();
   fetchWebPages();
-  fetchProjects();
+  // fetchProjects()'s first-project auto-select now also calls
+  // renderActiveThread(), which reads chatHistory - sequenced (not fired in
+  // parallel, unlike the calls above) so that's already populated by the
+  // time the auto-select runs, rather than racing it.
+  fetchChatHistory().then(fetchProjects);
 
   inputEl.addEventListener('input', autoGrow);
 
@@ -4310,6 +4745,46 @@
     if (!message) return;
 
     addRow('user', message);
+    // Optimistically append to the active project's chat history (2026-08-23,
+    // user's own request "When a user submits a message, append it to the
+    // active chat history.") so the left panel's Chat History section shows the new
+    // question immediately, rather than only after streamChat() finishes and
+    // the reconciling fetchChatHistory() re-fetch below completes. A
+    // synthetic pending- id is enough - this entry only lives until that
+    // re-fetch replaces the whole chatHistory array wholesale with what the
+    // server actually persisted (which also adds the assistant's own reply
+    // entry, not knowable client-side yet). Harmless if activeProjectId is
+    // null (no project exists yet) - same as a real server-recorded entry
+    // with a null projectId, it's captured but not shown anywhere until one
+    // exists, per chatHistory's own doc comment.
+    //
+    // sessionId is activeSessionId itself, same as what's about to be sent
+    // to /chat/stream below, so this pending entry lands in the right
+    // session's group in renderChatHistory() (2026-08-23, see that
+    // function's own doc comment). sessionName mirrors
+    // ChatHistoryStore.sessionNameFrom's own "first 20 characters + '...'"
+    // rule client-side, but only computes a fresh preview for a session
+    // that has no prior entries yet - an ongoing session's real name (set
+    // once, from its actual first question - see ChatSessionFile.sessionName's
+    // own doc comment) is reused as-is rather than re-derived from
+    // whatever's being typed right now, which for turn 2+ is a different
+    // question entirely.
+    const pendingEntryId = 'pending-' + Date.now();
+    const existingSessionEntry = chatHistory.find((entry) => entry.sessionId === activeSessionId);
+    const pendingSessionName = existingSessionEntry
+      ? existingSessionEntry.sessionName
+      : (message.length > 20 ? message.slice(0, 20) + '...' : message);
+    chatHistory.push({
+      entryId: pendingEntryId,
+      turnId: pendingEntryId,
+      sessionId: activeSessionId,
+      sessionName: pendingSessionName,
+      projectId: activeProjectId,
+      role: 'user',
+      text: message,
+      timestamp: Date.now(),
+    });
+    renderChatHistory();
     inputEl.value = '';
     autoGrow();
     sendEl.disabled = true;
@@ -4318,7 +4793,17 @@
 
     try {
       const location = await getBrowserLocation();
-      await streamChat(live, message, location, Array.from(activeDocumentIds));
+      await streamChat(live, message, location, Array.from(activeDocumentIds), activeProjectId, activeSessionId);
+      // The turn is now captured server-side - ChatController's doOnNext
+      // (see springchat3_projects_panel.md in project memory) runs before
+      // the NDJSON stream's 'done' event finishes flushing to the browser,
+      // so by the time streamChat() above has resolved, ChatHistoryStore
+      // already has both new entries. Re-fetching (rather than appending
+      // the two new entries locally) keeps the left panel's Chat History section
+      // an exact reflection of what the server actually persisted, at the
+      // cost of one small extra GET per turn - not awaited, so it doesn't
+      // delay re-enabling the composer below.
+      fetchChatHistory();
     } catch (err) {
       // live.row may already be gone if a 'failed' event handled this first
       // (see applyProgressEvent) - removing an already-detached node is a
