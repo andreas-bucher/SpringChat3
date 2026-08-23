@@ -27,7 +27,7 @@ import org.springframework.ai.tool.annotation.Tool
  * time the model can call [getUserCurrentLocation], the real coordinates are
  * already baked into the object it's calling, not something it supplies.
  *
- * Implements [ChatTool] for type consistency with [GeoTool]
+ * Implements [GatheringTool] for type consistency with [GeoTool]
  * (so `chatToolRegistry.tools() + currentLocationTool` in `ChatAgent.analyzeMessage`
  * types cleanly as `List<ChatTool>`) even though, unlike that one, this
  * class is never a Spring bean and so [ChatToolRegistry] never collects it
@@ -37,7 +37,7 @@ class CurrentLocationTool(
     private val geoTool: GeoTool,
     private val browserLatitude: Double?,
     private val browserLongitude: Double?,
-) : ChatTool {
+) : GatheringTool {
 
     @Tool(
         name = "get_user_location",

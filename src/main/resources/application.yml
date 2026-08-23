@@ -17,6 +17,13 @@ logging:
     ch.arcticsoft.springchat3.web: DEBUG
     ch.arcticsoft.springchat3.agent: DEBUG
     Embabel: WARN
+    # docx4j narrates every package load at INFO - JVM vendor, the SAX/DOM
+    # factory it found, "Detected WordProcessingML package", elapsed time -
+    # which is several lines per document edit (2026-08-23, see
+    # springchat3_word_tools.md in project memory). WARN keeps the parts that
+    # actually matter: a document whose XML it had to recover from, or a
+    # part it couldn't read at all.
+    org.docx4j: WARN
 
 spring:
   application:
@@ -63,8 +70,31 @@ embabel:
   models:
     default-llm: ${OLLAMA_MODEL:granite4.1:3b}
     llms:
-      generation: ${OLLAMA_GENERATION_MODEL:TechyShishy/ministral-3:8b-reasoning-2512-q8_0}
+      #generation: ${OLLAMA_GENERATION_MODEL:TechyShishy/ministral-3:8b-reasoning-2512-q8_0}
+      generation: ${OLLAMA_GENERATION_MODEL:ornith:9b}
       document-search-strategy: ${OLLAMA_DOC_STRATEGY_MODEL:granite4.1:3b}
+      # The model that decides and performs document edits (2026-08-23, see
+      # ChatAgent.documentEdit). Defaults to the SAME model as tool selection
+      # rather than the larger generation one, for one blunt reason: this
+      # step is useless unless the model does native tool calling, and that
+      # is a property of the model's Ollama template, not of its size. The
+      # first real run of this step used the generation model and it emitted
+      # "[TOOL_CALLS]list_word_documents{}" as ordinary text - the platform
+      # saw zero tool calls (see ChatAgent.leakedToolCallFailure). The
+      # tool-selection default below is the one model already proven to
+      # tool-call correctly in this app, via analyzeMessage. Override with
+      # OLLAMA_DOC_EDIT_MODEL, or pick a bigger tool-capable model in the
+      # settings popup - `ollama show <model>` lists "tools" under
+      # Capabilities for models whose template supports it.
+      # (Spelled out rather than nesting ${OLLAMA_MODEL:...} inside this
+      # placeholder's default - these model names contain colons, and a
+      # nested placeholder whose default itself contains one is exactly the
+      # kind of thing that fails at startup rather than at test time.)
+
+      # document-edit: ${OLLAMA_DOC_EDIT_MODEL:granite4.1:3b}
+      # document-edit: ${OLLAMA_DOC_EDIT_MODEL:mistral-medium-3.5:128b}
+      # document-edit: ${OLLAMA_DOC_EDIT_MODEL:ornith:35b}
+      document-edit: ${OLLAMA_DOC_EDIT_MODEL:ornith:9b}
 
 springchat3:
   data-dir: ${SPRINGCHAT3_DATA_DIR:./data}
@@ -81,6 +111,23 @@ springchat3:
     # springchat3_google_drive.md in project memory. No default (fails fast
     # if unset), same convention as the other required secrets above.
     picker-api-key: ${GOOGLE_PICKER_API_KEY}
+  libreoffice:
+    # Converting Word documents to PDF for the in-app viewer (2026-08-23 -
+    # see springchat3_pdf_preview.md in project memory). Empty by default:
+    # PdfConverter probes the two locations this app actually runs from (the
+    # LibreOffice.app bundle on macOS, /usr/bin/soffice on the Linux server)
+    # plus a bare `soffice` on PATH, so neither machine needs this set. Point
+    # LIBREOFFICE_PATH at the binary if it lives somewhere else; if nothing
+    # is found the app starts normally and previews are simply unavailable.
+    path: ${LIBREOFFICE_PATH:}
+    # A 38-page, 4.5 MB document with 18 tables converts in well under a
+    # second, so this is a runaway-process backstop, not a real budget.
+    timeout-seconds: ${LIBREOFFICE_TIMEOUT_SECONDS:120}
+    # Bounds how many soffice processes can exist at once. Not a correctness
+    # mechanism - each conversion gets its own LibreOffice profile, which is
+    # what makes them safe to run in parallel at all (see PdfConverter) -
+    # purely a limit on how much memory a burst of them can claim.
+    max-concurrent: ${LIBREOFFICE_MAX_CONCURRENT:2}
   firecrawl:
     # Local/self-hosted Firecrawl instance (2026-08-23, "Web Pages" - see
     # springchat3_projects_panel.md in project memory) - WebPageController

@@ -2,6 +2,7 @@ package ch.arcticsoft.springchat3.web
 
 import ch.arcticsoft.springchat3.document.DocumentIndex
 import ch.arcticsoft.springchat3.document.DocumentStore
+import ch.arcticsoft.springchat3.document.PdfPreviewService
 import ch.arcticsoft.springchat3.document.UploadedWordDocument
 import ch.arcticsoft.springchat3.document.WordDocumentStore
 import ch.arcticsoft.springchat3.document.WordTextExtractor
@@ -62,6 +63,7 @@ class WordDocumentController(
     private val documentStore: DocumentStore,
     private val documentIndex: DocumentIndex,
     private val wordTextExtractor: WordTextExtractor,
+    private val pdfPreviewService: PdfPreviewService,
 ) {
     private val log = LoggerFactory.getLogger(WordDocumentController::class.java)
 
@@ -153,6 +155,12 @@ class WordDocumentController(
         check(text.isNotBlank()) { "No text could be extracted from $filename" }
         val documentId = documentStore.store(filename, text, bytes, projectId, rawFilename = RAW_DOCX_FILENAME)
         documentIndex.index(documentId, extracted)
+        // Fire-and-forget, per the user's own choice of when the PDF should
+        // exist ("after word document is imported"). Not awaited: the card
+        // should appear the moment the upload lands, and a preview that
+        // failed to pre-build is rebuilt on first view anyway - see
+        // PdfPreviewService.
+        pdfPreviewService.warm(documentId)
         log.info("Uploaded Word document '{}' ({} bytes -> {} extracted chars) as {}", filename, bytes.size, text.length, documentId)
         val doc = UploadedWordDocument(documentId, filename, System.currentTimeMillis(), projectId)
         wordDocumentStore.add(doc)

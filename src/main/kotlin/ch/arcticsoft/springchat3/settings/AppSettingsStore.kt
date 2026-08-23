@@ -41,6 +41,15 @@ data class AppSettings(
     // that already persisted `toolsEnabled: true` keeps that value until the
     // user flips the settings-popup toggle off themselves.
     val toolsEnabled: Boolean = false,
+    // Whether the agent may CHANGE a document, as opposed to reading one
+    // (2026-08-23, the documentEdit action - see ChatAgent). Its own flag
+    // rather than riding on [toolsEnabled]: that one gates "may the agent
+    // look things up", which is a different question from "may the agent
+    // write to my files", and someone who turns lookups off has not thereby
+    // said anything about editing. Defaults to disabled, same reasoning
+    // [toolsEnabled] itself defaults off - a capability with side effects
+    // should be opted into, not discovered.
+    val documentEditingEnabled: Boolean = false,
     val modelOverrides: Map<String, String> = emptyMap(),
 )
 
@@ -60,6 +69,7 @@ data class AppSettings(
 object ModelRoleKeys {
     const val TOOL_SELECTION = "tool-selection"
     const val DOCUMENT_SEARCH_STRATEGY = "document-search-strategy"
+    const val DOCUMENT_EDIT = "document-edit"
     const val GENERATION = "generation"
 }
 
@@ -125,6 +135,9 @@ class AppSettingsStore(
 
     /** Updates and persists [AppSettings.toolsEnabled], returning the resulting settings. */
     fun setToolsEnabled(enabled: Boolean): AppSettings = persist(settings.copy(toolsEnabled = enabled))
+
+    /** Updates and persists [AppSettings.documentEditingEnabled], returning the resulting settings. */
+    fun setDocumentEditingEnabled(enabled: Boolean): AppSettings = persist(settings.copy(documentEditingEnabled = enabled))
 
     /**
      * Sets [role]'s model override to [model] (a real Ollama tag, e.g.

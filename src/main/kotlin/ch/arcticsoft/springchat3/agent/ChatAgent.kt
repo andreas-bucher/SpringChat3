@@ -5,11 +5,17 @@ import ch.arcticsoft.springchat3.document.DocumentStore
 import ch.arcticsoft.springchat3.document.DocumentStructure
 import ch.arcticsoft.springchat3.document.DocumentStructureStore
 import ch.arcticsoft.springchat3.document.StructureNode
+import ch.arcticsoft.springchat3.document.WordDocumentService
+import ch.arcticsoft.springchat3.document.WordDocumentWorkspace
 import ch.arcticsoft.springchat3.settings.AppSettingsStore
 import ch.arcticsoft.springchat3.settings.ModelRoleKeys
+import ch.arcticsoft.springchat3.tools.ChatTool
 import ch.arcticsoft.springchat3.tools.ChatToolRegistry
 import ch.arcticsoft.springchat3.tools.CurrentLocationTool
+import ch.arcticsoft.springchat3.tools.GatheringTool
 import ch.arcticsoft.springchat3.tools.GeoTool
+import ch.arcticsoft.springchat3.tools.WordDocumentEditTool
+import ch.arcticsoft.springchat3.tools.WordDocumentReadTool
 import ch.arcticsoft.springchat3.web.ChatController
 import org.slf4j.LoggerFactory
 import org.springframework.ai.document.Document
@@ -30,12 +36,23 @@ class ChatAgent(
     private val documentStore: DocumentStore,
     private val documentIndex: DocumentIndex,
     private val documentStructureStore: DocumentStructureStore,
+    private val wordDocumentWorkspace: WordDocumentWorkspace,
+    private val wordDocumentService: WordDocumentService,
     private val appSettingsStore: AppSettingsStore,
     @Value("\${embabel.models.llms.generation}") private val generationDefaultModel: String,
     @Value("\${embabel.models.llms.document-search-strategy}") private val documentSearchStrategyDefaultModel: String,
+    @Value("\${embabel.models.llms.document-edit}") private val documentEditDefaultModel: String,
 ) {
     val objectMapper = ObjectMapper()
     private val log = LoggerFactory.getLogger(ChatAgent::class.java)
+
+    /**
+     * Text that means "this model meant to call a tool, and the platform
+     * didn't notice" - see [leakedToolCallFailure]. Mistral-family models in
+     * particular emit `[TOOL_CALLS]` inline when their Ollama template
+     * doesn't map it onto the structured tool-call field.
+     */
+    private val TOOL_CALL_LEAK_MARKERS = listOf("[TOOL_CALLS]", "<tool_call>", "<|tool_call|>")
 
     /**
      * Resolves the LLM for tool selection - [ModelRoleKeys.TOOL_SELECTION]'s
@@ -95,6 +112,10 @@ class ChatAgent(
     private fun documentSearchStrategyStepName(): String =
         "Document search strategy (${resolvedModel(ModelRoleKeys.DOCUMENT_SEARCH_STRATEGY, documentSearchStrategyDefaultModel)}) ..."
 
+    /** Same idea as [documentSearchStrategyStepName], for [documentEdit]'s own step. */
+    private fun documentEditStepName(): String =
+        "Editing document (${resolvedModel(ModelRoleKeys.DOCUMENT_EDIT, documentEditDefaultModel)}) ..."
+
     /** Same idea as [documentSearchStrategyStepName], for [answer]'s own generation step. */
     private fun generatingAnswerStepName(): String =
         "Generating answer (${resolvedModel(ModelRoleKeys.GENERATION, generationDefaultModel)}) ..."
@@ -120,7 +141,29 @@ class ChatAgent(
         val start = System.currentTimeMillis()
 
         val currentLocationTool = CurrentLocationTool(geoTool, request.latitude, request.longitude)
-        val toolObjects = chatToolRegistry.tools() + currentLocationTool
+        // Word document READ tools (2026-08-23, user's own decision
+        // "analyzeMessage can use tools to read the document. editing a
+        // document should be made by answer.") - per-request like
+        // CurrentLocationTool, since they're scoped to whichever project is
+        // active for this turn. The editing counterpart is deliberately NOT
+        // here; see WordDocumentEditTool's own doc comment and [answer].
+        //
+        // Scoped to the documents the user selected, same as documentEdit
+        // (2026-08-23, user's own report: with "First Document.docx"
+        // selected, the reply "contained aspects from document 'PID E2E
+        // Challenges and Opportunities'"). Reading is what puts a document's
+        // text into the answer, so leaving this project-wide would have kept
+        // exactly the behaviour that was complained about, one step earlier
+        // in the pipeline. It also makes these tools agree with the rest of
+        // the turn: vector retrieval below already looks only at
+        // request.documentIds, and skips entirely when nothing is attached.
+        val wordDocumentReadTool = WordDocumentReadTool(wordDocumentWorkspace, request.projectId, request.documentIds.toSet())
+        // Typed List<GatheringTool>, not List<ChatTool> (2026-08-23) - the
+        // compiler is what keeps an EditingTool out of this step now, rather
+        // than a convention about which classes get @Component. See
+        // ChatToolRegistry / the EditingTool interface.
+        val toolObjects: List<GatheringTool> =
+            chatToolRegistry.gatheringTools() + currentLocationTool + wordDocumentReadTool
         log.debug(
             "toolObjects provided to context.ai(): {}",
             toolObjects.joinToString { it::class.simpleName ?: it.toString() },
@@ -430,9 +473,238 @@ class ChatAgent(
         return strategy.copy(seconds = seconds)
     }
 
+    /**
+     * The one step allowed to CHANGE anything (2026-08-23). Sits between
+     * [documentSearchStrategy] and [answer]: decides whether the user asked
+     * for a document to be created or changed, and if so does it, via the
+     * Word tools ([WordDocumentEditTool], plus the read tools so it can
+     * check paragraph numbers immediately before using them).
+     *
+     * **Why its own action rather than tools hung off [answer]**, which is
+     * where this first landed and where the user's own earlier decision put
+     * it ("editing a document should be made by answer"), before they asked
+     * to reconsider the pipeline as a whole:
+     *
+     *  1. [answer] is `@AchievesGoal` and must emit valid [AnswerText] JSON.
+     *     Structured output plus a tool-call loop in one call is the
+     *     shakiest combination available, and the recovery for malformed
+     *     JSON is to re-prompt - which can replay the tool calls. "Append
+     *     this paragraph" applied twice is a silently corrupted document. A
+     *     step with side effects must not be the one whose output format can
+     *     force a redo.
+     *  2. It separates deciding to change a document from describing the
+     *     change. The "only when the user explicitly asked" guardrail is now
+     *     this step's entire prompt, instead of one paragraph buried in a
+     *     prompt otherwise about Markdown formatting rules.
+     *  3. It gets what every other step here has: its own model role
+     *     ([ModelRoleKeys.DOCUMENT_EDIT], selectable in the settings popup),
+     *     its own row in the UI timeline, and its own short-circuit.
+     *
+     * Embabel orders this before [answer] the same way [documentSearchStrategy]
+     * is ordered - by data dependency, not by declaration order: [answer]
+     * takes a [DocumentEdits] parameter, so this action has to run first to
+     * produce one.
+     *
+     * Short-circuits to no LLM call at all - the common case, most turns -
+     * when editing is switched off, when no project is active, or when the
+     * active project has no Word documents to edit and the message is
+     * clearly not asking for one to be created. The last of those is a
+     * cheap keyword pre-filter rather than a classifier call: getting it
+     * wrong costs one skipped feature invocation, and the alternative (an
+     * LLM call on every single turn just to rule editing out) costs more
+     * than the feature is worth.
+     */
+    @Action
+    fun documentEdit(request: ChatRequest, context: OperationContext): DocumentEdits {
+        // Every short-circuit below logs its reason. Without that this step
+        // is indistinguishable from never having been planned at all: it
+        // emits no progress event and makes no LLM call when it skips, so
+        // "documentEdit is not called" and "documentEdit ran and declined"
+        // look identical from outside (2026-08-23 - which is exactly the
+        // confusion the first version caused, with document editing simply
+        // switched off in settings).
+        if (!appSettingsStore.get().documentEditingEnabled) {
+            log.debug("documentEdit skipped: document editing is switched off in settings")
+            return DocumentEdits()
+        }
+        if (request.projectId == null) {
+            log.debug("documentEdit skipped: no active project, so there is nothing this step could reach")
+            return DocumentEdits()
+        }
+        // Only the documents the user has attached to this turn are in scope
+        // (2026-08-23, user's own report: "I had 0 documents selected" and
+        // this step still logged "running against 2 Word document(s)").
+        // Selection is the user pointing at something; without it there is no
+        // request to change any particular document, only two documents that
+        // happen to exist. The same set is handed to both tool objects below,
+        // so this is a scope, not a hint - see WordDocumentEditTool.
+        val selectedIds = request.documentIds.toSet()
+        val documents = wordDocumentWorkspace.list(request.projectId, selectedIds)
+        if (documents.isEmpty() && !looksLikeDocumentCreation(request.message)) {
+            log.debug(
+                "documentEdit skipped: none of the {} Word document(s) in project {} are selected, and \"{}\" " +
+                    "doesn't look like a request to create one",
+                wordDocumentWorkspace.list(request.projectId).size,
+                request.projectId,
+                request.message,
+            )
+            return DocumentEdits()
+        }
+        log.debug(
+            "documentEdit running against {} selected Word document(s) in project {}",
+            documents.size,
+            request.projectId,
+        )
+
+        val stepName = documentEditStepName()
+        progressBus.emit(request.correlationId, ChatProgressEvent.StepStarted(stepName))
+        val start = System.currentTimeMillis()
+
+        // Every document listed here is one the user selected - the list is
+        // already filtered above - so there is no "<- selected" annotation to
+        // make any more. What the prompt still has to do is stop the model
+        // guessing between SEVERAL selected documents; WordDocumentEditTool
+        // enforces that in code too (see its targetedByUser), because this
+        // paragraph is advice and that is a rule.
+        val documentNames = documents.joinToString("\n") { doc -> "- \"${doc.filename}\"" }
+        val prompt = """
+            The user's message was: "${request.message}"
+
+            The Word documents the user has selected in the side panel are
+            the only ones you may read or change:
+            ${documentNames.ifBlank { "(none - the user has selected no document)" }}
+
+            Decide whether this message is asking you to CREATE or CHANGE a
+            document, and act accordingly:
+
+            - If it is not - a question, a request for information, anything
+              about what a document says rather than what it should say - do
+              nothing at all. Call no tools. This is the normal case.
+            - If it is, carry out exactly the change that was asked for,
+              using the tools available to you. Read the document first if
+              you need paragraph numbers: they shift with every edit, so
+              read them immediately before you use them, never from memory.
+              Change nothing beyond what was asked - do not tidy, reformat
+              or improve anything on your own initiative.
+
+            Be certain WHICH document you are changing. Use the one the
+            user named. If they named none and exactly one is listed above,
+            use that one. If several are listed and they named none, do not
+            pick one - change nothing and say which documents they could
+            have meant, so they can say which. Editing the wrong document is
+            worse than asking.
+
+            Then reply with a one-sentence note stating what you changed, or
+            that no change was needed.
+        """.trimIndent()
+
+        // Read tools alongside the editing ones: whoever edits has to be able
+        // to check paragraph numbers in the same breath, since they are
+        // positional and go stale after every write (see WordParagraph).
+        val toolObjects: List<ChatTool> = chatToolRegistry.editingTools() +
+            WordDocumentEditTool(
+                wordDocumentWorkspace,
+                wordDocumentService,
+                request.projectId,
+                request.message,
+                selectedIds,
+            ) +
+            // Scoped to the same selection as the editing tool: whoever is
+            // about to change a document should not be able to read one it
+            // isn't allowed to change. analyzeMessage's own read tool stays
+            // project-wide - answering a question is a different job.
+            WordDocumentReadTool(wordDocumentWorkspace, request.projectId, selectedIds)
+
+        // generateText, NOT createObject (2026-08-23, after a real failure -
+        // see below). This step's own text output is only ever logged: what
+        // matters is the tool calls it made, which the bridge captures
+        // regardless. Asking for a structured object on top forced the model
+        // to both tool-call AND emit parseable JSON in one response, and the
+        // first real run failed exactly there ("Cannot deserialize value of
+        // type ToolGatheringNote from Array value") - a pointless second way
+        // for this step to fail.
+        val (note, executions) = toolCallBridge.withCapture(context.agentProcess.id, request.correlationId) {
+            llmForRole(context, ModelRoleKeys.DOCUMENT_EDIT)
+                .withToolObjects(toolObjects)
+                .generateText(prompt)
+        }
+        log.debug("documentEdit note: {} ({} tool call(s))", note ?: "<unavailable>", executions.size)
+
+        val seconds = (System.currentTimeMillis() - start) / 1000.0
+        progressBus.emit(request.correlationId, ChatProgressEvent.StepFinished(stepName, seconds))
+        return DocumentEdits(executions + leakedToolCallFailure(note, executions), seconds)
+    }
+
+    /**
+     * Detects a model that *tried* to call a tool but whose output was never
+     * parsed as one, and turns it into a real failure the user gets told
+     * about (2026-08-23, from a real run: the model returned the literal
+     * text `[TOOL_CALLS]list_word_documents{}` and Embabel saw zero tool
+     * calls).
+     *
+     * This is a model/Ollama-template problem, not an app one - some models
+     * emit their tool-call syntax as ordinary content instead of the
+     * structured `tool_calls` field the platform reads, and there is nothing
+     * this code can do to make the call happen. What it CAN do is refuse to
+     * fail silently: without this, the user asks for a change, nothing is
+     * changed, and [answer] cheerfully replies as if no change had been
+     * wanted. Returning a synthetic `{"error": ...}` execution instead means
+     * [answer]'s existing tool-error guidance tells them plainly that the
+     * change didn't happen, and the same entry shows as a failed call in the
+     * turn's trace.
+     *
+     * Only fires when NO tool call was captured - a model that leaked one
+     * marker but really called others is a partial success, and reporting a
+     * blanket failure over it would be worse than saying nothing.
+     */
+    private fun leakedToolCallFailure(note: String?, executions: List<ToolExecution>): List<ToolExecution> {
+        if (executions.isNotEmpty() || note == null) return emptyList()
+        val leaked = TOOL_CALL_LEAK_MARKERS.any { note.contains(it, ignoreCase = true) }
+        if (!leaked) return emptyList()
+        val model = resolvedModel(ModelRoleKeys.DOCUMENT_EDIT, documentEditDefaultModel)
+        log.warn(
+            "The document-editing model ({}) emitted a tool call as plain text instead of calling the tool: \"{}\". " +
+                "That model does not do native tool calling in this setup - pick one that does " +
+                "(`ollama show <model>` lists \"tools\" under Capabilities) in the settings popup's " +
+                "\"Document editing\" dropdown.",
+            model,
+            note.take(200),
+        )
+        return listOf(
+            ToolExecution(
+                tool = "document_edit",
+                input = "",
+                rawOutput = """{"error": "The document could not be changed: the configured document-editing model ($model) """ +
+                    """cannot call tools in this setup, so the requested change was not carried out."}""",
+                durationMs = 0,
+            ),
+        )
+    }
+
+    /**
+     * Cheap pre-filter for [documentEdit]'s short-circuit: could this
+     * message plausibly be asking for a NEW document, in a project that has
+     * none to edit yet? Deliberately a keyword check and not a model call -
+     * see that action's own doc comment. A false negative just means the
+     * user has to phrase a creation request more plainly; a false positive
+     * costs one LLM call that then does nothing.
+     */
+    private fun looksLikeDocumentCreation(message: String): Boolean {
+        val lower = message.lowercase()
+        val mentionsDocument = listOf("document", "docx", "word", "dokument").any { lower.contains(it) }
+        val mentionsCreation = listOf("create", "write", "draft", "new ", "generate", "erstell", "schreib").any { lower.contains(it) }
+        return mentionsDocument && mentionsCreation
+    }
+
     @AchievesGoal(description = "Return a chat reply to the user based on the insights gathered from your tools")
     @Action
-    fun answer(results: ToolResults, request: ChatRequest, strategy: DocumentSearchStrategy, context: OperationContext): ChatReply {
+    fun answer(
+        results: ToolResults,
+        request: ChatRequest,
+        strategy: DocumentSearchStrategy,
+        edits: DocumentEdits,
+        context: OperationContext,
+    ): ChatReply {
         log.debug("answer : {}", request.message)
         val hasToolResults = results.executions.isNotEmpty()
         val toolContext = if (!hasToolResults) {
@@ -650,6 +922,29 @@ class ChatAgent(
             - Module 3 – Living and Working with Non-Human Collaborators
             """.trimIndent()
 
+        // What documentEdit already did this turn, if anything (2026-08-23).
+        // This step performs nothing itself - it has no tools at all, by
+        // design (see documentEdit's own doc comment) - so this block is a
+        // report of completed work, and the guidance below is about
+        // describing it honestly rather than about deciding anything.
+        val documentEditGuidance = if (edits.executions.isEmpty()) {
+            null
+        } else {
+            val outcomes = edits.executions.joinToString("\n") { "- ${it.tool} (input: \"${it.input}\"): ${it.rawOutput}" }
+            """
+            You have already changed the user's documents this turn. These
+            were the changes, with each tool's own result:
+
+            $outcomes
+
+            Tell the user plainly what was changed, in one sentence, as part
+            of your reply. Report what the results above actually say - if
+            one of them is an error or says nothing was changed, say that
+            instead of claiming the change succeeded. Do not offer to make
+            the change: it has already been made.
+            """.trimIndent()
+        }
+
         val prompt = listOfNotNull(
             """
             The user's message was: "${request.message}"
@@ -666,6 +961,7 @@ class ChatAgent(
             """.trimIndent(),
             formattingGuidance,
             documentGuidance,
+            documentEditGuidance,
             toolErrorGuidance,
             "Respond with raw JSON only: one object with a single \"text\" " +
                 "field holding your reply (formatted as Markdown per the " +
@@ -684,7 +980,10 @@ class ChatAgent(
 
         val seconds = (System.currentTimeMillis() - start) / 1000.0
         progressBus.emit(request.correlationId, ChatProgressEvent.StepFinished(answerStepName, seconds))
-        val toolCalls = results.executions.map {
+        // Both steps' tool calls - analyzeMessage's own gathering calls plus
+        // whatever documentEdit did (2026-08-23) - so an edit shows in the
+        // trace beside the lookups that led to it.
+        val toolCalls = (results.executions + edits.executions).map {
             ToolCallSummary(
                 tool = it.tool,
                 input = it.input,
@@ -704,7 +1003,15 @@ class ChatAgent(
         } else {
             emptyList()
         }
-        val steps = results.timings + documentSearchStrategyTiming + StepTiming(answerStepName, seconds)
+        // Only shown when documentEdit actually ran an LLM call - it reports
+        // 0.0 seconds when it short-circuited, same honesty rule the
+        // strategy row above follows.
+        val documentEditTiming = if (edits.seconds > 0.0) {
+            listOf(StepTiming(documentEditStepName(), edits.seconds))
+        } else {
+            emptyList()
+        }
+        val steps = results.timings + documentSearchStrategyTiming + documentEditTiming + StepTiming(answerStepName, seconds)
         val reply = ChatReply(answered.text, toolCalls, steps, retrievalSummary)
         // Terminal event for the live stream - ChatController's /chat/stream
         // endpoint could emit this itself once AgentInvocation.invoke(...)

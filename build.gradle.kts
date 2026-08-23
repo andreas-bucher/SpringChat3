@@ -125,6 +125,21 @@ dependencies {
     // springchat3_native_tool_calling.md risk #6 in project memory).
     implementation("org.springframework.ai:spring-ai-tika-document-reader")
 
+    // Reading AND writing .docx for the chat agent's Word tools (2026-08-23,
+    // user's own request "create tools to read and write ms word documents.
+    // use docx4j.") - see WordDocumentService.kt / WordDocumentReadTool.kt /
+    // WordDocumentEditTool.kt. Tika above only extracts text (one-way), which
+    // is enough for ingesting an upload but useless for editing one.
+    //
+    // Version line matters: docx4j 11.4+ moved from javax.xml.bind to
+    // jakarta.xml.bind, and 11.5+ targets Jakarta XML Binding 4.0 - the same
+    // one Spring Boot 3.5 (Jakarta EE 10) is on, confirmed against docx4j's
+    // own downloads page before choosing. 11.5.14 (Jun 2026) rather than the
+    // newer 17.0.x line, which at time of writing was days old. The
+    // -JAXB-ReferenceImpl artifact is docx4j's own "use the JAXB RI" flavor
+    // (the alternative being -JAXB-MOXy); it pulls docx4j-core transitively.
+    implementation("org.docx4j:docx4j-JAXB-ReferenceImpl:11.5.14")
+
     // (2026-08-23: the "Web Pages" feature's own HTML-extraction dependency,
     // org.jsoup:jsoup, that used to sit here was removed - WebPageController
     // now hands URL fetching+extraction off to a self-hosted Firecrawl

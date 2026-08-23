@@ -74,6 +74,27 @@ data class ExtractedDocument(
 const val DEFAULT_RAW_FILENAME = "document.pdf"
 
 /**
+ * The cached PDF rendering of a document that isn't already a PDF - written
+ * by [DocumentStore.storePreview], served by
+ * [ch.arcticsoft.springchat3.web.DocumentController.preview] (2026-08-23,
+ * see [ch.arcticsoft.springchat3.document.PdfPreviewService]). A sibling of
+ * the raw file in the document's own directory, so it moves and deletes with
+ * the document across all four storage layouts without any bookkeeping of
+ * its own - exactly like the `previous-` undo copy.
+ */
+const val PREVIEW_FILENAME = "preview.pdf"
+
+/**
+ * The sha256 of the raw bytes [PREVIEW_FILENAME] was built from. This is what
+ * makes a stale preview structurally impossible rather than a thing every
+ * write path has to remember to prevent: the preview is valid iff this
+ * matches a fresh hash of what's on disk now, so an edit, an undo, a restored
+ * backup or a future write path nobody has thought of yet all invalidate it
+ * for free.
+ */
+const val PREVIEW_HASH_FILENAME = "preview.sha256"
+
+/**
  * One stored document's identity/metadata for the UI's document list (see
  * [DocumentStore.list]) - deliberately without [ExtractedDocument.text],
  * which can be tens of thousands of characters and never needs to reach the
@@ -209,6 +230,24 @@ class DocumentStore(
     private fun documentRawFile(documentId: String, projectId: String?, driveFolderLocalId: String?, rawFilename: String) =
         File(documentDirFor(documentId, projectId, driveFolderLocalId), rawFilename)
 
+    /**
+     * The one-level undo copy [backupBytes] writes and [getPreviousBytes]
+     * reads (2026-08-23, Word editing tools - the user chose "edit in place,
+     * keep one undo copy" when asked). Sits beside the live raw file in the
+     * same document directory, so it moves/deletes with the document and
+     * needs no bookkeeping of its own; deliberately only ONE generation deep
+     * - a second edit overwrites the first edit's backup, which is what
+     * "one-level undo" means.
+     */
+    private fun documentPreviousRawFile(documentId: String, projectId: String?, driveFolderLocalId: String?, rawFilename: String) =
+        File(documentDirFor(documentId, projectId, driveFolderLocalId), "previous-$rawFilename")
+
+    private fun documentPreviewFile(documentId: String, projectId: String?, driveFolderLocalId: String?) =
+        File(documentDirFor(documentId, projectId, driveFolderLocalId), PREVIEW_FILENAME)
+
+    private fun documentPreviewHashFile(documentId: String, projectId: String?, driveFolderLocalId: String?) =
+        File(documentDirFor(documentId, projectId, driveFolderLocalId), PREVIEW_HASH_FILENAME)
+
     private fun loadPersisted(): LinkedHashMap<String, ExtractedDocument> {
         val root = File(dataDir)
         root.mkdirs()
@@ -343,6 +382,112 @@ class DocumentStore(
         }
     }
 
+    /**
+     * Replaces [documentId]'s extracted [text] and raw [bytes] in place,
+     * keeping the same id, filename, project, upload time and raw filename
+     * (2026-08-23, added for the Word editing tools - see
+     * [WordDocumentWorkspace]). Returns false for an unknown id.
+     *
+     * Keeping the id is the whole point: an edited document stays selected
+     * in the side panel, stays attached to the conversation, and keeps its
+     * place in [WordDocumentStore] - all of which key on `documentId`. The
+     * alternative ([store], which always mints a fresh id) would silently
+     * detach a document the moment the model edited it.
+     *
+     * Does NOT touch [DocumentIndex]: the caller re-indexes, because
+     * [DocumentIndex.index] appends rather than replaces, so a caller has to
+     * `remove` first - see [WordDocumentWorkspace]'s own edit path.
+     */
+    fun update(documentId: String, text: String, bytes: ByteArray): Boolean {
+        val existing = documents[documentId] ?: return false
+        val updated = existing.copy(text = text)
+        documents[documentId] = updated
+        persist(documentId, updated)
+        persistBytes(documentId, updated.projectId, updated.driveFolderLocalId, updated.rawFilename, bytes)
+        return true
+    }
+
+    /**
+     * Copies [documentId]'s current raw bytes aside as the one-level undo
+     * copy, overwriting any previous one. Returns false if there's nothing
+     * to copy (unknown id, or a document stored without raw bytes at all).
+     */
+    fun backupBytes(documentId: String): Boolean {
+        val document = documents[documentId] ?: return false
+        val current = documentRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename)
+        if (!current.exists()) return false
+        return try {
+            current.copyTo(
+                documentPreviousRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename),
+                overwrite = true,
+            )
+            true
+        } catch (e: Exception) {
+            log.warn("Could not back up raw bytes for document {} before an edit", documentId, e)
+            false
+        }
+    }
+
+    /** The undo copy written by [backupBytes], or null if this document has never been edited. */
+    fun getPreviousBytes(documentId: String): ByteArray? {
+        val document = documents[documentId] ?: return null
+        val file = documentPreviousRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename)
+        if (!file.exists()) return null
+        return try {
+            file.readBytes()
+        } catch (e: Exception) {
+            log.warn("Could not read the undo copy for document {} from {}", documentId, file, e)
+            null
+        }
+    }
+
+    /** The cached PDF rendering written by [storePreview], or null if this document has none yet. */
+    fun getPreviewBytes(documentId: String): ByteArray? {
+        val document = documents[documentId] ?: return null
+        val file = documentPreviewFile(documentId, document.projectId, document.driveFolderLocalId)
+        if (!file.exists()) return null
+        return try {
+            file.readBytes()
+        } catch (e: Exception) {
+            log.warn("Could not read the PDF preview for document {} from {}", documentId, file, e)
+            null
+        }
+    }
+
+    /** The source hash the cached preview was built from - see [PREVIEW_HASH_FILENAME]. Null if there is no preview. */
+    fun previewHash(documentId: String): String? {
+        val document = documents[documentId] ?: return null
+        val file = documentPreviewHashFile(documentId, document.projectId, document.driveFolderLocalId)
+        if (!file.exists()) return null
+        return try {
+            file.readText().trim().ifBlank { null }
+        } catch (e: Exception) {
+            log.warn("Could not read the PDF preview hash for document {} from {}", documentId, file, e)
+            null
+        }
+    }
+
+    /**
+     * Caches [pdfBytes] as [documentId]'s preview, stamped with [sourceHash].
+     *
+     * The hash file is written *after* the PDF, never before: a crash between
+     * the two leaves a preview with no hash, which reads as stale and gets
+     * rebuilt. The other order would leave a hash claiming a PDF that was
+     * never written, which reads as valid.
+     */
+    fun storePreview(documentId: String, pdfBytes: ByteArray, sourceHash: String): Boolean {
+        val document = documents[documentId] ?: return false
+        return try {
+            documentDirFor(documentId, document.projectId, document.driveFolderLocalId).mkdirs()
+            documentPreviewFile(documentId, document.projectId, document.driveFolderLocalId).writeBytes(pdfBytes)
+            documentPreviewHashFile(documentId, document.projectId, document.driveFolderLocalId).writeText(sourceHash)
+            true
+        } catch (e: Exception) {
+            log.warn("Could not cache the PDF preview for document {}", documentId, e)
+            false
+        }
+    }
+
     /** All stored documents as lightweight summaries, oldest upload first - backs the side panel's document list. */
     fun list(): List<DocumentSummary> = synchronized(documents) {
         documents.map { (id, doc) -> DocumentSummary(id, doc.filename, doc.text.length, doc.projectId) }
@@ -377,6 +522,9 @@ class DocumentStore(
         val document = documents.remove(documentId) ?: return false
         documentFile(documentId, document.projectId, document.driveFolderLocalId).delete()
         documentRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename).delete()
+        documentPreviousRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename).delete()
+        documentPreviewFile(documentId, document.projectId, document.driveFolderLocalId).delete()
+        documentPreviewHashFile(documentId, document.projectId, document.driveFolderLocalId).delete()
         documentDirFor(documentId, document.projectId, document.driveFolderLocalId).delete()
         // Does not also try to delete the now-possibly-empty gdrive-<id>
         // folder itself (2026-08-23, see this class's own doc comment) -

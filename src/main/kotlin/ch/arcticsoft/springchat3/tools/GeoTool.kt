@@ -36,12 +36,12 @@ import org.springframework.web.client.RestClient
  * if this app sees real traffic, self-host Photon or point baseUrl at a
  * paid/dedicated instance instead (see https://photon.komoot.io).
  *
- * Implements [ChatTool] purely so [ChatToolRegistry] auto-collects this bean
+ * Implements [GatheringTool] purely so [ChatToolRegistry] auto-collects this bean
  * for [ch.arcticsoft.springchat3.agent.ChatAgent.analyzeMessage] - see that
  * interface's doc comment.
  */
 @Component
-class GeoTool(restClientBuilder: RestClient.Builder) : ChatTool {
+class GeoTool(restClientBuilder: RestClient.Builder) : GatheringTool {
 
     private val client = restClientBuilder.clone()
         .baseUrl("https://photon.komoot.io")

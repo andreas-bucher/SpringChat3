@@ -275,6 +275,32 @@ data class DocumentSearchStrategy(
     val seconds: Double = 0.0,
 )
 
+/**
+ * What [ChatAgent.documentEdit] did to the user's documents this turn, if
+ * anything (2026-08-23, added when document editing moved out of [answer]
+ * into its own action - see that action's own doc comment for why).
+ *
+ * [executions] is the honest record: the actual tool calls that ran, with
+ * their inputs and raw outputs, exactly as [ToolResults.executions] records
+ * the gathering step's. [answer] renders these into its prompt so the reply
+ * describes what really happened rather than what a model intended, and
+ * merges them into the reply's own `toolCalls` so an edit shows in the UI
+ * trace beside the lookups that led to it.
+ *
+ * An empty [executions] is the overwhelmingly common case - most turns ask
+ * for nothing to be changed - and is indistinguishable from the step having
+ * short-circuited without an LLM call at all, deliberately: from [answer]'s
+ * point of view "nothing was changed" is one state, not three.
+ *
+ * [seconds] is 0.0 whenever the step short-circuited, which is also how
+ * [answer] decides whether to show it as a step in the UI timeline at all -
+ * same visibility rule [DocumentSearchStrategy.seconds] already follows.
+ */
+data class DocumentEdits(
+    val executions: List<ToolExecution> = emptyList(),
+    val seconds: Double = 0.0,
+)
+
 /** Just the reply text - what the single answering LLM call is actually asked to produce. */
 data class AnswerText(val text: String)
 

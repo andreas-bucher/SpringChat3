@@ -47,12 +47,13 @@ import org.springframework.web.client.RestClientException
  * answer either a "what's the weather now" or "what's the forecast"
  * question without a second round trip.
  *
- * Implements [ChatTool] purely so [ChatToolRegistry] auto-collects this bean
+ * Implements [GatheringTool] (read-only - see that interface) purely so
+ * [ChatToolRegistry] auto-collects this bean
  * for [ch.arcticsoft.springchat3.agent.ChatAgent.analyzeMessage] - see that
  * interface's doc comment.
  */
 @Component
-class MeteoSwissWeatherTool(restClientBuilder: RestClient.Builder) : ChatTool {
+class MeteoSwissWeatherTool(restClientBuilder: RestClient.Builder) : GatheringTool {
 
     private val client = restClientBuilder.clone()
         .baseUrl("https://api.open-meteo.com")

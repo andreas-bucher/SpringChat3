@@ -22,3 +22,18 @@ keytool -genkeypair \
 plutil -lint /Library/LaunchDaemons/ch.arcticsoft.springchat3.plist
 
 cat file.json | jq
+
+
+# start LibreOffice  (  open -a LibreOffice  )
+/Applications/LibreOffice.app/Contents/MacOS/soffice \
+  --headless \
+  --convert-to pdf \
+  --outdir /tmp \
+  document.docx
+brew install --cask font-carlito font-caladea font-liberation
+sudo apt install libreoffice-writer fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation
+
+# start firecrawl
+# from the firecrwal directory:
+docker compose build
+docker compose up -d

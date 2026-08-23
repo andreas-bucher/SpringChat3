@@ -655,6 +655,89 @@
   }
 
   /*
+   * In-app PDF viewer (2026-08-23, user's own choice of "overlay inside the
+   * app" over opening a new browser tab - see springchat3_pdf_preview.md in
+   * project memory). Same .modal-overlay backdrop as every other modal here,
+   * with a far larger dialog: this one holds a document rather than a
+   * two-field form, so it takes most of the viewport and lays itself out as a
+   * column with the frame absorbing whatever height is left.
+   */
+  .pdf-viewer-dialog {
+    width: min(1100px, 92vw);
+    height: min(90vh, 1100px);
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .pdf-viewer-header {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .pdf-viewer-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pdf-viewer-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  /*
+   * position:relative so .pdf-viewer-status can cover the frame exactly;
+   * min-height:0 because a flex child defaults to min-height:auto and would
+   * otherwise refuse to shrink below the iframe's intrinsic height, pushing
+   * the dialog past the viewport.
+   */
+  .pdf-viewer-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--border);
+  }
+
+  .pdf-viewer-frame {
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: block;
+    background: #ffffff;
+  }
+
+  .pdf-viewer-frame[hidden] {
+    display: none;
+  }
+
+  .pdf-viewer-status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--muted);
+    background: var(--panel);
+  }
+
+  .pdf-viewer-status[hidden] {
+    display: none;
+  }
+
+  /*
    * Drag-to-resize (2026-08-22, user's own request "make the right panel
    * expandable with slider") - a thin flex sibling between .app and
    * #side-panel, not a child of either: a child would need position:relative
@@ -1572,7 +1655,11 @@
     justify-content: space-between;
   }
 
-  .settings-toggle-row label[for="tools-enabled-toggle"] {
+  /* The row's text label - every label in these rows EXCEPT the .switch
+     wrapping the checkbox itself. Was pinned to [for="tools-enabled-toggle"]
+     until 2026-08-23, which left the second toggle's label at the browser's
+     default size the moment one was added. */
+  .settings-toggle-row label:not(.switch) {
     font-size: 13px;
   }
 
@@ -1716,6 +1803,16 @@
               <span>Doc. search strategy</span>
               <select id="model-doc-strategy" class="settings-model-select" data-role="document-search-strategy"></select>
             </div>
+            <!--
+              Document editing (2026-08-23) is its own role because that step
+              is its own action - see ChatAgent.documentEdit. It defaults to
+              the same larger model as generation, not the small
+              tool-selection one: a mistake there changes a file.
+            -->
+            <div class="settings-model-row">
+              <span>Document editing</span>
+              <select id="model-doc-edit" class="settings-model-select" data-role="document-edit"></select>
+            </div>
             <div class="settings-model-row">
               <span>Generation</span>
               <select id="model-generation" class="settings-model-select" data-role="generation"></select>
@@ -1727,6 +1824,19 @@
             <label for="tools-enabled-toggle">Tool use</label>
             <label class="switch">
               <input type="checkbox" id="tools-enabled-toggle" checked>
+              <span class="switch-track"></span>
+            </label>
+          </div>
+          <!--
+            Separate from "Tool use" on purpose (2026-08-23): that one gates
+            whether the agent may look things up, this one whether it may
+            change your documents. Turning lookups off says nothing about
+            editing, and vice versa - see AppSettings.documentEditingEnabled.
+          -->
+          <div class="settings-section settings-toggle-row">
+            <label for="doc-editing-toggle">Document editing</label>
+            <label class="switch">
+              <input type="checkbox" id="doc-editing-toggle">
               <span class="switch-track"></span>
             </label>
           </div>
@@ -1899,6 +2009,22 @@
   </div>
 </div>
 
+<div id="pdf-viewer-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog pdf-viewer-dialog">
+    <div class="modal-header pdf-viewer-header">
+      <span id="pdf-viewer-title" class="pdf-viewer-title"></span>
+      <span class="pdf-viewer-actions">
+        <a id="pdf-viewer-download" class="panel-icon-btn" target="_blank" rel="noopener" title="Open the original file">↓</a>
+        <button id="pdf-viewer-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
+      </span>
+    </div>
+    <div class="pdf-viewer-body">
+      <iframe id="pdf-viewer-frame" class="pdf-viewer-frame" title="Document preview" hidden></iframe>
+      <div id="pdf-viewer-status" class="pdf-viewer-status"></div>
+    </div>
+  </div>
+</div>
+
 <script>
   const messagesEl = document.getElementById('messages');
   const emptyStateEl = document.getElementById('empty-state');
@@ -1944,6 +2070,8 @@
   const modelToolSelectionEl = document.getElementById('model-tool-selection');
   const modelGenerationEl = document.getElementById('model-generation');
   const modelDocStrategyEl = document.getElementById('model-doc-strategy');
+  const modelDocEditEl = document.getElementById('model-doc-edit');
+  const docEditingToggleEl = document.getElementById('doc-editing-toggle');
   const modelEmbeddingEl = document.getElementById('model-embedding');
   const signOutBtnEl = document.getElementById('sign-out-btn');
   const driveLinkRowEl = document.getElementById('drive-link-row');
@@ -1961,6 +2089,12 @@
   const linkWebPageCancelBtnEl = document.getElementById('link-webpage-cancel-btn');
   const linkWebPageSubmitBtnEl = document.getElementById('link-webpage-submit-btn');
   const linkWebPageErrorEl = document.getElementById('link-webpage-error');
+  const pdfViewerOverlayEl = document.getElementById('pdf-viewer-overlay');
+  const pdfViewerTitleEl = document.getElementById('pdf-viewer-title');
+  const pdfViewerDownloadEl = document.getElementById('pdf-viewer-download');
+  const pdfViewerCloseBtnEl = document.getElementById('pdf-viewer-close-btn');
+  const pdfViewerFrameEl = document.getElementById('pdf-viewer-frame');
+  const pdfViewerStatusEl = document.getElementById('pdf-viewer-status');
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -2809,6 +2943,22 @@
     // document stored after this feature existed) or 404s (predates it) -
     // either way it's just a normal link the browser resolves on click, no
     // JS-side success/failure handling needed here.
+    // "View in the app" (2026-08-23) - kept alongside the ↗ new-tab link
+    // rather than replacing it. For a PDF the two show the same bytes, which
+    // is redundant on purpose: the eye then sits in the same place on every
+    // kind of document row, including the Word cards below where ↗ means
+    // "download the .docx" instead.
+    const previewBtn = document.createElement('button');
+    previewBtn.type = 'button';
+    previewBtn.className = 'doc-item-view';
+    previewBtn.title = 'View in the app';
+    previewBtn.textContent = '👁';
+    previewBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the item active/inactive
+      openPdfViewer(doc.documentId, doc.filename);
+    });
+    item.appendChild(previewBtn);
+
     const viewLink = document.createElement('a');
     viewLink.className = 'doc-item-view';
     viewLink.href = '/documents/' + encodeURIComponent(doc.documentId) + '/file';
@@ -3208,6 +3358,16 @@
     // linked Doc's exported PDF inline and an uploaded .docx as a download
     // (DocumentController.file picks both from the stored raw filename), so
     // only the wording differs here.
+    const previewBtn = document.createElement('button');
+    previewBtn.type = 'button';
+    previewBtn.title = isWord ? 'View as PDF in the app' : 'View in the app';
+    previewBtn.textContent = '👁';
+    previewBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the card active/inactive
+      openPdfViewer(doc.documentId, doc.filename);
+    });
+    actions.appendChild(previewBtn);
+
     const viewLink = document.createElement('a');
     viewLink.href = '/documents/' + encodeURIComponent(doc.documentId) + '/file';
     viewLink.target = '_blank';
@@ -3604,6 +3764,89 @@
     return 'Server responded with ' + res.status;
   }
 
+  /*
+   * In-app PDF viewer (2026-08-23, user's own choice of an "overlay inside
+   * the app"). GET /documents/{id}/preview serves every document kind as
+   * PDF - converting a .docx through LibreOffice and caching the result,
+   * passing anything already stored as PDF straight through (see
+   * PdfPreviewService.kt) - so this one function opens any document without
+   * caring what it is.
+   *
+   * Fetched as a blob and shown from an object URL rather than pointing the
+   * iframe at the endpoint directly. That costs a revoke on close, and buys
+   * the two things an iframe can't do: a real loading state while LibreOffice
+   * works, and a readable message instead of the browser's own error page
+   * when the server says 503 (no LibreOffice installed) or 500 (this document
+   * wouldn't convert).
+   */
+  let pdfViewerObjectUrl = null;
+  // Guards against a slow preview arriving after the user has already closed
+  // the overlay or opened a different document - both bump this, so a stale
+  // response recognizes itself and does nothing.
+  let pdfViewerRequestId = 0;
+
+  function setPdfViewerStatus(message) {
+    pdfViewerStatusEl.textContent = message || '';
+    pdfViewerStatusEl.hidden = !message;
+  }
+
+  function releasePdfViewerUrl() {
+    if (pdfViewerObjectUrl) {
+      URL.revokeObjectURL(pdfViewerObjectUrl);
+      pdfViewerObjectUrl = null;
+    }
+  }
+
+  async function openPdfViewer(documentId, filename) {
+    const requestId = ++pdfViewerRequestId;
+    pdfViewerTitleEl.textContent = filename;
+    pdfViewerDownloadEl.href = '/documents/' + encodeURIComponent(documentId) + '/file';
+    pdfViewerFrameEl.hidden = true;
+    pdfViewerFrameEl.removeAttribute('src');
+    releasePdfViewerUrl();
+    setPdfViewerStatus('Preparing preview…');
+    pdfViewerOverlayEl.hidden = false;
+    try {
+      const res = await fetch('/documents/' + encodeURIComponent(documentId) + '/preview');
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      const blob = await res.blob();
+      if (requestId !== pdfViewerRequestId) return;
+      pdfViewerObjectUrl = URL.createObjectURL(blob);
+      pdfViewerFrameEl.src = pdfViewerObjectUrl;
+      pdfViewerFrameEl.hidden = false;
+      setPdfViewerStatus(null);
+    } catch (err) {
+      if (requestId !== pdfViewerRequestId) return;
+      setPdfViewerStatus('Could not open this document: ' + err.message);
+    }
+  }
+
+  function closePdfViewer() {
+    pdfViewerRequestId++;
+    pdfViewerOverlayEl.hidden = true;
+    pdfViewerFrameEl.hidden = true;
+    pdfViewerFrameEl.removeAttribute('src');
+    releasePdfViewerUrl();
+    setPdfViewerStatus(null);
+  }
+
+  pdfViewerCloseBtnEl.addEventListener('click', closePdfViewer);
+
+  // Same one-listener-per-modal wiring as the other overlays on this page -
+  // backdrop clicks only (e.target === the overlay itself, never a click
+  // inside the dialog), plus Escape.
+  pdfViewerOverlayEl.addEventListener('click', (e) => {
+    if (e.target === pdfViewerOverlayEl) closePdfViewer();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !pdfViewerOverlayEl.hidden) closePdfViewer();
+  });
+
+  pdfViewerDownloadEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
   // POST /drive/link-doc (DriveController.kt) exports the picked Google Doc
   // as a PDF and ingests it through the exact same pipeline any other PDF
   // uses (see that endpoint's own doc comment) before responding - same
@@ -3935,9 +4178,11 @@
   function applySettings(data) {
     populateModelSelect(modelToolSelectionEl, data.models.toolSelection, data.availableModels);
     populateModelSelect(modelDocStrategyEl, data.models.documentSearchStrategy, data.availableModels);
+    populateModelSelect(modelDocEditEl, data.models.documentEdit, data.availableModels);
     populateModelSelect(modelGenerationEl, data.models.generation, data.availableModels);
     modelEmbeddingEl.textContent = data.embeddingModel;
     toolsEnabledToggleEl.checked = data.toolsEnabled;
+    docEditingToggleEl.checked = data.documentEditingEnabled;
   }
 
   function showSettingsError(message) {
@@ -4047,32 +4292,42 @@
     if (e.key === 'Escape' && !userMenuEl.hidden) closeUserMenu();
   });
 
-  toolsEnabledToggleEl.addEventListener('change', async () => {
-    const enabled = toolsEnabledToggleEl.checked;
-    toolsEnabledToggleEl.disabled = true;
-    clearSettingsError();
-    try {
-      const res = await fetch('/settings/tools', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error('Server responded with ' + res.status);
-      applySettings(await res.json());
-    } catch (err) {
-      toolsEnabledToggleEl.checked = !enabled;
-      showSettingsError('Could not save: ' + err.message);
-    } finally {
-      toolsEnabledToggleEl.disabled = false;
-    }
-  });
+  // Both settings toggles behave identically - POST {enabled}, apply the
+  // returned settings, revert the checkbox and show the error if it failed -
+  // so they share one handler rather than two near-copies (2026-08-23, when
+  // "Document editing" joined "Tool use"; see AppSettings for why they are
+  // two separate flags in the first place).
+  function wireSettingsToggle(toggleEl, endpoint) {
+    toggleEl.addEventListener('change', async () => {
+      const enabled = toggleEl.checked;
+      toggleEl.disabled = true;
+      clearSettingsError();
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+          body: JSON.stringify({ enabled }),
+        });
+        if (!res.ok) throw new Error('Server responded with ' + res.status);
+        applySettings(await res.json());
+      } catch (err) {
+        toggleEl.checked = !enabled;
+        showSettingsError('Could not save: ' + err.message);
+      } finally {
+        toggleEl.disabled = false;
+      }
+    });
+  }
+
+  wireSettingsToggle(toolsEnabledToggleEl, '/settings/tools');
+  wireSettingsToggle(docEditingToggleEl, '/settings/document-editing');
 
   // Each of the three selectable-role <select>s carries its role key in
   // data-role (matching ModelRoleKeys on the backend) - one shared handler
   // rather than three near-identical ones. Reverts to the previously active
   // model and shows an inline error on failure, same pattern as the
   // tools-enabled toggle above.
-  [modelToolSelectionEl, modelDocStrategyEl, modelGenerationEl].forEach((selectEl) => {
+  [modelToolSelectionEl, modelDocStrategyEl, modelDocEditEl, modelGenerationEl].forEach((selectEl) => {
     selectEl.addEventListener('change', async () => {
       const previous = selectEl.dataset.activeValue;
       const model = selectEl.value;
@@ -5040,6 +5295,13 @@
       // cost of one small extra GET per turn - not awaited, so it doesn't
       // delay re-enabling the composer below.
       fetchChatHistory();
+      // The turn may also have created or edited a Word document (2026-08-23,
+      // the chat agent's own document tools - see WordDocumentEditTool.kt),
+      // which changes this project's Working Documents list or one card's
+      // character count. Same not-awaited re-fetch as the chat history above:
+      // one small GET per turn, and the panel always reflects what the
+      // server actually has rather than needing a reload to notice.
+      fetchWordDocuments();
     } catch (err) {
       // live.row may already be gone if a 'failed' event handled this first
       // (see applyProgressEvent) - removing an already-detached node is a

@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController
 data class SettingsModels(
     val toolSelection: String,
     val documentSearchStrategy: String,
+    val documentEdit: String,
     val generation: String,
 )
 
@@ -28,9 +29,10 @@ data class SettingsResponse(
     val embeddingModel: String,
     val availableModels: List<String>,
     val toolsEnabled: Boolean,
+    val documentEditingEnabled: Boolean,
 )
 
-/** `POST /settings/tools`'s request body. */
+/** `POST /settings/tools`'s and `POST /settings/document-editing`'s shared request body. */
 data class ToolsEnabledRequest(val enabled: Boolean)
 
 /**
@@ -67,6 +69,7 @@ class SettingsController(
     @Value("\${embabel.models.default-llm}") private val toolSelectionDefault: String,
     @Value("\${embabel.models.llms.generation}") private val generationDefault: String,
     @Value("\${embabel.models.llms.document-search-strategy}") private val documentSearchStrategyDefault: String,
+    @Value("\${embabel.models.llms.document-edit}") private val documentEditDefault: String,
     @Value("\${spring.ai.ollama.embedding.model}") private val embeddingModel: String,
 ) {
     private val log = LoggerFactory.getLogger(SettingsController::class.java)
@@ -94,11 +97,13 @@ class SettingsController(
         models = SettingsModels(
             toolSelection = activeModel(ModelRoleKeys.TOOL_SELECTION, toolSelectionDefault),
             documentSearchStrategy = activeModel(ModelRoleKeys.DOCUMENT_SEARCH_STRATEGY, documentSearchStrategyDefault),
+            documentEdit = activeModel(ModelRoleKeys.DOCUMENT_EDIT, documentEditDefault),
             generation = activeModel(ModelRoleKeys.GENERATION, generationDefault),
         ),
         embeddingModel = embeddingModel,
         availableModels = availableModels(),
         toolsEnabled = appSettingsStore.get().toolsEnabled,
+        documentEditingEnabled = appSettingsStore.get().documentEditingEnabled,
     )
 
     @GetMapping("/settings")
@@ -107,6 +112,18 @@ class SettingsController(
     @PostMapping("/settings/tools")
     fun setToolsEnabled(@RequestBody request: ToolsEnabledRequest): SettingsResponse {
         appSettingsStore.setToolsEnabled(request.enabled)
+        return response()
+    }
+
+    /**
+     * Separate from [setToolsEnabled] deliberately - see
+     * [ch.arcticsoft.springchat3.settings.AppSettings.documentEditingEnabled]
+     * for why "may the agent look things up" and "may the agent change my
+     * documents" are two questions, not one.
+     */
+    @PostMapping("/settings/document-editing")
+    fun setDocumentEditingEnabled(@RequestBody request: ToolsEnabledRequest): SettingsResponse {
+        appSettingsStore.setDocumentEditingEnabled(request.enabled)
         return response()
     }
 

@@ -6,12 +6,15 @@ import ch.arcticsoft.springchat3.document.DocumentStructureExtractor
 import ch.arcticsoft.springchat3.document.DocumentStructureStore
 import ch.arcticsoft.springchat3.document.DocumentSummary
 import ch.arcticsoft.springchat3.document.DriveLinkStore
+import ch.arcticsoft.springchat3.document.PdfConversionException
+import ch.arcticsoft.springchat3.document.PdfPreviewService
 import ch.arcticsoft.springchat3.document.PdfTextExtractor
 import ch.arcticsoft.springchat3.document.WebPageStore
 import ch.arcticsoft.springchat3.document.WordDocumentStore
 import ch.arcticsoft.springchat3.document.WorkingDocumentStore
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
+import org.springframework.http.CacheControl
 import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -65,6 +68,7 @@ class DocumentController(
     private val workingDocumentStore: WorkingDocumentStore,
     private val webPageStore: WebPageStore,
     private val wordDocumentStore: WordDocumentStore,
+    private val pdfPreviewService: PdfPreviewService,
 ) {
     private val log = LoggerFactory.getLogger(DocumentController::class.java)
 
@@ -230,6 +234,70 @@ class DocumentController(
             .header(HttpHeaders.CONTENT_DISPOSITION, disposition.filename(document.filename).build().toString())
             .body(bytes)
     }
+
+    /**
+     * The same document, always as viewable PDF (2026-08-23, user's own
+     * request "Let's implement Option 3 using LibreOffice" - see
+     * [ch.arcticsoft.springchat3.document.PdfPreviewService] and
+     * springchat3_pdf_preview.md in project memory). A Word document is
+     * converted through LibreOffice and cached; anything already stored as
+     * PDF is served unchanged, so the side panel can point one link at every
+     * card instead of branching per document kind.
+     *
+     * Sits here rather than on [WordDocumentController] for exactly that
+     * reason: it serves every kind of document, like [file] next to it, not
+     * just the uploaded-Word section.
+     *
+     * `subscribeOn(boundedElastic())` is not optional - converting means
+     * waiting on a subprocess, and doing that on a Netty event-loop thread
+     * would stall every other request in the app for the duration.
+     *
+     * The whole response is built *inside* the callable, rather than mapping
+     * over its result, because [PdfPreviewService.preview] returns null for a
+     * document with no file to show (a linked web page, or an id that no
+     * longer exists). A `fromCallable` over a nullable value infers
+     * `Mono<PdfPreview?>`, and every operator downstream then has a nullable
+     * receiver - so the null is resolved here, where it means one specific
+     * thing (404), and nothing nullable enters the reactive chain at all.
+     */
+    @GetMapping("/documents/{id}/preview")
+    fun preview(@PathVariable id: String): Mono<ResponseEntity<Any>> =
+        Mono.fromCallable<ResponseEntity<Any>> {
+            val preview = pdfPreviewService.preview(id)
+            if (preview == null) {
+                ResponseEntity.notFound().build()
+            } else {
+                ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.inline().filename(preview.filename).build().toString(),
+                    )
+                    // The document behind this URL changes in place when the
+                    // agent edits it, and the id doesn't - so the browser has
+                    // to revalidate rather than keep showing what it cached
+                    // before the edit.
+                    .cacheControl(CacheControl.noCache())
+                    .body(preview.bytes)
+            }
+        }
+            .subscribeOn(Schedulers.boundedElastic())
+            .onErrorResume { e ->
+                val unavailable = e is PdfConversionException && e.unavailable
+                log.warn("Could not build a PDF preview for document {}", id, e)
+                Mono.just<ResponseEntity<Any>>(
+                    ResponseEntity
+                        .status(if (unavailable) 503 else 500)
+                        .body(
+                            mapOf(
+                                "message" to (
+                                    if (unavailable) "PDF preview is unavailable - LibreOffice is not installed on this server."
+                                    else "Could not build a PDF preview for this document."
+                                    ),
+                            ),
+                        ),
+                )
+            }
 
     /**
      * Deletes one uploaded document, e.g. from the side panel's per-item ×
