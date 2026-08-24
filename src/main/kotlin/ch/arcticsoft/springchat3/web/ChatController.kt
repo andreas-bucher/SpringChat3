@@ -9,6 +9,7 @@ import com.embabel.agent.api.invocation.AgentInvocation
 import com.embabel.agent.core.AgentPlatform
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
+import org.springframework.http.server.reactive.ServerHttpResponse
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
@@ -51,7 +52,25 @@ class ChatController(
         consumes = [MediaType.APPLICATION_JSON_VALUE],
         produces = [MediaType.APPLICATION_NDJSON_VALUE],
     )
-    fun chatStream(@RequestBody request: ChatRequest): Flux<ChatProgressEvent> {
+    fun chatStream(@RequestBody request: ChatRequest, response: ServerHttpResponse): Flux<ChatProgressEvent> {
+        // Tells nginx not to buffer this response (2026-08-23, user's own
+        // report: the live "Document search strategy (granite4.1:3b) ..."
+        // rows appear when the app is reached on localhost but not through
+        // the nginx reverse proxy). nginx buffers a proxied response by
+        // default, so every progress line was being held back and delivered
+        // in one burst when the turn finished - the stream still worked, it
+        // just stopped being live, which looks exactly like the feature
+        // being broken.
+        //
+        // deploy/nginx/springchat3.arcticsoft.ch.conf turns buffering off for
+        // this location too. Both exist deliberately: the config is the real
+        // fix on the host we control, and this header is what makes the
+        // stream survive a proxy whose config we do not control (or an nginx
+        // whose deployed conf has drifted from the one in this repo - the
+        // deployed copy is edited in place by certbot). Ignored by every
+        // other proxy and by a direct connection.
+        response.headers.add("X-Accel-Buffering", "no")
+
         log.info("*************************************************************")
         log.info("Chat message (streamed): {}", request.message)
 
