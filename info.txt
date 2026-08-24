@@ -7,6 +7,7 @@
 open -a Docker
 docker compose up
 
+# TEST
 
 keytool -genkeypair \
   -alias springchat3 \
