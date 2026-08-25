@@ -1,6 +1,9 @@
 package ch.arcticsoft.springchat3.web
 
 import ch.arcticsoft.springchat3.document.DocumentIndex
+import ch.arcticsoft.springchat3.document.DocumentDeletionService
+import ch.arcticsoft.springchat3.document.DocumentMoveOutcome
+import ch.arcticsoft.springchat3.document.DocumentMoveService
 import ch.arcticsoft.springchat3.document.DocumentStore
 import ch.arcticsoft.springchat3.document.DocumentStructureExtractor
 import ch.arcticsoft.springchat3.document.DocumentStructureStore
@@ -12,6 +15,7 @@ import ch.arcticsoft.springchat3.document.PdfTextExtractor
 import ch.arcticsoft.springchat3.document.WebPageStore
 import ch.arcticsoft.springchat3.document.WordDocumentStore
 import ch.arcticsoft.springchat3.document.WorkingDocumentStore
+import ch.arcticsoft.springchat3.project.SpaceAccess
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
 import org.springframework.http.CacheControl
@@ -23,10 +27,13 @@ import org.springframework.http.codec.multipart.FilePart
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
 
@@ -47,16 +54,23 @@ import reactor.core.scheduler.Schedulers
  * Framework core API, not a fast-moving library, so confidence is high, but
  * flag this first if `./gradlew compileKotlin` fails here.
  *
- * [upload]'s optional `projectId` (2026-08-23, user's own request "when
+ * [upload]'s optional `spaceId` (2026-08-23, user's own request "when
  * uploading a file... save the files in the project folder of the active
  * project" - see springchat3_projects_panel.md in project memory) is a plain
- * `?projectId=...` query parameter, not a second multipart part - deliberately,
+ * `?spaceId=...` query parameter, not a second multipart part - deliberately,
  * to avoid needing to verify how Spring WebFlux binds a plain *text*
  * multipart part (unclear/unconfirmed, unlike the well-established
  * `FilePart` binding above), when a query parameter alongside a multipart
  * body is ordinary, unambiguous `@RequestParam` binding with no such
  * uncertainty.
  */
+/**
+ * `PATCH /documents/{id}/space`'s body. [spaceId] is nullable so the unscoped
+ * bucket is expressible, matching every other spaceId in this app; the UI only
+ * ever sends a real space.
+ */
+data class MoveDocumentRequest(val spaceId: String?)
+
 @RestController
 class DocumentController(
     private val documentStore: DocumentStore,
@@ -69,6 +83,9 @@ class DocumentController(
     private val webPageStore: WebPageStore,
     private val wordDocumentStore: WordDocumentStore,
     private val pdfPreviewService: PdfPreviewService,
+    private val spaceAccess: SpaceAccess,
+    private val documentDeletionService: DocumentDeletionService,
+    private val documentMoveService: DocumentMoveService,
 ) {
     private val log = LoggerFactory.getLogger(DocumentController::class.java)
 
@@ -98,9 +115,13 @@ class DocumentController(
     @PostMapping("/upload", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun upload(
         @RequestPart("file") filePart: FilePart,
-        @RequestParam(required = false) projectId: String?,
-    ): Mono<DocumentSummary> =
-        DataBufferUtils.join(filePart.content())
+        @RequestParam(required = false) spaceId: String?,
+        exchange: ServerWebExchange,
+    ): Mono<DocumentSummary> {
+        // Before a single byte is read, not after: a viewer uploading a 20MB
+        // PDF should be turned away, not have it parsed and then rejected.
+        spaceAccess.requireWrite(exchange, spaceId)
+        return DataBufferUtils.join(filePart.content())
             .map { buffer ->
                 val bytes = ByteArray(buffer.readableByteCount())
                 buffer.read(bytes)
@@ -124,7 +145,7 @@ class DocumentController(
                     Mono.fromCallable {
                         val pages = pdfTextExtractor.extractPages(bytes)
                         val text = pages.joinToString("\n\n") { it.text.orEmpty() }
-                        val documentId = documentStore.store(filePart.filename(), text, bytes, projectId)
+                        val documentId = documentStore.store(filePart.filename(), text, bytes, spaceId)
                         documentIndex.index(documentId, pages)
                         // Structure extraction (2026-08-22, see
                         // springchat3_document_qa.md in project memory) reads
@@ -147,10 +168,11 @@ class DocumentController(
                             pages.size,
                             documentId,
                         )
-                        DocumentSummary(documentId, filePart.filename(), text.length, projectId)
+                        DocumentSummary(documentId, filePart.filename(), text.length, spaceId)
                     }.subscribeOn(Schedulers.boundedElastic())
                 }
             }
+    }
 
     /**
      * Backs the side panel's "Uploaded Documents" list (added 2026-08-22,
@@ -185,12 +207,16 @@ class DocumentController(
      * [upload]'s PDFBox parsing needs.
      */
     @GetMapping("/documents")
-    fun list(): List<DocumentSummary> {
+    fun list(exchange: ServerWebExchange): List<DocumentSummary> {
         val driveDocumentIds = driveLinkStore.getAll().flatMap { it.files }.map { it.documentId }.toSet()
         val workingDocumentIds = workingDocumentStore.getAll().map { it.documentId }.toSet()
         val webPageDocumentIds = webPageStore.getAll().map { it.documentId }.toSet()
         val wordDocumentIds = wordDocumentStore.getAll().map { it.documentId }.toSet()
-        return documentStore.list().filterNot {
+        // canRead per row rather than `it.spaceId in visibleSpaceIds`: a
+        // document with a null spaceId predates spaces entirely and belongs
+        // to no space to be a member of, but is still readable by everyone
+        // (see SpaceAccess's legacy rules).
+        return documentStore.list().filter { spaceAccess.canRead(exchange, it.spaceId) }.filterNot {
             it.documentId in driveDocumentIds ||
                 it.documentId in workingDocumentIds ||
                 it.documentId in webPageDocumentIds ||
@@ -223,8 +249,12 @@ class DocumentController(
      * inline rendering.
      */
     @GetMapping("/documents/{id}/file")
-    fun file(@PathVariable id: String): ResponseEntity<ByteArray> {
+    fun file(@PathVariable id: String, exchange: ServerWebExchange): ResponseEntity<ByteArray> {
         val document = documentStore.get(id) ?: return ResponseEntity.notFound().build()
+        // The space isn't in the URL, so it has to be resolved from the
+        // document itself - without this, any signed-in user could read any
+        // document by guessing or keeping an id (2026-08-24, see SpaceAccess).
+        spaceAccess.requireRead(exchange, document.spaceId)
         val bytes = documentStore.getBytes(id) ?: return ResponseEntity.notFound().build()
         val isWord = document.rawFilename.endsWith(".docx", ignoreCase = true)
         val disposition =
@@ -261,8 +291,12 @@ class DocumentController(
      * thing (404), and nothing nullable enters the reactive chain at all.
      */
     @GetMapping("/documents/{id}/preview")
-    fun preview(@PathVariable id: String): Mono<ResponseEntity<Any>> =
-        Mono.fromCallable<ResponseEntity<Any>> {
+    fun preview(@PathVariable id: String, exchange: ServerWebExchange): Mono<ResponseEntity<Any>> {
+        // Checked here rather than inside the callable so an unauthorized
+        // request never reaches LibreOffice - and so the 403 isn't swallowed
+        // by onErrorResume below and reported as a failed conversion.
+        documentStore.get(id)?.let { spaceAccess.requireRead(exchange, it.spaceId) }
+        return Mono.fromCallable<ResponseEntity<Any>> {
             val preview = pdfPreviewService.preview(id)
             if (preview == null) {
                 ResponseEntity.notFound().build()
@@ -298,6 +332,7 @@ class DocumentController(
                         ),
                 )
             }
+    }
 
     /**
      * Deletes one uploaded document, e.g. from the side panel's per-item ×
@@ -346,18 +381,51 @@ class DocumentController(
      * [DocumentStore.documentDir], same as [driveLinkStore]/
      * [workingDocumentStore] here.
      */
-    @DeleteMapping("/documents/{id}")
-    fun delete(@PathVariable id: String): ResponseEntity<Void> =
-        if (documentStore.get(id) == null) {
-            ResponseEntity.notFound().build()
-        } else {
-            documentIndex.remove(id)
-            documentStructureStore.remove(id)
-            documentStore.remove(id)
-            driveLinkStore.untrackDocument(id)
-            workingDocumentStore.remove(id)
-            webPageStore.remove(id)
-            wordDocumentStore.remove(id)
-            ResponseEntity.noContent().build()
+    /**
+     * Re-files [id] into another space (2026-08-25, dragging a document from
+     * one space to another).
+     *
+     * **Write access is required on BOTH ends**, and the source is checked
+     * first: taking a document out of a space is a change to that space, and
+     * a viewer who could drag one into a space they own would otherwise be
+     * able to empty a space they only read. Same reason `PATCH` rather than
+     * `POST /documents/{id}/move` - this changes one field of an existing
+     * resource, and the id never changes, which is exactly what keeps the
+     * document selected and attached to the conversation across the move.
+     *
+     * A file inside a linked Drive folder is a **409**, not a silent no-op:
+     * it is owned by the sync (see [ch.arcticsoft.springchat3.document.DocumentStore.moveToSpace]),
+     * and a UI that greys it out still deserves a real answer if it asks.
+     */
+    @PatchMapping("/documents/{id}/space")
+    fun moveToSpace(
+        @PathVariable id: String,
+        @RequestBody request: MoveDocumentRequest,
+        exchange: ServerWebExchange,
+    ): ResponseEntity<Map<String, String>> {
+        val document = documentStore.get(id) ?: return ResponseEntity.notFound().build()
+        spaceAccess.requireWrite(exchange, document.spaceId)
+        spaceAccess.requireWrite(exchange, request.spaceId)
+        return when (documentMoveService.move(id, request.spaceId)) {
+            DocumentMoveOutcome.MOVED -> ResponseEntity.noContent().build()
+            DocumentMoveOutcome.NOT_FOUND -> ResponseEntity.notFound().build()
+            DocumentMoveOutcome.DRIVE_FOLDER_FILE -> ResponseEntity.status(409).body(
+                mapOf("message" to "A file inside a linked Drive folder stays with that folder - move the folder instead."),
+            )
+            DocumentMoveOutcome.FAILED -> ResponseEntity.status(500).body(
+                mapOf("message" to "The document could not be moved. It is unchanged."),
+            )
         }
+    }
+
+    @DeleteMapping("/documents/{id}")
+    fun delete(@PathVariable id: String, exchange: ServerWebExchange): ResponseEntity<Void> {
+        val document = documentStore.get(id) ?: return ResponseEntity.notFound().build()
+        spaceAccess.requireWrite(exchange, document.spaceId)
+        // The sequence itself (and the order that matters within it) moved to
+        // DocumentDeletionService on 2026-08-24, so that deleting a whole
+        // space cleans a document up in exactly the same way this does.
+        documentDeletionService.delete(id)
+        return ResponseEntity.noContent().build()
+    }
 }

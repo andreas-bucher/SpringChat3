@@ -45,7 +45,7 @@ import org.springframework.ai.tool.annotation.ToolParam
 class WordDocumentEditTool(
     private val workspace: WordDocumentWorkspace,
     private val wordDocumentService: WordDocumentService,
-    private val projectId: String?,
+    private val spaceId: String?,
     private val userMessage: String,
     /**
      * The documents the user has selected in the side panel this turn - a
@@ -92,15 +92,15 @@ class WordDocumentEditTool(
     }
 
     private fun withDocument(filename: String, block: (WordDocumentRef) -> String): String {
-        if (projectId == null) {
+        if (spaceId == null) {
             return """{"error": "No project is selected, so there are no Word documents to edit."}"""
         }
-        val candidates = workspace.list(projectId, selectedDocumentIds)
+        val candidates = workspace.list(spaceId, selectedDocumentIds)
         if (candidates.isEmpty()) {
             return """{"error": "The user has no Word document selected, so there is nothing to change. """ +
                 """Ask them to select the document they mean in the side panel."}"""
         }
-        val ref = workspace.resolve(projectId, filename, selectedDocumentIds)
+        val ref = workspace.resolve(spaceId, filename, selectedDocumentIds)
             ?: return """{"error": "No selected Word document matches \"$filename\". Use the exact filename - list_word_documents shows what the user has selected."}"""
         if (!targetedByUser(ref, candidates.size)) {
             val names = candidates.joinToString(", ") { "\"${it.filename}\"" }
@@ -135,10 +135,10 @@ class WordDocumentEditTool(
         @ToolParam(description = "The document's content, one paragraph per line, with # / ## / ### headings and - bullets")
         content: String,
     ): String {
-        if (projectId == null) return """{"error": "No project is selected, so there is nowhere to create a document."}"""
+        if (spaceId == null) return """{"error": "No project is selected, so there is nowhere to create a document."}"""
         if (content.isBlank()) return """{"error": "The content is empty - there is nothing to write into the document."}"""
         return try {
-            val ref = workspace.create(projectId, filename, content)
+            val ref = workspace.create(spaceId, filename, content)
             val count = workspace.paragraphCount(ref) ?: 0
             "Created \"${ref.filename}\" with $count paragraphs. It is now listed under Working Documents."
         } catch (e: Exception) {

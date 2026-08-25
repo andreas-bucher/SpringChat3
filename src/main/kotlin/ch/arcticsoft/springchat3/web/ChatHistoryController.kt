@@ -2,8 +2,10 @@ package ch.arcticsoft.springchat3.web
 
 import ch.arcticsoft.springchat3.chat.ChatHistoryEntry
 import ch.arcticsoft.springchat3.chat.ChatHistoryStore
+import ch.arcticsoft.springchat3.project.SpaceAccess
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ServerWebExchange
 
 /**
  * Backs the left-hand Projects panel's "Chats" section (2026-08-23, user's
@@ -17,8 +19,16 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 class ChatHistoryController(
     private val chatHistoryStore: ChatHistoryStore,
+    private val spaceAccess: SpaceAccess,
 ) {
-    /** Every captured chat message across every project - index.html groups/filters by `projectId` and `sessionId` itself. */
+    /**
+     * The caller's own chat messages, in the spaces they can see -
+     * index.html groups/filters by `spaceId` and `sessionId` itself.
+     * Two filters, not one: a shared space shows its documents to every
+     * member but each member's chats only to themselves (2026-08-24, see
+     * springchat3_multi_user.md in project memory).
+     */
     @GetMapping("/chat-history")
-    fun list(): List<ChatHistoryEntry> = chatHistoryStore.getAll()
+    fun list(exchange: ServerWebExchange): List<ChatHistoryEntry> =
+        chatHistoryStore.getAll(spaceAccess.currentUserEmail(exchange), spaceAccess.visibleSpaceIds(exchange))
 }

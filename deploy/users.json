@@ -1,0 +1,25 @@
+[ {
+  "email" : "ante1@a.ch",
+  "displayName" : "",
+  "password" : null,
+  "passwordHash" : "{bcrypt}$2a$10$kXdUrr2uegl6o1Rd2er8ce5bKozLm7ec3f58Hz9dhaFvi0ewp.lBG",
+  "mustChangePassword" : false,
+  "disabled" : false,
+  "createdAt" : 1787678247743
+}, {
+  "email" : "ante2@a.ch",
+  "displayName" : "",
+  "password" : null,
+  "passwordHash" : "{bcrypt}$2a$10$GkZdrRfctbLfWagznACOaObiw8w4eam0TBklX0oXEu76.oWETn8ty",
+  "mustChangePassword" : false,
+  "disabled" : false,
+  "createdAt" : 1787678247804
+}, {
+  "email" : "ante3@a.ch",
+  "displayName" : "",
+  "password" : null,
+  "passwordHash" : "{bcrypt}$2a$10$KdcVps62MOtKI/M1ZZUD1u9LJMIUDpHf9Ex8/ztbAyIl41vTb2jta",
+  "mustChangePassword" : true,
+  "disabled" : false,
+  "createdAt" : 1787678247865
+} ]

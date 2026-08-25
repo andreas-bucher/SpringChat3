@@ -6,6 +6,7 @@ import ch.arcticsoft.springchat3.document.PdfPreviewService
 import ch.arcticsoft.springchat3.document.UploadedWordDocument
 import ch.arcticsoft.springchat3.document.WordDocumentStore
 import ch.arcticsoft.springchat3.document.WordTextExtractor
+import ch.arcticsoft.springchat3.project.SpaceAccess
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
 import org.springframework.http.MediaType
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
 
@@ -32,7 +34,7 @@ data class WordDocumentStatus(
     val filename: String,
     val characterCount: Int,
     val uploadedAt: Long,
-    val projectId: String? = null,
+    val spaceId: String? = null,
 )
 
 /**
@@ -52,7 +54,7 @@ data class WordDocumentStatus(
  * `DELETE /word-documents/{id}` here.
  *
  * The multipart binding (`@RequestPart("file") filePart: FilePart` plus the
- * `projectId` as a plain query parameter rather than a second, text
+ * `spaceId` as a plain query parameter rather than a second, text
  * multipart part) is copied deliberately from [DocumentController.upload] -
  * that exact shape is build-verified in this app, and this endpoint has no
  * reason to explore a different one.
@@ -64,6 +66,7 @@ class WordDocumentController(
     private val documentIndex: DocumentIndex,
     private val wordTextExtractor: WordTextExtractor,
     private val pdfPreviewService: PdfPreviewService,
+    private val spaceAccess: SpaceAccess,
 ) {
     private val log = LoggerFactory.getLogger(WordDocumentController::class.java)
 
@@ -91,11 +94,12 @@ class WordDocumentController(
 
     private fun statusFor(doc: UploadedWordDocument): WordDocumentStatus? =
         documentStore.get(doc.documentId)?.let {
-            WordDocumentStatus(doc.documentId, it.filename, it.text.length, doc.uploadedAt, doc.projectId)
+            WordDocumentStatus(doc.documentId, it.filename, it.text.length, doc.uploadedAt, doc.spaceId)
         }
 
     @GetMapping("/word-documents")
-    fun list(): List<WordDocumentStatus> = wordDocumentStore.getAll().mapNotNull { statusFor(it) }
+    fun list(exchange: ServerWebExchange): List<WordDocumentStatus> =
+        wordDocumentStore.getAll().filter { spaceAccess.canRead(exchange, it.spaceId) }.mapNotNull { statusFor(it) }
 
     /**
      * Rejects a non-`.docx` filename up front rather than letting Tika try
@@ -108,8 +112,10 @@ class WordDocumentController(
     @PostMapping("/word-documents", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun upload(
         @RequestPart("file") filePart: FilePart,
-        @RequestParam(required = false) projectId: String?,
+        @RequestParam(required = false) spaceId: String?,
+        exchange: ServerWebExchange,
     ): Mono<ResponseEntity<Any>> {
+        spaceAccess.requireWrite(exchange, spaceId)
         val filename = filePart.filename()
         if (!filename.endsWith(DOCX_EXTENSION, ignoreCase = true)) {
             return Mono.just(badRequest("Only Word .docx files can be uploaded here."))
@@ -127,7 +133,7 @@ class WordDocumentController(
                 } else {
                     // Tika parsing is blocking CPU/IO work, same as PDFBox in
                     // DocumentController.upload - off the Netty event loop.
-                    Mono.fromCallable { ingest(filename, bytes, projectId) }
+                    Mono.fromCallable { ingest(filename, bytes, spaceId) }
                         .subscribeOn(Schedulers.boundedElastic())
                         .map<ResponseEntity<Any>> { doc ->
                             statusFor(doc)?.let { ResponseEntity.ok(it) } ?: ResponseEntity.internalServerError().build()
@@ -149,11 +155,11 @@ class WordDocumentController(
      * previous version of itself (see [WordDocumentStore]'s own doc
      * comment), so nothing is being superseded here.
      */
-    private fun ingest(filename: String, bytes: ByteArray, projectId: String?): UploadedWordDocument {
+    private fun ingest(filename: String, bytes: ByteArray, spaceId: String?): UploadedWordDocument {
         val extracted = wordTextExtractor.extract(bytes, filename)
         val text = extracted.joinToString("\n\n") { it.text.orEmpty() }
         check(text.isNotBlank()) { "No text could be extracted from $filename" }
-        val documentId = documentStore.store(filename, text, bytes, projectId, rawFilename = RAW_DOCX_FILENAME)
+        val documentId = documentStore.store(filename, text, bytes, spaceId, rawFilename = RAW_DOCX_FILENAME)
         documentIndex.index(documentId, extracted)
         // Fire-and-forget, per the user's own choice of when the PDF should
         // exist ("after word document is imported"). Not awaited: the card
@@ -162,7 +168,7 @@ class WordDocumentController(
         // PdfPreviewService.
         pdfPreviewService.warm(documentId)
         log.info("Uploaded Word document '{}' ({} bytes -> {} extracted chars) as {}", filename, bytes.size, text.length, documentId)
-        val doc = UploadedWordDocument(documentId, filename, System.currentTimeMillis(), projectId)
+        val doc = UploadedWordDocument(documentId, filename, System.currentTimeMillis(), spaceId)
         wordDocumentStore.add(doc)
         return doc
     }

@@ -1,11 +1,6 @@
 package ch.arcticsoft.springchat3.document
 
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
-import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
-import java.io.File
 
 /**
  * One individually-linked Google Doc (2026-08-22, "Working Documents" -
@@ -39,13 +34,13 @@ import java.io.File
  * first, and Drive's own change-detection fields are less reliable for a
  * native Google Doc than the `md5Checksum` a binary PDF gets.
  *
- * [projectId] (2026-08-23, user's own request "link a working document...
+ * [spaceId] (2026-08-23, user's own request "link a working document...
  * then save the files in the project folder of the active project" - see
  * springchat3_projects_panel.md in project memory) is the project that was
  * active when this Doc was first linked, or null for none - carried forward
  * on every resync (see [ch.arcticsoft.springchat3.web.DriveController.syncDoc])
  * rather than re-read from whatever project happens to be active at resync
- * time, same "fixed at link time" reasoning [DriveLink.projectId] has.
+ * time, same "fixed at link time" reasoning [DriveLink.spaceId] has.
  */
 data class LinkedGoogleDoc(
     val driveFileId: String,
@@ -53,13 +48,16 @@ data class LinkedGoogleDoc(
     val filename: String,
     val linkedAt: Long,
     val lastSyncedAt: Long,
-    val projectId: String? = null,
+    val spaceId: String? = null,
 )
 
 /**
  * Persists every currently linked [LinkedGoogleDoc] to
- * `[data-dir]/working-documents.json` - same write-through, single-shared-file
- * JSON pattern [DriveLinkStore] uses for its own (much larger) `List<DriveLink>`,
+ * `working-documents.json` **inside each space's own folder** (2026-08-24) -
+ * see [SpaceScopedJsonStore] for the layout, the unassigned bucket and why
+ * there's no migration off the old single
+ * `[data-dir]/working-documents.json`. Same write-through, load-once JSON
+ * pattern [DriveLinkStore] uses for its own (much larger) `List<DriveLink>`,
  * just for individually-linked Google Docs instead of whole synced folders.
  * A separate store rather than folding into [DriveLinkStore] itself: a
  * linked Google Doc isn't inside a folder at all (the mockup/proposal for
@@ -76,36 +74,12 @@ data class LinkedGoogleDoc(
  */
 @Component
 class WorkingDocumentStore(
-    @Value("\${springchat3.data-dir}") private val dataDir: String,
+    private val spaceScopedStore: SpaceScopedJsonStore,
 ) {
-    private val log = LoggerFactory.getLogger(WorkingDocumentStore::class.java)
-    private val objectMapper = jacksonObjectMapper()
-
     @Volatile
-    private var docs: List<LinkedGoogleDoc> = loadPersisted()
+    private var docs: List<LinkedGoogleDoc> = spaceScopedStore.load(STORE_FILENAME, LinkedGoogleDoc::class.java)
 
-    private fun storeFile() = File(dataDir, "working-documents.json")
-
-    private fun loadPersisted(): List<LinkedGoogleDoc> {
-        val file = storeFile()
-        if (!file.exists()) return emptyList()
-        return try {
-            objectMapper.readValue<List<LinkedGoogleDoc>>(file)
-        } catch (e: Exception) {
-            log.warn("Could not load persisted working documents from {} - starting with none linked", file, e)
-            emptyList()
-        }
-    }
-
-    private fun persist() {
-        try {
-            val file = storeFile()
-            file.parentFile?.mkdirs()
-            objectMapper.writeValue(file, docs)
-        } catch (e: Exception) {
-            log.warn("Could not persist working documents to {}", storeFile(), e)
-        }
-    }
+    private fun persist() = spaceScopedStore.persist(STORE_FILENAME, docs) { it.spaceId }
 
     /** Every currently linked Google Doc. */
     fun getAll(): List<LinkedGoogleDoc> = docs
@@ -153,11 +127,30 @@ class WorkingDocumentStore(
      * mirroring [DriveLinkStore.untrackDocument]'s own role for a
      * folder-sourced document.
      */
+    /**
+     * Re-files [documentId] under [spaceId], a no-op for an id that is not a
+     * linked Google Doc (2026-08-25, moving a document between spaces -
+     * see [ch.arcticsoft.springchat3.document.DocumentMoveService]). The row
+     * itself does not move between files here: [persist] rewrites every
+     * space's file from the whole list keyed on each entry's own spaceId, so
+     * changing this one field is what relocates it on disk.
+     */
+    fun setSpace(documentId: String, spaceId: String?) {
+        val index = docs.indexOfFirst { it.documentId == documentId }
+        if (index < 0) return
+        docs = docs.toMutableList().also { it[index] = it[index].copy(spaceId = spaceId) }
+        persist()
+    }
+
     fun remove(documentId: String) {
         val updated = docs.filterNot { it.documentId == documentId }
         if (updated.size != docs.size) {
             docs = updated
             persist()
         }
+    }
+
+    companion object {
+        private const val STORE_FILENAME = "working-documents.json"
     }
 }

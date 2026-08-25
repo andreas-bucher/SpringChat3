@@ -1,5 +1,9 @@
 
 
+# data/users.json
+[ { "email": "ante@arcticsoft.ch", "ante": "Andreas Bucher", "password": "ante" } ]
+
+
 
 ./gradlew build
 ./gradlew bootRun

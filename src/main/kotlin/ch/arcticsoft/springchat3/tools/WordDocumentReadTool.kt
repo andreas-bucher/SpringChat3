@@ -40,7 +40,7 @@ import org.springframework.ai.tool.annotation.ToolParam
  */
 class WordDocumentReadTool(
     private val workspace: WordDocumentWorkspace,
-    private val projectId: String?,
+    private val spaceId: String?,
     /**
      * Restricts every tool here to these documents, or the whole project when
      * null (2026-08-23). **Both** steps that build one of these - the
@@ -81,10 +81,10 @@ class WordDocumentReadTool(
      * than invent an answer.
      */
     private fun withDocument(filename: String, block: (WordDocumentRef) -> String): String {
-        if (projectId == null) {
+        if (spaceId == null) {
             return """{"error": "No project is selected, so there are no Word documents available."}"""
         }
-        val ref = workspace.resolve(projectId, filename, scopeDocumentIds)
+        val ref = workspace.resolve(spaceId, filename, scopeDocumentIds)
             ?: return """{"error": "No single Word document matches \"$filename\". Call list_word_documents to see the exact names available."}"""
         return try {
             block(ref)
@@ -101,8 +101,8 @@ class WordDocumentReadTool(
             "Takes no parameters.",
     )
     fun listWordDocuments(): String {
-        if (projectId == null) return """{"error": "No project is selected, so there are no Word documents available."}"""
-        val documents = workspace.list(projectId, scopeDocumentIds)
+        if (spaceId == null) return """{"error": "No project is selected, so there are no Word documents available."}"""
+        val documents = workspace.list(spaceId, scopeDocumentIds)
         if (documents.isEmpty()) {
             // Which of the two it is matters to the model: "none exist" is a
             // dead end, "none selected" is something the user can fix, and

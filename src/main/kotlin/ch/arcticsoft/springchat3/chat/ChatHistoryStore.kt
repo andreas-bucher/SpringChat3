@@ -43,12 +43,12 @@ import java.util.UUID
  * [ChatHistoryEntry] read out of [getAll]'s flattened list (which drops the
  * wrapper) is still self-describing.
  *
- * [projectId] is whichever project was active in the browser at the moment
- * the message was sent ([ch.arcticsoft.springchat3.agent.ChatRequest.projectId],
+ * [spaceId] is whichever project was active in the browser at the moment
+ * the message was sent ([ch.arcticsoft.springchat3.agent.ChatRequest.spaceId],
  * itself just index.html's `activeProjectId` at send time) - fixed at
  * capture time and never moved afterward, the same convention every other
- * `projectId` field in this app already follows (e.g.
- * [ch.arcticsoft.springchat3.document.ExtractedDocument.projectId]). Null
+ * `spaceId` field in this app already follows (e.g.
+ * [ch.arcticsoft.springchat3.document.ExtractedDocument.spaceId]). Null
  * only for a turn sent before any project exists yet.
  *
  * [sessionName] is NOT persisted as part of this entry on disk - a session's
@@ -67,7 +67,7 @@ data class ChatHistoryEntry(
     val entryId: String,
     val turnId: String,
     val sessionId: String,
-    val projectId: String?,
+    val spaceId: String?,
     val role: String,
     val text: String,
     val timestamp: Long,
@@ -88,7 +88,7 @@ data class ChatHistoryEntry(
  * though later turns in the same session obviously exist too, the same
  * "fixed at creation time, never re-read later" convention every other
  * derived-at-creation field in this app already follows (e.g.
- * [ChatHistoryEntry.projectId] itself). Read by [ChatHistoryStore.getAll]
+ * [ChatHistoryEntry.spaceId] itself). Read by [ChatHistoryStore.getAll]
  * (2026-08-23, user's own request "enlist the sessions once and not all
  * entries of the session" - see springchat3_projects_panel.md in project
  * memory) and copied onto every [ChatHistoryEntry] it flattens out of this
@@ -99,19 +99,31 @@ data class ChatSessionFile(
     val sessionId: String,
     val sessionName: String,
     val entries: List<ChatHistoryEntry>,
+    /**
+     * Whose session this is - the email of whoever sent its first turn
+     * (2026-08-24, agreed alongside shared spaces: "only your own" chats,
+     * see springchat3_multi_user.md in project memory). Fixed when the file
+     * is created and never rewritten, so a session stays with the person who
+     * started it even if the space it lives in is later shared.
+     *
+     * Null for every session recorded before this field existed; [getAll]
+     * shows those to everyone, the same "a null owner means everyone, not
+     * nobody" rule [ch.arcticsoft.springchat3.project.Project.owner] uses.
+     */
+    val owner: String? = null,
 )
 
 /**
  * Persists every captured chat message under the *owning project's own
  * folder*, one file per chat session -
- * `[dataDir]/projects/<projectId>/sessions/<sessionId>.json` - reusing
- * [ProjectStore.projectDir] rather than recomputing that path independently
+ * `[dataDir]/spaces/<spaceId>/sessions/<sessionId>.json` - reusing
+ * [ProjectStore.spaceDir] rather than recomputing that path independently
  * (same "one place decides where a project's folder lives" reasoning
  * [ch.arcticsoft.springchat3.document.DocumentStore] already follows for
  * project-scoped documents - see that class's own doc comment).
  *
  * **Restructured 2026-08-23 from one file per project**
- * (`[dataDir]/projects/<projectId>/chat-history.json`, holding every session
+ * (`[dataDir]/spaces/<spaceId>/chat-history.json`, holding every session
  * mixed together) **to one file per session within a project**, each file a
  * bare JSON array of [ChatHistoryEntry] (user's own request "add a chat
  * sessionId to the chat-history, append questions and answer to the same
@@ -145,7 +157,7 @@ data class ChatSessionFile(
  * project memory).
  *
  * A turn recorded with no project at all (sent before any project exists
- * yet - see [ChatHistoryEntry.projectId]'s own doc comment) has no project
+ * yet - see [ChatHistoryEntry.spaceId]'s own doc comment) has no project
  * folder to live in, so its session file lives in one small fallback
  * directory instead, `[dataDir]/chat-history-unassigned/<sessionId>.json`.
  *
@@ -169,7 +181,7 @@ class ChatHistoryStore(
     private val objectMapper = jacksonObjectMapper()
 
     private fun sessionsDir(key: String): File =
-        if (key == UNASSIGNED_KEY) File(dataDir, "chat-history-unassigned") else File(projectStore.projectDir(key), "sessions")
+        if (key == UNASSIGNED_KEY) File(dataDir, "chat-history-unassigned") else File(projectStore.spaceDir(key), "sessions")
 
     private fun sessionFile(key: String, sessionId: String): File = File(sessionsDir(key), "$sessionId.json")
 
@@ -210,36 +222,54 @@ class ChatHistoryStore(
         }
     }
 
-    private fun allEntriesFor(key: String): List<ChatHistoryEntry> {
+    /**
+     * Every entry in [key]'s sessions that [email] may see - their own, plus
+     * any session with no owner at all (recorded before sessions had one).
+     */
+    private fun allEntriesFor(key: String, email: String): List<ChatHistoryEntry> {
         val files = sessionsDir(key).listFiles { f -> f.isFile && f.name.endsWith(".json") } ?: return emptyList()
-        return files.sortedBy { it.name }.mapNotNull { readSession(it) }.flatMap { session ->
-            session.entries.map { it.copy(sessionName = session.sessionName) }
-        }
+        return files.sortedBy { it.name }
+            .mapNotNull { readSession(it) }
+            .filter { it.owner == null || it.owner.equals(email, ignoreCase = true) }
+            .flatMap { session -> session.entries.map { it.copy(sessionName = session.sessionName) } }
     }
 
     /**
-     * Every captured chat message across every project and every session,
-     * grouped by project in [ProjectStore.list]'s own oldest-created-first
-     * order, unassigned (no-project) entries last - backs `GET
-     * /chat-history`. Each [ChatSessionFile] wrapper is unwrapped down to
+     * Every captured chat message [email] may see - **their own sessions**
+     * (plus any ownerless one, see [ChatSessionFile.owner]) in the spaces
+     * [visibleSpaceIds] lists - grouped by project in [ProjectStore.list]'s
+     * own oldest-created-first order, unassigned (no-project) entries last -
+     * backs `GET /chat-history`.
+     *
+     * Both filters are the caller's to supply rather than this store's to
+     * work out, since
+     * [ch.arcticsoft.springchat3.project.SpaceAccess] is the one place that
+     * decides visibility (2026-08-24, see springchat3_multi_user.md in
+     * project memory). Unassigned entries are deliberately outside the
+     * space filter: they belong to no space, and are readable by everyone
+     * under the same legacy rule.
+     *
+     * Each [ChatSessionFile] wrapper is unwrapped down to
      * its [ChatSessionFile.entries] here, with [ChatSessionFile.sessionName]
      * copied onto every one of them (see [ChatHistoryEntry.sessionName]'s own
      * doc comment) so index.html can group this flat list by `sessionId` and
      * label each group without a second call. index.html groups/filters this
-     * flat list by `projectId` and `sessionId` itself, unchanged by either of
+     * flat list by `spaceId` and `sessionId` itself, unchanged by either of
      * this class's 2026-08-23 restructures (see this class's own doc
      * comment).
      */
-    fun getAll(): List<ChatHistoryEntry> =
-        projectStore.list().flatMap { allEntriesFor(it.projectId) } + allEntriesFor(UNASSIGNED_KEY)
+    fun getAll(email: String, visibleSpaceIds: Set<String>): List<ChatHistoryEntry> =
+        projectStore.list()
+            .filter { it.spaceId in visibleSpaceIds }
+            .flatMap { allEntriesFor(it.spaceId, email) } + allEntriesFor(UNASSIGNED_KEY, email)
 
     /**
      * Records one completed turn - [userMessage] and the assistant's
      * [assistantText] reply to it - as two sibling [ChatHistoryEntry] rows
      * sharing a fresh [ChatHistoryEntry.turnId], both tagged with
-     * [sessionId] and [projectId], read-modify-write against that one
+     * [sessionId] and [spaceId], read-modify-write against that one
      * session's own file (`sessions/<sessionId>.json` under the project, or
-     * the unassigned fallback folder when [projectId] is null - see this
+     * the unassigned fallback folder when [spaceId] is null - see this
      * class's own doc comment). The one write path
      * [ch.arcticsoft.springchat3.web.ChatController] calls once per
      * completed turn, from the single `invoke(...)` helper shared by both
@@ -261,20 +291,23 @@ class ChatHistoryStore(
      * per-session lock map for that.
      */
     @Synchronized
-    fun recordTurn(sessionId: String, projectId: String?, userMessage: String, assistantText: String) {
+    fun recordTurn(sessionId: String, spaceId: String?, userMessage: String, assistantText: String, owner: String?) {
         val effectiveSessionId = normalizeSessionId(sessionId)
         val turnId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
-        val key = projectId ?: UNASSIGNED_KEY
+        val key = spaceId ?: UNASSIGNED_KEY
         val file = sessionFile(key, effectiveSessionId)
         val existing = readSession(file)
         val sessionName = existing?.sessionName ?: sessionNameFrom(userMessage)
+        // An existing session keeps its original owner: whoever started it
+        // owns it, even if someone else could reach the same file.
+        val sessionOwner = existing?.owner ?: owner
         val updatedEntries = (existing?.entries ?: emptyList()) +
-            ChatHistoryEntry(UUID.randomUUID().toString(), turnId, effectiveSessionId, projectId, "user", userMessage, now) +
-            ChatHistoryEntry(UUID.randomUUID().toString(), turnId, effectiveSessionId, projectId, "assistant", assistantText, now)
+            ChatHistoryEntry(UUID.randomUUID().toString(), turnId, effectiveSessionId, spaceId, "user", userMessage, now) +
+            ChatHistoryEntry(UUID.randomUUID().toString(), turnId, effectiveSessionId, spaceId, "assistant", assistantText, now)
         try {
             file.parentFile?.mkdirs()
-            objectMapper.writeValue(file, ChatSessionFile(effectiveSessionId, sessionName, updatedEntries))
+            objectMapper.writeValue(file, ChatSessionFile(effectiveSessionId, sessionName, updatedEntries, sessionOwner))
         } catch (e: Exception) {
             log.warn("Could not persist chat history for session {} ({}) to {}", effectiveSessionId, key, file, e)
         }

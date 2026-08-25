@@ -11,6 +11,7 @@ import ch.arcticsoft.springchat3.document.DriveSyncedFile
 import ch.arcticsoft.springchat3.document.LinkedGoogleDoc
 import ch.arcticsoft.springchat3.document.PdfTextExtractor
 import ch.arcticsoft.springchat3.document.WorkingDocumentStore
+import ch.arcticsoft.springchat3.project.SpaceAccess
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatusCode
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
@@ -51,24 +53,24 @@ data class DrivePickerTokenResponse(val accessToken: String)
 /**
  * `POST /drive/link`'s request body - the folder id/name the frontend's
  * Google Picker callback resolved (see index.html's handlePickerResponse).
- * [projectId] (2026-08-23, user's own request "link a google drive folder...
+ * [spaceId] (2026-08-23, user's own request "link a google drive folder...
  * then save the files in the project folder of the active project" - see
  * springchat3_projects_panel.md in project memory) is whatever project is
  * active in the frontend's left panel at the moment of linking, or null for
- * none - see [DriveLink.projectId] for why it's fixed at link time rather
+ * none - see [DriveLink.spaceId] for why it's fixed at link time rather
  * than re-read on every later sync.
  */
-data class LinkFolderRequest(val folderId: String, val folderName: String, val projectId: String? = null)
+data class LinkFolderRequest(val folderId: String, val folderName: String, val spaceId: String? = null)
 
 /**
  * `POST /drive/link-doc`'s request body (2026-08-22, "Working Documents" -
  * see springchat3_working_documents.md in project memory) - the Google Doc
  * file id/name the frontend's Google Picker callback resolved (see
  * index.html's handleDocPickerResponse), the individual-file counterpart to
- * [LinkFolderRequest]. [projectId] is the same "active project at link time"
- * value [LinkFolderRequest.projectId] carries - see [LinkedGoogleDoc.projectId].
+ * [LinkFolderRequest]. [spaceId] is the same "active project at link time"
+ * value [LinkFolderRequest.spaceId] carries - see [LinkedGoogleDoc.spaceId].
  */
-data class LinkDocRequest(val fileId: String, val fileName: String, val projectId: String? = null)
+data class LinkDocRequest(val fileId: String, val fileName: String, val spaceId: String? = null)
 
 /**
  * One linked folder's current state, as [DriveStatusResponse] reports it.
@@ -87,9 +89,9 @@ data class LinkDocRequest(val fileId: String, val fileName: String, val projectI
  * once the frontend starts polling `GET /drive/status` after a now-fast
  * `link`/`sync` response (see index.html's `ensureDriveStatusPolling`).
  *
- * [projectId] (2026-08-23, user's own request "The right panel shall display
+ * [spaceId] (2026-08-23, user's own request "The right panel shall display
  * the project resources of the selected project of the left panel" - see
- * springchat3_projects_panel.md in project memory) mirrors [DriveLink.projectId] -
+ * springchat3_projects_panel.md in project memory) mirrors [DriveLink.spaceId] -
  * index.html's `renderDriveSection` filters against it the same way it
  * filters the plain document list, so a linked folder only shows while its
  * own project is active in the left panel.
@@ -100,7 +102,7 @@ data class DriveFolderStatus(
     val lastSyncedAt: Long?,
     val files: List<DocumentSummary>,
     val syncing: Boolean = false,
-    val projectId: String? = null,
+    val spaceId: String? = null,
 )
 
 /**
@@ -122,8 +124,8 @@ data class DriveFolderStatus(
  * id until now - [documentId] alone was enough for every other purpose
  * (selecting, viewing the exported PDF, deleting, resyncing).
  *
- * [projectId] (2026-08-23, see [DriveFolderStatus.projectId]'s own doc
- * comment) mirrors [LinkedGoogleDoc.projectId] - same right-panel filtering
+ * [spaceId] (2026-08-23, see [DriveFolderStatus.spaceId]'s own doc
+ * comment) mirrors [LinkedGoogleDoc.spaceId] - same right-panel filtering
  * role, one level down.
  */
 data class WorkingDocumentStatus(
@@ -132,7 +134,7 @@ data class WorkingDocumentStatus(
     val characterCount: Int,
     val lastSyncedAt: Long,
     val driveFileId: String,
-    val projectId: String? = null,
+    val spaceId: String? = null,
 )
 
 /**
@@ -278,6 +280,7 @@ class DriveController(
     private val documentStructureStore: DocumentStructureStore,
     webClientBuilder: WebClient.Builder,
     @Value("\${springchat3.google.picker-api-key}") private val pickerApiKey: String,
+    private val spaceAccess: SpaceAccess,
 ) {
     private val log = LoggerFactory.getLogger(DriveController::class.java)
 
@@ -332,11 +335,18 @@ class DriveController(
     fun pickerToken(@RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient): DrivePickerTokenResponse =
         DrivePickerTokenResponse(client.accessToken.tokenValue)
 
-    private fun statusResponse(): DriveStatusResponse =
+    /**
+     * [exchange] null means "no caller to filter for" - the internal calls
+     * below ([link], [sync], [unlink]) that build a response right after
+     * having already checked access for the space they touched. Every
+     * *endpoint* passes the real exchange, so nothing a user can call
+     * returns another user's folders.
+     */
+    private fun statusResponse(exchange: ServerWebExchange? = null): DriveStatusResponse =
         DriveStatusResponse(
-            folders = driveLinkStore.getAll().map { link ->
+            folders = driveLinkStore.getAll().filter { canSee(exchange, it.spaceId) }.map { link ->
                 val files = link.files.mapNotNull { f ->
-                    documentStore.get(f.documentId)?.let { DocumentSummary(f.documentId, it.filename, it.text.length, it.projectId) }
+                    documentStore.get(f.documentId)?.let { DocumentSummary(f.documentId, it.filename, it.text.length, it.spaceId) }
                 }
                 DriveFolderStatus(
                     folderId = link.folderId,
@@ -344,18 +354,21 @@ class DriveController(
                     lastSyncedAt = link.lastSyncedAt,
                     files = files,
                     syncing = link.folderId in syncingFolderIds,
-                    projectId = link.projectId,
+                    spaceId = link.spaceId,
                 )
             },
-            workingDocuments = workingDocumentStore.getAll().mapNotNull { doc ->
+            workingDocuments = workingDocumentStore.getAll().filter { canSee(exchange, it.spaceId) }.mapNotNull { doc ->
                 documentStore.get(doc.documentId)?.let {
-                    WorkingDocumentStatus(doc.documentId, it.filename, it.text.length, doc.lastSyncedAt, doc.driveFileId, doc.projectId)
+                    WorkingDocumentStatus(doc.documentId, it.filename, it.text.length, doc.lastSyncedAt, doc.driveFileId, doc.spaceId)
                 }
             },
         )
 
+    private fun canSee(exchange: ServerWebExchange?, spaceId: String?): Boolean =
+        exchange == null || spaceAccess.canRead(exchange, spaceId)
+
     @GetMapping("/status")
-    fun status(): DriveStatusResponse = statusResponse()
+    fun status(exchange: ServerWebExchange): DriveStatusResponse = statusResponse(exchange)
 
     /**
      * Links an additional folder (2026-08-22, see this class's own doc
@@ -372,10 +385,12 @@ class DriveController(
     fun link(
         @RequestBody request: LinkFolderRequest,
         @RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient,
+        exchange: ServerWebExchange,
     ): DriveStatusResponse {
-        driveLinkStore.link(request.folderId, request.folderName, request.projectId)
+        spaceAccess.requireWrite(exchange, request.spaceId)
+        driveLinkStore.link(request.folderId, request.folderName, request.spaceId)
         startBackgroundSync(client, request.folderId)
-        return statusResponse()
+        return statusResponse(exchange)
     }
 
     /**
@@ -389,13 +404,16 @@ class DriveController(
     fun sync(
         @PathVariable folderId: String,
         @RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient,
-    ): ResponseEntity<DriveStatusResponse> =
-        if (driveLinkStore.get(folderId) == null) {
-            ResponseEntity.notFound().build()
-        } else {
-            startBackgroundSync(client, folderId)
-            ResponseEntity.ok(statusResponse())
-        }
+        exchange: ServerWebExchange,
+    ): ResponseEntity<DriveStatusResponse> {
+        val link = driveLinkStore.get(folderId) ?: return ResponseEntity.notFound().build()
+        // Resolved from the link, not from the caller - a folder id is
+        // guessable in exactly the way a document id is, see
+        // DocumentController.file.
+        spaceAccess.requireWrite(exchange, link.spaceId)
+        startBackgroundSync(client, folderId)
+        return ResponseEntity.ok(statusResponse(exchange))
+    }
 
     /**
      * Subscribes [performSync] for [folderId] independently of whatever HTTP
@@ -454,9 +472,10 @@ class DriveController(
      * folder at a time now that more than one can be linked at once).
      */
     @PostMapping("/unlink/{folderId}")
-    fun unlink(@PathVariable folderId: String): DriveStatusResponse {
+    fun unlink(@PathVariable folderId: String, exchange: ServerWebExchange): DriveStatusResponse {
+        driveLinkStore.get(folderId)?.let { spaceAccess.requireWrite(exchange, it.spaceId) }
         driveLinkStore.unlink(folderId)
-        return statusResponse()
+        return statusResponse(exchange)
     }
 
     /**
@@ -478,15 +497,19 @@ class DriveController(
     fun linkDoc(
         @RequestBody request: LinkDocRequest,
         @RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient,
+        exchange: ServerWebExchange,
     ): Mono<ResponseEntity<Any>> {
         val existing = workingDocumentStore.getByDriveFileId(request.fileId)
-        // existing?.projectId wins over the request's: a repeat pick of an
+        // Checked against the space this actually lands in - `existing`'s
+        // when it is a resync (see below), the request's otherwise.
+        spaceAccess.requireWrite(exchange, existing?.spaceId ?: request.spaceId)
+        // existing?.spaceId wins over the request's: a repeat pick of an
         // already-linked Doc is a resync (see this method's own doc
         // comment), and a resync must not move an already-linked Doc to
         // whatever project happens to be active now - same "fixed at link
-        // time" rule LinkFolderRequest.projectId/DriveLink.projectId follow.
-        val projectId = existing?.projectId ?: request.projectId
-        return syncGoogleDocInternal(client, request.fileId, request.fileName, existing, projectId)
+        // time" rule LinkFolderRequest.spaceId/DriveLink.spaceId follow.
+        val spaceId = existing?.spaceId ?: request.spaceId
+        return syncGoogleDocInternal(client, request.fileId, request.fileName, existing, spaceId, exchange)
     }
 
     /**
@@ -501,9 +524,11 @@ class DriveController(
     fun syncDoc(
         @PathVariable documentId: String,
         @RegisteredOAuth2AuthorizedClient("google") client: OAuth2AuthorizedClient,
+        exchange: ServerWebExchange,
     ): Mono<ResponseEntity<Any>> {
         val existing = workingDocumentStore.get(documentId) ?: return Mono.just(ResponseEntity.notFound().build())
-        return syncGoogleDocInternal(client, existing.driveFileId, existing.filename, existing, existing.projectId)
+        spaceAccess.requireWrite(exchange, existing.spaceId)
+        return syncGoogleDocInternal(client, existing.driveFileId, existing.filename, existing, existing.spaceId, exchange)
     }
 
     /**
@@ -535,7 +560,8 @@ class DriveController(
         fileId: String,
         fileName: String,
         existing: LinkedGoogleDoc?,
-        projectId: String?,
+        spaceId: String?,
+        exchange: ServerWebExchange,
     ): Mono<ResponseEntity<Any>> {
         val linkedAt = existing?.linkedAt ?: System.currentTimeMillis()
         log.info(
@@ -546,9 +572,9 @@ class DriveController(
         )
         return exportDocAsPdf(client, fileId)
             .publishOn(Schedulers.boundedElastic())
-            .map { bytes -> ingestGoogleDoc(fileId, fileName, bytes, existing?.documentId, linkedAt, projectId) }
+            .map { bytes -> ingestGoogleDoc(fileId, fileName, bytes, existing?.documentId, linkedAt, spaceId) }
             .doOnNext { workingDocumentStore.upsert(it) }
-            .map<ResponseEntity<Any>> { ResponseEntity.ok(statusResponse()) }
+            .map<ResponseEntity<Any>> { ResponseEntity.ok(statusResponse(exchange)) }
             .onErrorResume { e -> handleDocSyncError(e, fileName) }
     }
 
@@ -680,9 +706,9 @@ class DriveController(
      *
      * Takes the whole [link] (2026-08-23, changed alongside
      * [DriveLink.driveFolderLocalId] - see that field's own doc comment)
-     * rather than just its `projectId`, now that a synced file's storage
+     * rather than just its `spaceId`, now that a synced file's storage
      * location depends on two of the link's own fields together
-     * ([DriveLink.projectId] and [DriveLink.driveFolderLocalId]) - passing
+     * ([DriveLink.spaceId] and [DriveLink.driveFolderLocalId]) - passing
      * the whole object avoids two parallel parameters that could drift out
      * of sync with each other at a call site.
      *
@@ -705,7 +731,7 @@ class DriveController(
         }
         val pages = pdfTextExtractor.extractPages(bytes)
         val text = pages.joinToString("\n\n") { it.text.orEmpty() }
-        val documentId = documentStore.store(file.name, text, bytes, link.projectId, link.driveFolderLocalId)
+        val documentId = documentStore.store(file.name, text, bytes, link.spaceId, link.driveFolderLocalId)
         documentIndex.index(documentId, pages)
         documentStructureExtractor.extractStructure(bytes)?.let { structure ->
             documentStructureStore.store(documentId, structure)
@@ -742,7 +768,7 @@ class DriveController(
      * lookups needing to survive a resync key off [driveFileId]/[fileId]
      * instead).
      */
-    private fun ingestGoogleDoc(fileId: String, fileName: String, bytes: ByteArray, existingDocumentId: String?, linkedAt: Long, projectId: String?): LinkedGoogleDoc {
+    private fun ingestGoogleDoc(fileId: String, fileName: String, bytes: ByteArray, existingDocumentId: String?, linkedAt: Long, spaceId: String?): LinkedGoogleDoc {
         if (bytes.size > MAX_PDF_BYTES) {
             throw IllegalArgumentException("Google Doc '$fileName' too large once exported as PDF (${bytes.size} bytes, max $MAX_PDF_BYTES) - skipped")
         }
@@ -754,7 +780,7 @@ class DriveController(
         }
         val pages = pdfTextExtractor.extractPages(bytes)
         val text = pages.joinToString("\n\n") { it.text.orEmpty() }
-        val documentId = documentStore.store(fileName, text, bytes, projectId)
+        val documentId = documentStore.store(fileName, text, bytes, spaceId)
         documentIndex.index(documentId, pages)
         documentStructureExtractor.extractStructure(bytes)?.let { structure ->
             documentStructureStore.store(documentId, structure)
@@ -769,7 +795,7 @@ class DriveController(
             filename = fileName,
             linkedAt = linkedAt,
             lastSyncedAt = System.currentTimeMillis(),
-            projectId = projectId,
+            spaceId = spaceId,
         )
     }
 
@@ -821,6 +847,10 @@ class DriveController(
      * concurrent upload racing a sync either.
      */
     private fun performSync(client: OAuth2AuthorizedClient, folderId: String): Mono<DriveStatusResponse> {
+        // The two unfiltered statusResponse() calls in here are deliberate:
+        // performSync runs detached from any request (see startBackgroundSync)
+        // and its result is discarded, so there is no caller to filter for -
+        // which is exactly the case statusResponse's null exchange covers.
         val link = driveLinkStore.get(folderId) ?: return Mono.just(statusResponse())
         val previousByFileId = link.files.associateBy { it.driveFileId }
 

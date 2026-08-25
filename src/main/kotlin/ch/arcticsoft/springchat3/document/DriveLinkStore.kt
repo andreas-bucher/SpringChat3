@@ -1,11 +1,6 @@
 package ch.arcticsoft.springchat3.document
 
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
-import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
-import java.io.File
 import kotlin.random.Random
 
 /**
@@ -39,7 +34,7 @@ data class DriveSyncedFile(
  * "the" link. [lastSyncedAt] is null only in the brief window before this
  * particular folder's very first sync (kicked off automatically right after
  * linking - see [ch.arcticsoft.springchat3.web.DriveController.link])
- * actually completes. [projectId] (2026-08-23, user's own request "link a
+ * actually completes. [spaceId] (2026-08-23, user's own request "link a
  * google drive folder... then save the files in the project folder of the
  * active project" - see springchat3_projects_panel.md in project memory) is
  * the project that was active when this folder was linked, or null for none
@@ -54,13 +49,13 @@ data class DriveSyncedFile(
  * memory) is a random 6-digit id, generated once when this folder is first
  * linked (see [DriveLinkStore.link]/[DriveLinkStore.generateDriveFolderLocalId])
  * and reused for every later sync - same "fixed at link time" treatment
- * [projectId] already gets, for the same reason (a folder's synced files
+ * [spaceId] already gets, for the same reason (a folder's synced files
  * should always land in one consistent place, not move around depending on
  * what happens to be active later). Doubles as this folder's own on-disk
  * directory name, `gdrive-<driveFolderLocalId>` - see
  * [ch.arcticsoft.springchat3.document.DocumentStore]'s own doc comment for
  * where that directory sits (nested inside the active project's own folder
- * if [projectId] is set, otherwise directly under the data directory).
+ * if [spaceId] is set, otherwise directly under the data directory).
  * Nullable only so a folder linked before this feature existed still
  * deserializes cleanly (missing JSON key -> null, plain Jackson behavior,
  * not the Kotlin-default-parameter mechanism this project avoids relying on
@@ -76,19 +71,25 @@ data class DriveLink(
     val linkedAt: Long,
     val lastSyncedAt: Long? = null,
     val files: List<DriveSyncedFile> = emptyList(),
-    val projectId: String? = null,
+    val spaceId: String? = null,
     val driveFolderLocalId: String? = null,
 )
 
 /**
- * Persists every currently linked [DriveLink] to `[data-dir]/drive-link.json`
- * (filename kept as-is across the v1→v2 format change below - it's still
- * "the Drive link state", just a list now) - same single-shared-file JSON
- * persistence pattern as [ch.arcticsoft.springchat3.settings.AppSettingsStore],
- * just one file for every linked folder rather than one per document. An
- * empty list (no file on disk, or the last folder [unlink]d) means "nothing
- * linked", loaded eagerly at construction like [AppSettingsStore] - there's
- * only ever this one small list to load.
+ * Persists every currently linked [DriveLink] to `drive-link.json` **inside
+ * each space's own folder** (2026-08-24; filename kept as-is across both
+ * that move and the v1→v2 format change below - it's still "the Drive link
+ * state", just a list, per space now). See [SpaceScopedJsonStore] for the
+ * layout, the unassigned bucket and why there's no migration off the old
+ * single `[data-dir]/drive-link.json`. An empty list (no file on disk, or
+ * the last folder [unlink]d) means "nothing linked", loaded eagerly at
+ * construction like [AppSettingsStore] - there's only ever this one small
+ * list to load.
+ *
+ * The move suits this store especially: a folder's downloaded PDFs already
+ * live in `<data-dir>/spaces/<spaceId>/gdrive-<driveFolderLocalId>/` (see
+ * [DocumentStore]), so the bookkeeping now sits one level up from the files
+ * it tracks instead of in a different tree entirely.
  *
  * **v1→v2 (2026-08-22, same day): more than one folder can be linked at
  * once.** User's own bug report: "when linking a new Google Drive folder,
@@ -102,12 +103,11 @@ data class DriveLink(
  * folder was impossible (nothing left pointed at it) and the old folder's
  * card simply vanished from the UI. Storage is now `List<DriveLink>` keyed
  * by [DriveLink.folderId] instead of a single nullable value, and every
- * method below is scoped to one [folderId] rather than "the" link.
- * [loadPersisted] transparently migrates an old single-object
- * `drive-link.json` (from before this change) into a one-element list the
- * first time it's read, so an existing linked folder and its synced-files
- * bookkeeping survive the upgrade rather than silently disappearing again -
- * the exact failure mode this change exists to fix.
+ * method below is scoped to one [folderId] rather than "the" link. Loading
+ * used to fall back to reading a pre-v2 *single-object* `drive-link.json`
+ * as a one-element list; that path went with the move to per-space files
+ * (2026-08-24) because the only file that could ever hold the old shape is
+ * the root-level one this store no longer reads at all.
  *
  * Deliberately doesn't touch [DocumentStore]/[DocumentIndex] itself - it
  * only tracks *which* Drive files are already ingested, under which
@@ -124,56 +124,17 @@ data class DriveLink(
  *
  * Write-through, same simple approach as [AppSettingsStore]/[DocumentStore]:
  * every mutation persists immediately, no batching. A load failure at
- * startup (corrupt file, and not the legacy single-object shape either) logs
- * a warning and starts with nothing linked rather than failing application
- * startup.
+ * startup (a corrupt file) logs a warning and starts that space with nothing
+ * linked rather than failing application startup.
  */
 @Component
 class DriveLinkStore(
-    @Value("\${springchat3.data-dir}") private val dataDir: String,
+    private val spaceScopedStore: SpaceScopedJsonStore,
 ) {
-    private val log = LoggerFactory.getLogger(DriveLinkStore::class.java)
-    private val objectMapper = jacksonObjectMapper()
-
     @Volatile
-    private var links: List<DriveLink> = loadPersisted()
+    private var links: List<DriveLink> = spaceScopedStore.load(STORE_FILENAME, DriveLink::class.java)
 
-    private fun linkFile() = File(dataDir, "drive-link.json")
-
-    private fun loadPersisted(): List<DriveLink> {
-        val file = linkFile()
-        if (!file.exists()) return emptyList()
-        return try {
-            objectMapper.readValue<List<DriveLink>>(file)
-        } catch (e: Exception) {
-            // Not a JSON array - probably the pre-2026-08-22 single-object
-            // format (one bare DriveLink, from before more than one folder
-            // could be linked). Try reading it that way before giving up, so
-            // upgrading this app doesn't silently drop an already-linked
-            // folder's sync bookkeeping.
-            try {
-                val legacy = objectMapper.readValue<DriveLink>(file)
-                log.info(
-                    "Migrating pre-multi-folder Google Drive link ('{}') to the new list format",
-                    legacy.folderName,
-                )
-                listOf(legacy)
-            } catch (legacyError: Exception) {
-                log.warn("Could not load persisted Google Drive links from {} - starting with none linked", file, e)
-                emptyList()
-            }
-        }
-    }
-
-    private fun persist() {
-        try {
-            val file = linkFile()
-            file.parentFile?.mkdirs()
-            objectMapper.writeValue(file, links)
-        } catch (e: Exception) {
-            log.warn("Could not persist Google Drive links to {}", linkFile(), e)
-        }
-    }
+    private fun persist() = spaceScopedStore.persist(STORE_FILENAME, links) { it.spaceId }
 
     /** Every currently linked folder. */
     fun getAll(): List<DriveLink> = links
@@ -183,9 +144,9 @@ class DriveLinkStore(
 
     /**
      * A random 6-digit id ("100000".."999999") for [DriveLink.driveFolderLocalId] -
-     * same generation shape as [ch.arcticsoft.springchat3.project.ProjectStore.generateProjectId],
+     * same generation shape as [ch.arcticsoft.springchat3.project.ProjectStore.generateSpaceId],
      * just checked against this store's own in-memory [links] rather than
-     * also the filesystem: unlike a project id (always `[dataDir]/projects/<id>`,
+     * also the filesystem: unlike a project id (always `<data-dir>/spaces/<id>`,
      * one fixed location), a Drive-folder-link id's actual directory depends
      * on which project (if any) was active at link time - see
      * [ch.arcticsoft.springchat3.document.DocumentStore]'s own doc comment -
@@ -214,20 +175,20 @@ class DriveLinkStore(
      * already-synced [DriveLink.files] back to empty; the Picker flow
      * shouldn't normally offer an already-linked folder again, but this
      * keeps a double-click or a stale-UI race harmless instead of silently
-     * wiping real sync state - including [DriveLink.projectId] itself: a
+     * wiping real sync state - including [DriveLink.spaceId] itself: a
      * repeat "link" call with a *different* project now active does NOT
      * move an already-linked folder to that project, same "don't silently
      * touch already-real state" spirit. Does NOT itself ingest any files -
      * see [ch.arcticsoft.springchat3.web.DriveController.link], which calls
      * this and then immediately syncs just this folder.
      */
-    fun link(folderId: String, folderName: String, projectId: String? = null): DriveLink {
+    fun link(folderId: String, folderName: String, spaceId: String? = null): DriveLink {
         get(folderId)?.let { return it }
         val fresh = DriveLink(
             folderId = folderId,
             folderName = folderName,
             linkedAt = System.currentTimeMillis(),
-            projectId = projectId,
+            spaceId = spaceId,
             driveFolderLocalId = generateDriveFolderLocalId(),
         )
         links = links + fresh
@@ -316,5 +277,9 @@ class DriveLinkStore(
             links = updated
             persist()
         }
+    }
+
+    companion object {
+        private const val STORE_FILENAME = "drive-link.json"
     }
 }

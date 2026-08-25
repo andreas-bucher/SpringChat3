@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · SpringChat3</title>
+  <style>
+    :root {
+      --bg: #f5f6f8;
+      --surface: #ffffff;
+      --text: #1f2328;
+      --muted: #6b7280;
+      --border: #e3e5e9;
+      --accent: #2f6fed;
+      --danger: #b4232c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .card {
+      width: 100%;
+      max-width: 380px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    }
+    h1 { margin: 0 0 4px; font-size: 19px; }
+    .sub { margin: 0 0 22px; color: var(--muted); font-size: 13.5px; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+    input[type="email"], input[type="password"] {
+      width: 100%;
+      padding: 9px 11px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      font: inherit;
+      background: var(--surface);
+      color: var(--text);
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+    button, .google {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 7px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button {
+      border: none;
+      background: var(--accent);
+      color: #fff;
+    }
+    button:hover { filter: brightness(1.06); }
+    .google {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      text-decoration: none;
+    }
+    .google:hover { background: #f7f8fa; }
+    .google svg { width: 17px; height: 17px; }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 20px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .divider::before, .divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+    .error {
+      margin: 0 0 16px;
+      padding: 9px 11px;
+      border-radius: 7px;
+      background: #fdecec;
+      color: var(--danger);
+      font-size: 13.5px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16181c;
+        --surface: #1f2227;
+        --text: #e9eaec;
+        --muted: #9aa1ab;
+        --border: #33373e;
+      }
+      .google:hover { background: #262a30; }
+      .error { background: #3a1f21; color: #ff9ea3; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>SpringChat3</h1>
+    <p class="sub">Sign in to continue.</p>
+
+    <p class="error" id="error" hidden>That email and password didn't match. Please try again.</p>
+
+    <a class="google" href="/oauth2/authorization/google">
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.7 30.2.5 24 .5 14.6.5 6.5 5.8 2.6 13.6l7.8 6c1.9-5.7 7.2-10.1 13.6-10.1z"/>
+        <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/>
+        <path fill="#FBBC05" d="M10.4 28.4c-.5-1.4-.8-2.9-.8-4.4s.3-3 .8-4.4l-7.8-6C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.4l7.8-6z"/>
+        <path fill="#34A853" d="M24 47.5c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2.1 1.4-4.7 2.2-7.7 2.2-6.4 0-11.7-4.3-13.6-10.1l-7.8 6C6.5 42.2 14.6 47.5 24 47.5z"/>
+      </svg>
+      Sign in with Google
+    </a>
+
+    <div class="divider">or</div>
+
+    <form method="post" action="/login">
+      <label for="username">Email</label>
+      <input type="email" id="username" name="username" autocomplete="username" required autofocus>
+
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+
+      <input type="hidden" id="csrf" name="_csrf">
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+
+  <script>
+    // Same cookie-read as index.html's csrfHeader() - SecurityConfig uses
+    // CookieServerCsrfTokenRepository.withHttpOnlyFalse() with the plain
+    // (non-Xor) request handler, so the raw cookie value is what the server
+    // expects back. A form POST sends it as the _csrf parameter rather than
+    // as the X-XSRF-TOKEN header a fetch() would use.
+    const match = document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]*)/);
+    if (match) document.getElementById('csrf').value = decodeURIComponent(match[1]);
+    if (new URLSearchParams(location.search).has('error')) {
+      document.getElementById('error').hidden = false;
+    }
+  </script>
+</body>
+</html>

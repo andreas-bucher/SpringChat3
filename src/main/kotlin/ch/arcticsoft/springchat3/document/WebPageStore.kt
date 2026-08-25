@@ -1,11 +1,6 @@
 package ch.arcticsoft.springchat3.document
 
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
-import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
-import java.io.File
 
 /**
  * One linked web page (2026-08-23, user's own request "add new section 'WEB
@@ -29,10 +24,10 @@ import java.io.File
  * which is why this is keyed by [url] for lookups that need to survive a
  * resync ([getByUrl]), not by [documentId] itself.
  *
- * [projectId] is the project that was active when this page was first
+ * [spaceId] is the project that was active when this page was first
  * linked, or null for none - carried forward on every resync rather than
  * re-read from whatever project happens to be active at resync time, same
- * "fixed at link time" reasoning [LinkedGoogleDoc.projectId] follows.
+ * "fixed at link time" reasoning [LinkedGoogleDoc.spaceId] follows.
  *
  * No `title` field here, unlike [LinkedGoogleDoc.filename]: a web page's
  * title only exists once Firecrawl has actually fetched+parsed it, and
@@ -53,14 +48,24 @@ data class LinkedWebPage(
     val documentId: String,
     val linkedAt: Long,
     val lastSyncedAt: Long,
-    val projectId: String? = null,
+    val spaceId: String? = null,
 )
 
 /**
- * Persists every currently linked [LinkedWebPage] to
- * `[data-dir]/web-pages.json` - same write-through, single-shared-file JSON
- * pattern [WorkingDocumentStore] uses for its own `List<LinkedGoogleDoc>`,
- * just for linked web pages instead of linked Google Docs. A separate store
+ * Persists every currently linked [LinkedWebPage] to `web-pages.json`
+ * **inside each space's own folder** (2026-08-24) - see
+ * [SpaceScopedJsonStore] for the layout, the unassigned bucket and why
+ * there's no migration off the old single `[data-dir]/web-pages.json`. Same
+ * write-through, load-once JSON pattern [WorkingDocumentStore] uses for its
+ * own `List<LinkedGoogleDoc>`, just for linked web pages instead of linked
+ * Google Docs.
+ *
+ * Note that [getByUrl] still scans **every** space, so linking a URL that is
+ * already linked in a *different* space is still treated as a resync of that
+ * one rather than as a second, space-local entry - unchanged from the single
+ * file, and deliberately not revisited here.
+ *
+ * A separate store
  * rather than folding into [WorkingDocumentStore] itself: a web page isn't a
  * Google Doc and involves no Drive/OAuth flow at all (see [LinkedWebPage]'s
  * own doc comment) - keeping it as its own type/store/side-panel section
@@ -74,36 +79,12 @@ data class LinkedWebPage(
  */
 @Component
 class WebPageStore(
-    @Value("\${springchat3.data-dir}") private val dataDir: String,
+    private val spaceScopedStore: SpaceScopedJsonStore,
 ) {
-    private val log = LoggerFactory.getLogger(WebPageStore::class.java)
-    private val objectMapper = jacksonObjectMapper()
-
     @Volatile
-    private var pages: List<LinkedWebPage> = loadPersisted()
+    private var pages: List<LinkedWebPage> = spaceScopedStore.load(STORE_FILENAME, LinkedWebPage::class.java)
 
-    private fun storeFile() = File(dataDir, "web-pages.json")
-
-    private fun loadPersisted(): List<LinkedWebPage> {
-        val file = storeFile()
-        if (!file.exists()) return emptyList()
-        return try {
-            objectMapper.readValue<List<LinkedWebPage>>(file)
-        } catch (e: Exception) {
-            log.warn("Could not load persisted web pages from {} - starting with none linked", file, e)
-            emptyList()
-        }
-    }
-
-    private fun persist() {
-        try {
-            val file = storeFile()
-            file.parentFile?.mkdirs()
-            objectMapper.writeValue(file, pages)
-        } catch (e: Exception) {
-            log.warn("Could not persist web pages to {}", storeFile(), e)
-        }
-    }
+    private fun persist() = spaceScopedStore.persist(STORE_FILENAME, pages) { it.spaceId }
 
     /** Every currently linked web page. */
     fun getAll(): List<LinkedWebPage> = pages
@@ -142,11 +123,30 @@ class WebPageStore(
      * document" case, same reasoning as [WorkingDocumentStore.remove]: a web
      * page's whole reason for being ingested at all was this link.
      */
+    /**
+     * Re-files [documentId] under [spaceId], a no-op for an id that is not a
+     * linked web page (2026-08-25, moving a document between spaces -
+     * see [ch.arcticsoft.springchat3.document.DocumentMoveService]). The row
+     * itself does not move between files here: [persist] rewrites every
+     * space's file from the whole list keyed on each entry's own spaceId, so
+     * changing this one field is what relocates it on disk.
+     */
+    fun setSpace(documentId: String, spaceId: String?) {
+        val index = pages.indexOfFirst { it.documentId == documentId }
+        if (index < 0) return
+        pages = pages.toMutableList().also { it[index] = it[index].copy(spaceId = spaceId) }
+        persist()
+    }
+
     fun remove(documentId: String) {
         val updated = pages.filterNot { it.documentId == documentId }
         if (updated.size != pages.size) {
             pages = updated
             persist()
         }
+    }
+
+    companion object {
+        private const val STORE_FILENAME = "web-pages.json"
     }
 }

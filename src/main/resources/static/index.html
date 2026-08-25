@@ -6,6 +6,10 @@
 <title>SpringChat3</title>
 <style>
   :root {
+    /* The ::before disclosure triangles below are the same chevron as the
+       ICON_PATHS set, drawn as a mask so `background: currentColor` still
+       colours it from whatever it sits in - a background-image could not. */
+    --chevron-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='9 18 15 12 9 6'/%3E%3C/svg%3E");
     --bg: #f5f6f8;
     --panel: #ffffff;
     --border: #e3e5e9;
@@ -141,6 +145,22 @@
   }
 
   /*
+   * Neutral system notice (2026-08-24) - the batch PDF upload's summary is the
+   * first thing this app says that is neither a reply nor a failure. Centered
+   * and quiet so it reads as a status line rather than a turn in the
+   * conversation; .row.error above stays for the cases that really are errors.
+   */
+  .row.info { justify-content: center; }
+
+  .row.info .bubble {
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    font-size: 12.5px;
+    text-align: center;
+  }
+
+  /*
    * Rendered Markdown inside an assistant bubble (see renderMarkdown() /
    * renderInline() below) - only ever applied to assistant replies, never
    * to the user's own message or an error row (both stay plain textContent,
@@ -233,9 +253,14 @@
   .trace summary::-webkit-details-marker { display: none; }
 
   .trace summary::before {
-    content: '▸';
+    content: '';
+    width: 11px;
+    height: 11px;
+    background: currentColor;
+    -webkit-mask: var(--chevron-mask) center / contain no-repeat;
+    mask: var(--chevron-mask) center / contain no-repeat;
     display: inline-block;
-    font-size: 9px;
+    flex-shrink: 0;
     transition: transform 0.15s ease;
   }
 
@@ -369,15 +394,14 @@
   }
 
   /*
-   * Collapsible right-hand side panel (2026-08-22, see
-   * springchat3_document_qa.md in project memory) listing every uploaded
-   * PDF, replacing the old composer paperclip button entirely - upload by
-   * dragging a file into #doc-dropzone or clicking #doc-upload-btn, click
-   * an item to make it the active document for the next chat message
-   * (highlighted via .active), × to delete it server-side.
+   * Shared shell for both edge panels - the left-hand Projects panel (which
+   * since 2026-08-24 also carries every project's resources, see
+   * #project-resources below) and the right-hand document preview pane
+   * (which since the same date replaced the old resources panel, see
+   * .pdf-viewer-body below).
    */
   .side-panel {
-    width: 300px;
+    width: 440px;
     flex-shrink: 0;
     height: 100%;
     border-left: 1px solid var(--border);
@@ -409,8 +433,14 @@
     overflow: visible;
   }
 
-  /* Left-hand Projects panel (2026-08-23) - same .side-panel behavior, mirrored to the other edge of .layout. */
+  /*
+   * Left-hand Projects panel (2026-08-23) - same .side-panel behavior,
+   * mirrored to the other edge of .layout. Wider than it was (2026-08-24):
+   * it now holds the resource sections nested one level in under the active
+   * project, which the old 300px left too little room for.
+   */
   .side-panel--left {
+    width: 320px;
     border-left: none;
     border-right: 1px solid var(--border);
   }
@@ -458,33 +488,149 @@
     border-color: var(--accent);
   }
 
+  /*
+   * The active space's row sits directly on top of its own #project-resources
+   * block - squaring off the bottom corners and dropping the gap reads the
+   * two as one unit rather than two stacked cards.
+   */
+  .project-item--expanded {
+    margin-bottom: 0;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+  }
+
+  /*
+   * Title, then its two chips, then the add group pushed to the right edge
+   * (2026-08-25). Was baseline + space-between, which spread the id and the
+   * Shared badge away from the name they belong to whenever the name was
+   * short, and lined the chevron's SVG up on a text baseline it doesn't have.
+   */
   .project-item-name-row {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
   }
 
   .project-item-name {
     font-size: 13px;
     font-weight: 600;
+    line-height: 16px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    /* Shrinks rather than grows, so the chips stay beside the title. */
+    flex: 0 1 auto;
     min-width: 0;
   }
 
-  /* The project's 6-digit id (2026-08-23, see springchat3_projects_panel.md in project memory) - same treatment as .drive-folder-meta. */
-  .project-item-id {
-    font-size: 10.5px;
-    color: var(--muted);
+  /*
+   * The 6-digit id (2026-08-23) and the Shared badge are the same chip shape -
+   * one 16px box each, so they align with each other and sit centred on the
+   * title's line box whatever their own font-size.
+   */
+  .project-item-id,
+  .project-item-shared {
+    display: inline-flex;
+    align-items: center;
+    height: 16px;
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    white-space: nowrap;
     flex-shrink: 0;
+  }
+
+  .project-item-id {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    background: var(--bg);
+  }
+
+  /* The row's own tint is --bubble-assistant, so the chip needs the lighter fill to stay readable. */
+  .project-item.active .project-item-id {
+    background: var(--panel);
+  }
+
+  /* Marks a space that other people can reach (2026-08-24, sharing - see
+     springchat3_multi_user.md in project memory). Deliberately on the row
+     rather than only inside the share dialog: "which of my spaces are not
+     private" is a question worth answering at a glance, not one worth
+     opening five dialogs for. */
+  .project-item-shared {
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* One person the space is shared with, inside the share dialog. */
+  .share-member {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .share-member:last-child {
+    border-bottom: none;
+  }
+
+  .share-member-email {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  .share-member-role {
+    font-size: 12px;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .share-add-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .share-add-row select {
+    font-size: 13px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text);
+    min-width: 0;
+  }
+
+  .share-add-row select:first-child {
+    flex: 1;
+  }
+
+  .share-empty {
+    font-size: 12.5px;
+    color: var(--muted);
+    padding: 6px 0;
   }
 
   .project-item-desc {
     font-size: 11.5px;
     color: var(--muted);
     margin-top: 2px;
+    /* Lines up under the title, not under the chevron: 24px button (14px icon
+       + 2x5px padding) - 5px negative margin + the row's 6px gap. */
+    margin-left: 25px;
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -655,53 +801,24 @@
   }
 
   /*
-   * In-app PDF viewer (2026-08-23, user's own choice of "overlay inside the
-   * app" over opening a new browser tab - see springchat3_pdf_preview.md in
-   * project memory). Same .modal-overlay backdrop as every other modal here,
-   * with a far larger dialog: this one holds a document rather than a
-   * two-field form, so it takes most of the viewport and lays itself out as a
-   * column with the frame absorbing whatever height is left.
-   */
-  .pdf-viewer-dialog {
-    width: min(1100px, 92vw);
-    height: min(90vh, 1100px);
-    display: flex;
-    flex-direction: column;
-    padding: 12px;
-  }
-
-  .pdf-viewer-header {
-    gap: 8px;
-    margin-bottom: 10px;
-  }
-
-  .pdf-viewer-title {
-    flex: 1;
-    min-width: 0;
-    font-size: 14px;
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .pdf-viewer-actions {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    flex-shrink: 0;
-  }
-
-  /*
+   * In-app document preview. Was a centered .modal-overlay dialog
+   * (2026-08-23, see springchat3_pdf_preview.md in project memory); docked
+   * into the right-hand #side-panel on 2026-08-24 so a document can stay
+   * open beside the conversation instead of covering it. The dialog/header/
+   * actions wrappers are gone with the overlay - .side-panel-header and
+   * .side-panel-body now provide that chrome - and only the frame, its
+   * status cover and the body they sit in are left.
+   *
    * position:relative so .pdf-viewer-status can cover the frame exactly;
    * min-height:0 because a flex child defaults to min-height:auto and would
    * otherwise refuse to shrink below the iframe's intrinsic height, pushing
-   * the dialog past the viewport.
+   * the pane past the viewport.
    */
   .pdf-viewer-body {
     position: relative;
     flex: 1;
     min-height: 0;
+    margin: 0 12px 12px 16px;
     border: 1px solid var(--border);
     border-radius: 10px;
     overflow: hidden;
@@ -729,8 +846,11 @@
     padding: 24px;
     text-align: center;
     font-size: 13px;
+    line-height: 1.5;
     color: var(--muted);
     background: var(--panel);
+    /* The idle hint is two lines separated by a \n rather than markup. */
+    white-space: pre-line;
   }
 
   .pdf-viewer-status[hidden] {
@@ -778,6 +898,13 @@
     flex-shrink: 0;
   }
 
+  /* The left panel's header lost its <h2> (see #projects-panel's own markup
+     comment), so space-between would park the lone chevron on the LEADING
+     edge. It belongs on the trailing one, where it has always been. */
+  .side-panel--left .side-panel-header {
+    justify-content: flex-end;
+  }
+
   .side-panel.collapsed .side-panel-header {
     padding: 18px 4px 12px;
     justify-content: center;
@@ -803,8 +930,13 @@
   }
 
   .side-panel.collapsed .side-panel-header h2,
-  .side-panel.collapsed #doc-upload-btn,
   .side-panel.collapsed .side-panel-body {
+    display: none;
+  }
+
+  /* Only the collapse chevron survives a collapsed header - the preview pane's own title/download/close would have nothing to sit next to at 44px. */
+  .side-panel.collapsed #pdf-viewer-download,
+  .side-panel.collapsed #pdf-viewer-close-btn {
     display: none;
   }
 
@@ -851,32 +983,6 @@
     flex-direction: column;
   }
 
-  /*
-   * #side-panel-content is the flex:1 element normally (Uploaded/Drive/
-   * Working Documents, stacked - same role .side-panel-body's direct
-   * children had before this wrapper existed), so it still needs its own
-   * flex-direction:column; #side-panel-disabled-hint (2026-08-23, see the
-   * HTML's own comment) takes over that role instead when shown - the two
-   * are always mutually hidden/shown together, never both visible.
-   */
-  #side-panel-content {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-  }
-
-  .side-panel-disabled-hint {
-    flex: 1;
-    margin: auto;
-    max-width: 220px;
-    text-align: center;
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.5;
-    padding: 24px 16px;
-  }
-
   .panel-icon-btn {
     border: none;
     background: none;
@@ -891,32 +997,6 @@
   .panel-icon-btn:hover {
     color: var(--text);
     background: var(--bg);
-  }
-
-  .doc-dropzone {
-    /*
-     * min/max-height, not flex:1 (moved up to the new .side-panel-body wrapper,
-     * 2026-08-22, see springchat3_google_drive.md in project memory) - this
-     * section no longer owns all remaining vertical space by itself now that
-     * the Google Drive section sits below it in the same scrollable parent.
-     */
-    min-height: 90px;
-    max-height: 260px;
-    flex-shrink: 0;
-    margin: 0 12px 16px 16px;
-    padding: 8px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    border: 2px dashed var(--border);
-    border-radius: 12px;
-    transition: border-color 0.15s ease, background 0.15s ease;
-  }
-
-  .doc-dropzone.drag-over {
-    border-color: var(--accent);
-    background: #eef3fe;
   }
 
   .doc-empty-hint {
@@ -1031,7 +1111,7 @@
 
   /*
    * (2026-08-23: .doc-item-gdoc - the inline-SVG pencil "open in Google
-   * Docs" link - and .doc-item-sync - the ↻ resync button - used to sit
+   * Docs" link - and .doc-item-sync - the resync resync button - used to sit
    * here. Both were only ever rendered on a linked Google Doc's flat row,
    * and that row became a .drive-folder-card-styled card the same day (see
    * buildWorkingDocCard), where both actions live in .drive-folder-actions
@@ -1113,8 +1193,12 @@
   .panel-section-summary::-webkit-details-marker { display: none; }
 
   .panel-section-summary::before {
-    content: '▸';
-    font-size: 9px;
+    content: '';
+    width: 11px;
+    height: 11px;
+    background: currentColor;
+    -webkit-mask: var(--chevron-mask) center / contain no-repeat;
+    mask: var(--chevron-mask) center / contain no-repeat;
     flex-shrink: 0;
     transition: transform 0.15s ease;
   }
@@ -1132,42 +1216,252 @@
     padding-bottom: 10px;
   }
 
-  .drive-connect-row {
-    margin: 6px 12px 12px;
-    padding: 12px;
-    border: 1.5px dashed var(--border);
-    border-radius: 12px;
+  /*
+   * "Add to this space" dialog (2026-08-24) - a plain centered modal, so the
+   * list of five options needs no positioning of its own beyond stacking.
+   */
+  .add-resource-dialog {
+    width: 340px;
+  }
+
+  .add-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  /*
+   * These five were the dashed .drive-connect-row boxes that used to sit in
+   * the panel. They keep their element ids (so every listener and the
+   * in-flight `.linking` toggle still works) and became menu rows here; the
+   * first is a real <button>, the other four plain <div role="button">, which
+   * is why this rule has to neutralize button chrome rather than assume it.
+   */
+  .add-menu-item {
     display: flex;
     align-items: center;
     gap: 10px;
+    width: 100%;
+    padding: 9px 10px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
     cursor: pointer;
-    color: var(--muted);
-    font-size: 12.5px;
-    flex-shrink: 0;
-    transition: border-color 0.15s ease, color 0.15s ease;
   }
 
-  .drive-connect-row:hover {
-    border-color: var(--accent);
-    color: var(--accent);
+  .add-menu-item:hover {
+    background: var(--bg);
   }
 
-  /* While a link is being established (Picker open, or /drive/link in flight) - not a full disabled state, just visually damped so a second click doesn't fire a second picker/request. Also used by the Word-upload box (2026-08-23) while its own upload is in flight, same meaning. */
-  .drive-connect-row.linking {
+  /* A Google-only action for a password account (2026-08-24, local accounts
+     - see springchat3_local_accounts.md in project memory). Shown rather
+     than hidden, with the reason on hover: the entries are part of how this
+     panel explains what a space can hold, and silently dropping two of the
+     six would just look like a shorter menu. */
+  /* The one entry in this menu that destroys something (2026-08-24 - see
+     springchat3_space_deletion.md in project memory). Red only on hover:
+     a permanently red row in a list of six ordinary ones reads as an error
+     state rather than as an action. */
+  .add-menu-item.destructive:hover {
+    background: var(--danger-bg, #fdecec);
+    color: var(--danger, #b4232c);
+  }
+
+  .add-menu-item.unavailable {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .add-menu-item.unavailable:hover {
+    background: none;
+  }
+
+  /* Picker open, or a link/upload request in flight - damped so a second click can't fire a second round trip. */
+  .add-menu-item.linking {
     cursor: default;
-    opacity: 0.6;
+    opacity: 0.5;
   }
 
-  /* Drag-over feedback for the Word-upload box (2026-08-23) - same treatment .doc-dropzone.drag-over gets, since both are drop targets. */
-  .drive-connect-row.drag-over {
+  .add-menu-icon {
+    font-size: 15px;
+    flex-shrink: 0;
+    width: 18px;
+    text-align: center;
+  }
+
+  /*
+   * The active space's resources, inline under its row. Takes its natural
+   * height - .side-panel-body does the scrolling - and the rail down the left
+   * edge is what reads "these belong to the space above" rather than "more
+   * top-level panel content". Tinted rather than var(--border): it continues
+   * the accent edge of the .project-item.active card directly above, and a
+   * #e3e5e9 line that faint is invisible against the white panel.
+   *
+   * Also the single drop target for both file kinds, hence the transparent
+   * dashed border sitting ready to light up.
+   */
+  .space-resources {
+    margin: 0 12px 10px 20px;
+    padding-left: 8px;
+    border-left: 2px solid rgba(47, 111, 237, 0.35);
+    border-top: 2px dashed transparent;
+    border-right: 2px dashed transparent;
+    border-bottom: 2px dashed transparent;
+    border-radius: 0 10px 10px 0;
+    transition: background 0.15s ease;
+  }
+
+  /* A space row accepts a drop as well as its resources block (2026-08-25),
+     so a document can be filed into a space that is collapsed. */
+  .project-item.drag-over {
     border-color: var(--accent);
-    color: var(--accent);
     background: #eef3fe;
   }
 
-  .drive-connect-row .drive-icon {
-    font-size: 17px;
+  .drive-folder-card[draggable="true"] {
+    cursor: grab;
+  }
+
+  .drive-folder-card.dragging {
+    opacity: 0.45;
+  }
+
+  .space-resources.drag-over {
+    border-top-color: var(--accent);
+    border-right-color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: #eef3fe;
+  }
+
+  /* Cards carry 12px side margins for the panel's old layout; the rail already provides that inset here. */
+  .space-resources .drive-folder-card {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .resources-empty-hint {
+    padding: 14px 8px 16px;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+
+  /*
+   * + on a space row (2026-08-24) - opens that space's resources. Visible on
+   * the active row and on hover elsewhere, so it doesn't put a column of
+   * identical glyphs down the panel; distinguished from the "new space" +
+   * above it by sitting inside a card rather than on the section-title row.
+   */
+  /*
+   * Per-space disclosure (2026-08-24). Expansion is independent of selection,
+   * so this is the only control that collapses a space - clicking the row
+   * itself only ever expands, never collapses a different one.
+   */
+  .project-item-disclosure {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 9px;
+    line-height: 1;
+    padding: 4px 5px;
+    margin: -4px 0 -4px -5px;
+    border-radius: 6px;
     flex-shrink: 0;
+    transition: transform 0.15s ease;
+  }
+
+  .project-item-disclosure:hover {
+    color: var(--text);
+    background: var(--bg);
+  }
+
+  .project-item-disclosure.expanded {
+    transform: rotate(90deg);
+  }
+
+  .project-item-add {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    /* Holds the right edge now that the row no longer uses space-between. */
+    margin-left: auto;
+    padding-left: 4px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+
+  .project-item:hover .project-item-add,
+  .project-item.active .project-item-add {
+    opacity: 1;
+  }
+
+  .project-item-add-count {
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+
+  .project-item-add-btn {
+    margin: -6px -4px -6px 0;
+    font-size: 13px;
+  }
+
+  /*
+   * Attached-document chips above the composer. form#composer is a flex row,
+   * so this takes a full basis to sit on its own line above the textarea
+   * rather than becoming a third column beside it.
+   */
+  .attached-docs {
+    flex: 0 0 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    /* form#composer's own 8px gap already separates this from the textarea below. */
+    margin-bottom: 0;
+  }
+
+  .attached-docs[hidden] {
+    display: none;
+  }
+
+  .attached-doc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    padding: 4px 6px 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel);
+    font-size: 12px;
+  }
+
+  .attached-doc-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .attached-doc-chip-remove {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  .attached-doc-chip-remove:hover {
+    color: var(--text);
+    background: var(--bg);
   }
 
   .drive-folder-card {
@@ -1198,8 +1492,12 @@
   .drive-folder-header::-webkit-details-marker { display: none; }
 
   .drive-folder-header::before {
-    content: '▸';
-    font-size: 9px;
+    content: '';
+    width: 11px;
+    height: 11px;
+    background: currentColor;
+    -webkit-mask: var(--chevron-mask) center / contain no-repeat;
+    mask: var(--chevron-mask) center / contain no-repeat;
     color: var(--muted);
     flex-shrink: 0;
     transition: transform 0.15s ease;
@@ -1239,7 +1537,7 @@
     flex-shrink: 0;
   }
 
-  /* button, plus a (2026-08-23, buildWebPageCard's own ↗ "open in a new
+  /* button, plus a (2026-08-23, buildWebPageCard's own open-in-new-tab "open in a new
      tab" action - the only .drive-folder-actions entry that isn't a button,
      since a linked web page, unlike a Drive folder, has its own single URL
      worth opening directly - see springchat3_projects_panel.md in project
@@ -1268,7 +1566,7 @@
     cursor: not-allowed;
   }
 
-  /* Spins the ↻ glyph itself while a sync is in flight - reuses the same @keyframes spin the small loading spinner elsewhere on this page already defines. */
+  /* Spins the resync glyph itself while a sync is in flight - reuses the same @keyframes spin the small loading spinner elsewhere on this page already defines. */
   .drive-folder-actions button.spinning {
     display: inline-block;
     animation: spin 0.8s linear infinite;
@@ -1296,7 +1594,7 @@
    * -name/-meta/-actions already above. .webpage-card-header is a plain
    * <div>, not buildDriveFolderCard's <summary> - a linked web page has no
    * nested file list to expand/collapse the way a Drive folder does, so the
-   * ▸ chevron .drive-folder-header::before draws (meaningful only on an
+   * chevron chevron .drive-folder-header::before draws (meaningful only on an
    * actual <details> disclosure widget) is suppressed here rather than left
    * as a dead, non-functional affordance.
    */
@@ -1365,6 +1663,8 @@
 
   form#composer {
     display: flex;
+    /* wrap so #attached-docs' flex-basis:100% actually takes its own line above the textarea rather than squeezing it sideways. */
+    flex-wrap: wrap;
     gap: 8px;
     padding: 14px 4px 20px;
     border-top: 1px solid var(--border);
@@ -1642,6 +1942,40 @@
     color: var(--text);
   }
 
+  /* The admin allow-list checklist (2026-08-25) - scrolls rather than growing
+     the popup past the panel it is anchored inside. */
+  .allowed-models-list {
+    max-height: 168px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 2px;
+  }
+
+  .allowed-model-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+
+  .allowed-model-row:hover {
+    background: var(--bg);
+  }
+
+  .allowed-model-row input {
+    flex-shrink: 0;
+    margin: 0;
+  }
+
+  .allowed-models-empty {
+    font-size: 12.5px;
+    color: var(--muted);
+    padding: 6px 8px;
+  }
+
   .settings-hint {
     font-size: 10.5px;
     color: var(--muted);
@@ -1738,30 +2072,110 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+
+  /*
+   * Icons (2026-08-24, "prefer default icons" - the whole UI used to draw its
+   * icons as emoji). Emoji render at a different size, weight and colour on
+   * every platform and ignore the hover/disabled treatment the button around
+   * them already defines; a stroke SVG on currentColor inherits both. See
+   * ICON_PATHS in the script below for the set itself.
+   *
+   * Every host of an icon is switched to inline-flex so the SVG centres in
+   * whatever padding box it sits in - which is why [hidden] needs !important
+   * below: an inline-flex display would otherwise beat it and un-hide the
+   * preview pane's download/close buttons.
+   */
+  .icon {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  .doc-item-icon,
+  .drive-folder-icon,
+  .add-menu-icon,
+  .user-menu-item-icon,
+  .panel-icon-btn,
+  .doc-item-view,
+  .doc-item-remove,
+  .attached-doc-chip-remove,
+  .project-item-disclosure,
+  .trace-warn,
+  .drive-folder-actions button,
+  .drive-folder-actions a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  [hidden] {
+    display: none !important;
+  }
 </style>
 </head>
 <body>
 <div class="layout">
+  <!--
+    "Space" is the vocabulary as of 2026-08-24, in two steps: first the
+    labels a user reads, then (same day) everything that reaches disk or the
+    wire - the `spaceId` field on every request and response body, the
+    `?spaceId=` upload query param, and server-side `data/spaces/<id>/space.json`.
+    The JS below follows the wire, so it says spaceId/activeSpaceId too.
+
+    Still saying "project", deliberately, and NOT to be "fixed" piecemeal:
+    every DOM id and CSS class here (#projects-panel, #projects-list,
+    #project-resources, .project-item), the localStorage keys
+    (projectsPanelCollapsed/projectsPanelWidth), the REST route paths
+    (GET/POST /projects), and the Kotlin side's own names (ProjectStore.kt,
+    ProjectController.kt, the `project` package). Renaming the routes is an
+    API change and renaming the fields again is another data migration -
+    both are their own decision, not a tidy-up.
+  -->
   <aside id="projects-panel" class="side-panel side-panel--left">
+    <!--
+      No <h2> here (2026-08-24, "on the left panel you twice Spaces") - the
+      .panel-section-title row below already says Spaces, right next to the +
+      that acts on it. The header keeps only the collapse chevron, which
+      .side-panel--left .side-panel-header's own justify-content pins to the
+      trailing edge now that it is the sole child.
+    -->
     <div class="side-panel-header">
-      <h2>Projects</h2>
       <div class="side-panel-header-actions">
-        <button id="projects-toggle" type="button" class="panel-icon-btn" title="Collapse projects panel">‹</button>
+        <button id="projects-toggle" type="button" class="panel-icon-btn" title="Collapse spaces panel" data-icon="chevron-left"></button>
       </div>
     </div>
     <div class="side-panel-body">
       <div class="panel-section-title panel-section-title-row">
-        <span>Projects</span>
-        <button id="new-project-btn" type="button" class="panel-icon-btn panel-section-action-btn" title="New project">＋</button>
+        <span>Spaces</span>
+        <button id="new-project-btn" type="button" class="panel-icon-btn panel-section-action-btn" title="New space" data-icon="plus"></button>
       </div>
+      <!--
+        Each EXPANDED space gets its own .space-resources block, built by
+        renderProjects() directly after that space's row (2026-08-24,
+        "Do not automatically collapse a space, when another space is
+        selected"). Expansion is therefore a per-space set, independent of
+        which space is active - more than one can be open at a time, so a
+        single shared node re-parked under the active row no longer works and
+        each block renders its own space's resources.
+      -->
       <div id="projects-list">
-        <div id="projects-empty-hint" class="panel-empty-hint">No projects yet.</div>
+        <div id="projects-empty-hint" class="panel-empty-hint">No spaces yet.</div>
       </div>
       <div class="panel-divider"></div>
-      <div class="panel-section-title">Chat History</div>
-      <div id="chats-list">
-        <div id="chats-empty-hint" class="panel-empty-hint">No past chats yet.</div>
-      </div>
+      <!--
+        Chat History is a <details> of its own (2026-08-24) - it became
+        collapsable when the resource sections briefly lived in this panel
+        and could push it below the fold. Resources have since moved into
+        #resources-overlay so that pressure is gone, but the disclosure
+        stays: a space with many captured sessions still makes this list
+        long, and the closed state is already persisted under
+        collapsedPanelSections.
+      -->
+      <details class="panel-section" data-section="chathistory" open>
+        <summary class="panel-section-title panel-section-summary">Chat History</summary>
+        <div id="chats-list">
+          <div id="chats-empty-hint" class="panel-empty-hint">No past chats yet.</div>
+        </div>
+      </details>
     </div>
     <!--
       Signed-in-user account menu (2026-08-23, user's own request "Move sign
@@ -1785,16 +2199,17 @@
           <span id="user-firstname" class="user-firstname"></span>
         </button>
         <div id="user-menu" class="user-menu" hidden>
-          <button id="user-menu-settings-btn" type="button" class="user-menu-item"><span class="user-menu-item-icon">⚙</span>Settings</button>
+          <button id="user-menu-settings-btn" type="button" class="user-menu-item"><span class="user-menu-item-icon" data-icon="settings" data-icon-size="15"></span>Settings</button>
+          <button id="user-menu-signout-btn" type="button" class="user-menu-item"><span class="user-menu-item-icon" data-icon="external-link" data-icon-size="15"></span>Sign out</button>
         </div>
         <div id="settings-popup" class="settings-popup" hidden>
           <div class="settings-popup-header">
             <h3>Settings</h3>
-            <button id="settings-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
+            <button id="settings-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
           </div>
           <div class="settings-signed-in-as">Signed in as <span id="signed-in-email"></span></div>
           <div class="settings-section">
-            <div class="settings-section-title">Models</div>
+            <div class="settings-section-title">Your models</div>
             <div class="settings-model-row">
               <span>Tool selection</span>
               <select id="model-tool-selection" class="settings-model-select" data-role="tool-selection"></select>
@@ -1820,25 +2235,54 @@
             <div class="settings-model-row"><span>Embeddings</span><span id="model-embedding" class="settings-model-value">…</span></div>
             <div class="settings-hint">Embeddings can't be changed here - switching it would make already-uploaded documents unsearchable until they're re-uploaded.</div>
           </div>
-          <div class="settings-section settings-toggle-row">
-            <label for="tools-enabled-toggle">Tool use</label>
-            <label class="switch">
-              <input type="checkbox" id="tools-enabled-toggle" checked>
-              <span class="switch-track"></span>
-            </label>
+          <div class="settings-section">
+            <div class="settings-toggle-row">
+              <label for="tools-enabled-toggle">Tool use</label>
+              <label class="switch">
+                <input type="checkbox" id="tools-enabled-toggle" checked>
+                <span class="switch-track"></span>
+              </label>
+            </div>
+            <div class="settings-hint">The models and tool use above are yours alone - everyone else keeps their own.</div>
           </div>
           <!--
-            Separate from "Tool use" on purpose (2026-08-23): that one gates
-            whether the agent may look things up, this one whether it may
-            change your documents. Turning lookups off says nothing about
-            editing, and vice versa - see AppSettings.documentEditingEnabled.
+            Server policy, not preferences (2026-08-25). Shown to EVERYONE but
+            only operable by an address listed in springchat3.admin-emails,
+            and enforced again on the server (see Admins.requireAdmin) since
+            a disabled control is not a permission check.
+
+            It was hidden outright for the first hour of its life, and the
+            user immediately read the missing Document editing toggle as the
+            feature having been deleted. A control nobody can see is
+            indistinguishable from one that no longer exists - so it stays
+            visible, greyed, with a line saying who may change it.
           -->
-          <div class="settings-section settings-toggle-row">
-            <label for="doc-editing-toggle">Document editing</label>
-            <label class="switch">
-              <input type="checkbox" id="doc-editing-toggle">
-              <span class="switch-track"></span>
-            </label>
+          <div id="settings-admin-section">
+            <!--
+              Separate from "Tool use" on purpose (2026-08-23): that one gates
+              whether the agent may look things up, this one whether it may
+              change your documents. Turning lookups off says nothing about
+              editing, and vice versa - see AppSettings.documentEditingEnabled.
+              Global rather than personal (2026-08-25): the agent's edits land
+              in documents other people share.
+            -->
+            <div class="settings-section">
+              <div class="settings-section-title">Server policy</div>
+              <div class="settings-hint" id="settings-admin-hint" hidden>Only an administrator can change these settings.</div>
+              <div class="settings-toggle-row">
+                <label for="doc-editing-toggle">Document editing</label>
+                <label class="switch">
+                  <input type="checkbox" id="doc-editing-toggle">
+                  <span class="switch-track"></span>
+                </label>
+              </div>
+              <div class="settings-hint">Applies to everyone. A viewer in a shared space still can't edit, whatever this says.</div>
+            </div>
+            <div class="settings-section">
+              <div class="settings-section-title">Models anyone may pick</div>
+              <div id="allowed-models-list" class="allowed-models-list"></div>
+              <div class="settings-hint">Nothing ticked means every installed model is offered. Ticking some limits everyone's dropdowns to those - useful because they all run on one Ollama host. The configured defaults stay available either way.</div>
+            </div>
           </div>
           <div class="settings-section settings-signout-row">
             <button id="sign-out-btn" type="button" class="settings-signout-btn">Sign out</button>
@@ -1861,7 +2305,18 @@
       <div id="empty-state">Say hello to get started.</div>
     </div>
 
+    <!--
+      Attached-document chips (2026-08-24). Resources moved out of the left
+      panel into #resources-overlay, and document selection is still manual
+      (the user's own "I would keep the picking, at least for the moment"),
+      so the highlighted-card-in-a-panel that used to show what was selected
+      is now behind a modal. These chips are where that state lives instead:
+      one per activeDocumentIds entry, delete to drop it, rendered by
+      renderAttachedDocs() at the end of renderDocList() - every path that
+      changes activeDocumentIds already re-renders that list.
+    -->
     <form id="composer">
+      <div id="attached-docs" class="attached-docs" hidden></div>
       <textarea id="input" placeholder="Message SpringChat3…" rows="1" autofocus></textarea>
       <button id="send" type="submit">Send</button>
     </form>
@@ -1869,107 +2324,108 @@
 
   <div id="panel-resize-handle" class="panel-resize-handle" title="Drag to resize"></div>
 
+  <!--
+    Right pane is the document preview (2026-08-24, user's own choice of
+    option 2 when the resource sections moved into the left panel) - the
+    same #pdf-viewer-frame/-status/-title/-download elements that used to
+    live in a centered #pdf-viewer-overlay modal, docked here instead so a
+    document can stay open beside the conversation rather than covering it.
+    Collapsed by default (see previewPanelCollapsed below) since an empty
+    pane earns no width; openPdfViewer() expands it on demand.
+  -->
   <aside id="side-panel" class="side-panel">
     <div class="side-panel-header">
-      <h2>Project ressources</h2>
+      <h2 id="pdf-viewer-title">Preview</h2>
       <div class="side-panel-header-actions">
-        <button id="doc-upload-btn" type="button" class="panel-icon-btn" title="Upload a PDF">＋</button>
-        <button id="panel-toggle" type="button" class="panel-icon-btn" title="Collapse panel">›</button>
+        <a id="pdf-viewer-download" class="panel-icon-btn" target="_blank" rel="noopener" title="Open the original file" hidden data-icon="download"></a>
+        <button id="pdf-viewer-close-btn" type="button" class="panel-icon-btn" title="Close this document" hidden data-icon="x"></button>
+        <button id="panel-toggle" type="button" class="panel-icon-btn" title="Collapse preview panel" data-icon="chevron-right"></button>
       </div>
     </div>
     <div class="side-panel-body">
-      <!--
-        Shown instead of #side-panel-content whenever no project is active
-        (2026-08-23, user's own request "When no project in left panel,
-        right panel should be disabled" - see springchat3_projects_panel.md
-        in project memory) - every resource in this panel now belongs to a
-        project (see that same file's v7 entry), so there's nothing
-        meaningful to show or upload/link into without one selected.
-      -->
-      <div id="side-panel-disabled-hint" class="side-panel-disabled-hint" hidden>Select or create a project on the left to view and manage its resources.</div>
-      <div id="side-panel-content">
-        <!--
-          Every resource section is a collapsable <details> (2026-08-23,
-          user's own request "In the right panel. make the sections UPLOADED
-          DOCUMENTS, GOOGLE DRIVE, WORKING DOCUMENTS, WEB PAGES
-          collapsable"). data-section identifies each section in the
-          collapsedPanelSections localStorage entry that remembers which
-          ones the user left closed - see the script below.
-        -->
-        <details class="panel-section" data-section="documents" open>
-          <summary class="panel-section-title panel-section-summary">Uploaded Documents</summary>
-          <div id="doc-dropzone" class="doc-dropzone">
-            <div class="doc-empty-hint">No PDFs uploaded yet.<br>Drag one here, or click ＋ above.</div>
-          </div>
-        </details>
-        <input type="file" id="doc-file-input" accept="application/pdf" hidden>
-
-        <div class="panel-divider"></div>
-        <details class="panel-section" data-section="drive" open>
-          <summary class="panel-section-title panel-section-summary">Google Drive</summary>
-          <div id="drive-link-row" class="drive-connect-row" title="Link a Google Drive folder">
-            <span class="drive-icon">🔗</span>
-            <span>Link a Google Drive folder</span>
-          </div>
-          <div id="drive-folder-list"></div>
-        </details>
-
-        <div class="panel-divider"></div>
-        <details class="panel-section" data-section="workingdocs" open>
-          <summary class="panel-section-title panel-section-summary">Working Documents</summary>
-          <div id="workingdoc-link-row" class="drive-connect-row" title="Link a Google Doc">
-            <span class="drive-icon">🔗</span>
-            <span>Link a Google Doc</span>
-          </div>
-          <!--
-            Second box in this section (2026-08-23, user's own request "under
-            Working Documents, below the box to link Google Docs, add a 2nd
-            box to upload MS Word document") - a plain .docx upload, no
-            Picker/OAuth involved, so it's a `drive-connect-row` purely for
-            the shared dashed-box look, not because anything Drive-related
-            happens behind it. Also a drop target, same as the Uploaded
-            Documents dropzone above. Backed by WordDocumentController.kt
-            (POST /word-documents); the uploaded file is listed in this same
-            section's list below, alongside the linked Google Docs.
-          -->
-          <div id="word-upload-row" class="drive-connect-row" title="Upload a Word document">
-            <span class="drive-icon">📄</span>
-            <span>Upload a Word document</span>
-          </div>
-          <input type="file" id="word-file-input" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
-          <div id="workingdoc-list"></div>
-        </details>
-
-        <!--
-          "Web Pages" section (2026-08-23, user's own request "add new
-          section 'WEB PAGES'... similar as 'GOOGLE DRIVE'... Button is Link
-          a Web Page. When clicked a popup opens and the user can enter an
-          url" - see springchat3_projects_panel.md in project memory).
-          Same section shape as Google Drive/Working Documents above
-          (title + a connect-row that opens a linking flow + a list below
-          it) - the link flow itself is a plain URL-entry popup
-          (#link-webpage-overlay below), not a Picker, since there's no
-          Google account/OAuth involved in fetching an arbitrary public URL.
-        -->
-        <div class="panel-divider"></div>
-        <details class="panel-section" data-section="webpages" open>
-          <summary class="panel-section-title panel-section-summary">Web Pages</summary>
-          <div id="webpage-link-row" class="drive-connect-row" title="Link a web page">
-            <span class="drive-icon">🔗</span>
-            <span>Link a Web Page</span>
-          </div>
-          <div id="webpage-list"></div>
-        </details>
+      <div class="pdf-viewer-body">
+        <iframe id="pdf-viewer-frame" class="pdf-viewer-frame" title="Document preview" hidden></iframe>
+        <div id="pdf-viewer-status" class="pdf-viewer-status"></div>
       </div>
     </div>
   </aside>
+</div>
+
+<!--
+  "Add to this space" (2026-08-24, the user's own original proposal, returned
+  to after the whole list briefly lived in a modal: "Add a + to the Space.
+  clicking on the + opens a popup with the options"). The five actions live
+  here; the resource LIST itself is back inline in the left panel, under the
+  active space - see #project-resources above.
+
+  A centered .modal-overlay rather than a dropdown anchored to the space
+  row's +, for the reason #new-project-overlay's own comment already records:
+  the + sits inside .side-panel-body, which clips on two ancestors at once
+  (.side-panel's overflow:hidden and the body's own overflow-y:auto), and the
+  panel can be dragged as narrow as 220px. .side-panel.overlay-open solves
+  that for the account menu because that one lives in the footer, outside the
+  scrolling body - it would not help here.
+
+  The five actions KEEP the element ids they had as dashed connect-rows
+  (#doc-upload-btn, #drive-link-row, #workingdoc-link-row, #word-upload-row,
+  #webpage-link-row). Only their CSS has ever changed. That preserves every
+  existing listener AND the in-flight `.linking` class each gets toggled
+  during a Picker round trip.
+-->
+<div id="add-resource-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog add-resource-dialog">
+    <div class="modal-header">
+      <h3 id="add-resource-title">Add to this space</h3>
+      <button id="add-resource-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
+    </div>
+    <div class="add-menu">
+      <button id="doc-upload-btn" type="button" class="add-menu-item"><span class="add-menu-icon" data-icon="upload"></span>Upload PDFs</button>
+      <div id="folder-upload-row" class="add-menu-item" role="button" tabindex="0"><span class="add-menu-icon" data-icon="folder"></span>Upload a folder of PDFs</div>
+      <div id="drive-link-row" class="add-menu-item" role="button" tabindex="0"><span class="add-menu-icon" data-icon="folder"></span>Link a Google Drive folder</div>
+      <div id="workingdoc-link-row" class="add-menu-item" role="button" tabindex="0"><span class="add-menu-icon" data-icon="link"></span>Link a Google Doc</div>
+      <div id="word-upload-row" class="add-menu-item" role="button" tabindex="0"><span class="add-menu-icon" data-icon="file-pen"></span>Upload Word documents</div>
+      <div id="webpage-link-row" class="add-menu-item" role="button" tabindex="0"><span class="add-menu-icon" data-icon="globe"></span>Link a web page</div>
+      <!--
+        Sharing is an action on the space rather than a resource to add, but
+        this popup is already the space's own action menu and is where an
+        owner would look for it. Hidden entirely for a space you do not own -
+        POST /projects/{id}/members is owner-only, so offering it would only
+        produce a 403.
+      -->
+      <!--
+        Rename sits with the other space actions rather than the five add
+        actions (2026-08-25). Unlike Share and Delete it is NOT hidden by
+        role: renaming needs write access, and this page has no client-side
+        copy of SpaceAccess.roleOf - only isOwnedByMe - so a viewer sees it
+        and the server refuses with a 403 the modal shows, exactly as the
+        five add actions above already behave for a viewer. A second,
+        partial copy of the role rules in the browser would be the thing
+        most likely to drift from the real one.
+      -->
+      <div id="rename-space-row" class="add-menu-item" role="button" tabindex="0"><span class="add-menu-icon" data-icon="pencil"></span>Rename this space</div>
+      <div id="share-row" class="add-menu-item" role="button" tabindex="0" hidden><span class="add-menu-icon" data-icon="plus"></span>Share this space</div>
+      <div id="delete-space-row" class="add-menu-item destructive" role="button" tabindex="0" hidden><span class="add-menu-icon" data-icon="x"></span>Delete this space</div>
+    </div>
+    <input type="file" id="doc-file-input" accept="application/pdf" multiple hidden>
+    <!--
+      webkitdirectory is what turns the picker into a folder chooser (2026-08-24,
+      "can you support selecting a folder, all pdfs shall be uploaded"). It has
+      to be its own input: one <input> cannot offer both a file and a folder
+      dialog, which is why the Add menu has two entries rather than one. The
+      prefix is unstandardised but universally implemented, including in Safari.
+      It recurses into subfolders by default, and reports every file it finds,
+      so the PDF filtering happens in JS - `accept` is not honoured here.
+    -->
+    <input type="file" id="folder-file-input" webkitdirectory hidden>
+    <input type="file" id="word-file-input" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
+  </div>
 </div>
 
 <div id="link-webpage-overlay" class="modal-overlay" hidden>
   <div class="modal-dialog">
     <div class="modal-header">
       <h3>Link a Web Page</h3>
-      <button id="link-webpage-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
+      <button id="link-webpage-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
     </div>
     <form id="link-webpage-form">
       <label class="modal-field">
@@ -1985,16 +2441,112 @@
   </div>
 </div>
 
+<!--
+  Blocks everything until a local account replaces the password its admin
+  set (2026-08-24 - see springchat3_local_accounts.md in project memory).
+  Deliberately has no close button and no cancel: SessionGateWebFilter
+  refuses every other endpoint for such a session anyway, so a dismissable
+  version of this would just leave the app looking broken instead of
+  explaining itself.
+-->
+<div id="delete-space-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3>Delete this space?</h3>
+      <button id="delete-space-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
+    </div>
+    <!--
+      One line, and the Drive sentence is not decoration: deleting removes
+      this app's own copy and its bookkeeping, and someone about to delete a
+      space full of synced files deserves to know their Drive is untouched.
+    -->
+    <p id="delete-space-text" class="settings-hint"></p>
+    <div id="delete-space-error" class="settings-error" hidden></div>
+    <div class="modal-actions">
+      <button type="button" id="delete-space-cancel-btn" class="modal-btn-secondary">Cancel</button>
+      <button type="button" id="delete-space-confirm-btn" class="modal-btn-primary">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="share-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3 id="share-title">Share this space</h3>
+      <button id="share-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
+    </div>
+    <div class="modal-field">
+      <span class="modal-field-label">Shared with</span>
+      <div id="share-members"></div>
+    </div>
+    <div class="share-add-row">
+      <select id="share-email" aria-label="Person to share with"></select>
+      <select id="share-role" aria-label="Their role">
+        <option value="EDITOR">Can edit</option>
+        <option value="VIEWER">Can view</option>
+      </select>
+      <button type="button" id="share-add-btn" class="modal-btn-primary">Add</button>
+    </div>
+    <div id="share-error" class="settings-error" hidden></div>
+    <div class="modal-actions">
+      <button type="button" id="share-done-btn" class="modal-btn-secondary">Done</button>
+    </div>
+  </div>
+</div>
+
+<div id="password-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3>Choose your password</h3>
+    </div>
+    <form id="password-form">
+      <p class="settings-hint">This account was set up with a password someone else chose. Pick your own to continue.</p>
+      <label class="modal-field">
+        <span class="modal-field-label">Current password</span>
+        <input type="password" id="password-current" autocomplete="current-password" required>
+      </label>
+      <label class="modal-field">
+        <span class="modal-field-label">New password</span>
+        <input type="password" id="password-new" autocomplete="new-password" minlength="10" required>
+      </label>
+      <div id="password-error" class="settings-error" hidden></div>
+      <div class="modal-actions">
+        <button type="submit" id="password-submit-btn" class="modal-btn-primary">Save password</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="rename-space-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3>Rename Space</h3>
+      <button id="rename-space-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
+    </div>
+    <form id="rename-space-form">
+      <label class="modal-field">
+        <span class="modal-field-label">Name</span>
+        <input type="text" id="rename-space-name" required maxlength="80" placeholder="Space name">
+      </label>
+      <div id="rename-space-error" class="settings-error" hidden></div>
+      <div class="modal-actions">
+        <button type="button" id="rename-space-cancel-btn" class="modal-btn-secondary">Cancel</button>
+        <button type="submit" id="rename-space-submit-btn" class="modal-btn-primary">Rename</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="new-project-overlay" class="modal-overlay" hidden>
   <div class="modal-dialog">
     <div class="modal-header">
-      <h3>New Project</h3>
-      <button id="new-project-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
+      <h3>New Space</h3>
+      <button id="new-project-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
     </div>
     <form id="new-project-form">
       <label class="modal-field">
         <span class="modal-field-label">Name</span>
-        <input type="text" id="new-project-name" required maxlength="80" placeholder="Project name">
+        <input type="text" id="new-project-name" required maxlength="80" placeholder="Space name">
       </label>
       <label class="modal-field">
         <span class="modal-field-label">Description</span>
@@ -2009,23 +2561,87 @@
   </div>
 </div>
 
-<div id="pdf-viewer-overlay" class="modal-overlay" hidden>
-  <div class="modal-dialog pdf-viewer-dialog">
-    <div class="modal-header pdf-viewer-header">
-      <span id="pdf-viewer-title" class="pdf-viewer-title"></span>
-      <span class="pdf-viewer-actions">
-        <a id="pdf-viewer-download" class="panel-icon-btn" target="_blank" rel="noopener" title="Open the original file">↓</a>
-        <button id="pdf-viewer-close-btn" type="button" class="panel-icon-btn" title="Close">×</button>
-      </span>
-    </div>
-    <div class="pdf-viewer-body">
-      <iframe id="pdf-viewer-frame" class="pdf-viewer-frame" title="Document preview" hidden></iframe>
-      <div id="pdf-viewer-status" class="pdf-viewer-status"></div>
-    </div>
-  </div>
-</div>
-
 <script>
+  /*
+   * The icon set (2026-08-24). 24x24 stroke paths in the Lucide/Feather
+   * idiom, drawn with fill="none" stroke="currentColor" so an icon takes the
+   * colour of whatever it sits in - a .doc-item-view goes grey, then dark on
+   * the row's hover, with no per-icon rule. The pencil buildWorkingDocCard
+   * already drew inline for "open in Google Docs" is the precedent this
+   * generalises; every emoji glyph in the UI now comes from here.
+   *
+   * Names are the Lucide names, so a missing icon is easy to look up and add.
+   */
+  const ICON_PATHS = {
+    'file-text':
+      '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+      '<polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>' +
+      '<line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/>',
+    'file-pen':
+      '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4"/>' +
+      '<polyline points="14 2 14 8 20 8"/>' +
+      '<path d="M18.4 12.6a2 2 0 1 1 2.83 2.83L17 19.66 13.5 21l1.34-3.5z"/>',
+    folder:
+      '<path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.6.8L11.8 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2z"/>',
+    link:
+      '<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/>' +
+      '<line x1="8" y1="12" x2="16" y2="12"/>',
+    globe:
+      '<circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/>' +
+      '<path d="M12 3a14 14 0 0 1 3.5 9 14 14 0 0 1-3.5 9 14 14 0 0 1-3.5-9A14 14 0 0 1 12 3z"/>',
+    upload:
+      '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+      '<polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+    download:
+      '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+      '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+    search:
+      '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/>',
+    // A plain pencil, distinct from file-pen: renaming a space edits a label, not a document.
+    pencil:
+      '<path d="M12 20h9"/>' +
+      '<path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    'external-link':
+      '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
+      '<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+    'refresh-cw':
+      '<path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><polyline points="21 3 21 8 16 8"/>' +
+      '<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><polyline points="3 21 3 16 8 16"/>',
+    pencil:
+      '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>',
+    x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+    plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    settings:
+      '<circle cx="12" cy="12" r="3"/>' +
+      '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+    'alert-triangle':
+      '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' +
+      '<line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+    'chevron-right': '<polyline points="9 18 15 12 9 6"/>',
+    'chevron-left': '<polyline points="15 18 9 12 15 6"/>'
+  };
+
+  function iconSvg(name, size) {
+    const px = size || 16;
+    return '<svg class="icon" width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" ' +
+      'aria-hidden="true" focusable="false">' + (ICON_PATHS[name] || '') + '</svg>';
+  }
+
+  // Replaces an element's content outright, so it is also how an icon is
+  // swapped in place (the two panel-collapse chevrons do that on every toggle).
+  function setIcon(el, name, size) {
+    el.innerHTML = iconSvg(name, size);
+    return el;
+  }
+
+  // The static markup carries data-icon instead of a literal <svg>, which
+  // keeps the body readable and the set in one place. This script tag sits
+  // after the whole body, so the elements are already there.
+  document.querySelectorAll('[data-icon]').forEach((el) => {
+    setIcon(el, el.dataset.icon, Number(el.dataset.iconSize) || 16);
+  });
+
   const messagesEl = document.getElementById('messages');
   const emptyStateEl = document.getElementById('empty-state');
   const formEl = document.getElementById('composer');
@@ -2053,15 +2669,50 @@
   const newProjectErrorEl = document.getElementById('new-project-error');
   const docUploadBtnEl = document.getElementById('doc-upload-btn');
   const docFileInputEl = document.getElementById('doc-file-input');
-  const docDropzoneEl = document.getElementById('doc-dropzone');
-  const sidePanelContentEl = document.getElementById('side-panel-content');
-  const sidePanelDisabledHintEl = document.getElementById('side-panel-disabled-hint');
+  const folderUploadRowEl = document.getElementById('folder-upload-row');
+  const folderFileInputEl = document.getElementById('folder-file-input');
+  const addResourceOverlayEl = document.getElementById('add-resource-overlay');
+  const addResourceTitleEl = document.getElementById('add-resource-title');
+  const addResourceCloseBtnEl = document.getElementById('add-resource-close-btn');
+  const attachedDocsEl = document.getElementById('attached-docs');
   const versionLabelEl = document.getElementById('version-label');
   const userMenuBtnEl = document.getElementById('user-menu-btn');
   const userAvatarEl = document.getElementById('user-avatar');
   const userFirstnameEl = document.getElementById('user-firstname');
   const userMenuEl = document.getElementById('user-menu');
   const userMenuSettingsBtnEl = document.getElementById('user-menu-settings-btn');
+  const userMenuSignoutBtnEl = document.getElementById('user-menu-signout-btn');
+  const shareRowEl = document.getElementById('share-row');
+  const deleteSpaceRowEl = document.getElementById('delete-space-row');
+  const renameSpaceRowEl = document.getElementById('rename-space-row');
+  const renameSpaceOverlayEl = document.getElementById('rename-space-overlay');
+  const renameSpaceFormEl = document.getElementById('rename-space-form');
+  const renameSpaceNameEl = document.getElementById('rename-space-name');
+  const renameSpaceErrorEl = document.getElementById('rename-space-error');
+  const renameSpaceCloseBtnEl = document.getElementById('rename-space-close-btn');
+  const renameSpaceCancelBtnEl = document.getElementById('rename-space-cancel-btn');
+  const renameSpaceSubmitBtnEl = document.getElementById('rename-space-submit-btn');
+  const deleteSpaceOverlayEl = document.getElementById('delete-space-overlay');
+  const deleteSpaceTextEl = document.getElementById('delete-space-text');
+  const deleteSpaceErrorEl = document.getElementById('delete-space-error');
+  const deleteSpaceConfirmBtnEl = document.getElementById('delete-space-confirm-btn');
+  const deleteSpaceCancelBtnEl = document.getElementById('delete-space-cancel-btn');
+  const deleteSpaceCloseBtnEl = document.getElementById('delete-space-close-btn');
+  const shareOverlayEl = document.getElementById('share-overlay');
+  const shareTitleEl = document.getElementById('share-title');
+  const shareMembersEl = document.getElementById('share-members');
+  const shareEmailEl = document.getElementById('share-email');
+  const shareRoleEl = document.getElementById('share-role');
+  const shareAddBtnEl = document.getElementById('share-add-btn');
+  const shareErrorEl = document.getElementById('share-error');
+  const shareCloseBtnEl = document.getElementById('share-close-btn');
+  const shareDoneBtnEl = document.getElementById('share-done-btn');
+  const passwordOverlayEl = document.getElementById('password-overlay');
+  const passwordFormEl = document.getElementById('password-form');
+  const passwordCurrentEl = document.getElementById('password-current');
+  const passwordNewEl = document.getElementById('password-new');
+  const passwordErrorEl = document.getElementById('password-error');
+  const passwordSubmitBtnEl = document.getElementById('password-submit-btn');
   const signedInEmailEl = document.getElementById('signed-in-email');
   const settingsPopupEl = document.getElementById('settings-popup');
   const settingsCloseBtnEl = document.getElementById('settings-close-btn');
@@ -2072,16 +2723,16 @@
   const modelDocStrategyEl = document.getElementById('model-doc-strategy');
   const modelDocEditEl = document.getElementById('model-doc-edit');
   const docEditingToggleEl = document.getElementById('doc-editing-toggle');
+  const settingsAdminSectionEl = document.getElementById('settings-admin-section');
+  const settingsAdminHintEl = document.getElementById('settings-admin-hint');
+  const allowedModelsListEl = document.getElementById('allowed-models-list');
   const modelEmbeddingEl = document.getElementById('model-embedding');
   const signOutBtnEl = document.getElementById('sign-out-btn');
   const driveLinkRowEl = document.getElementById('drive-link-row');
-  const driveFolderListEl = document.getElementById('drive-folder-list');
   const workingDocLinkRowEl = document.getElementById('workingdoc-link-row');
   const wordUploadRowEl = document.getElementById('word-upload-row');
   const wordFileInputEl = document.getElementById('word-file-input');
-  const workingDocListEl = document.getElementById('workingdoc-list');
   const webPageLinkRowEl = document.getElementById('webpage-link-row');
-  const webPageListEl = document.getElementById('webpage-list');
   const linkWebPageOverlayEl = document.getElementById('link-webpage-overlay');
   const linkWebPageFormEl = document.getElementById('link-webpage-form');
   const linkWebPageUrlEl = document.getElementById('link-webpage-url');
@@ -2089,7 +2740,6 @@
   const linkWebPageCancelBtnEl = document.getElementById('link-webpage-cancel-btn');
   const linkWebPageSubmitBtnEl = document.getElementById('link-webpage-submit-btn');
   const linkWebPageErrorEl = document.getElementById('link-webpage-error');
-  const pdfViewerOverlayEl = document.getElementById('pdf-viewer-overlay');
   const pdfViewerTitleEl = document.getElementById('pdf-viewer-title');
   const pdfViewerDownloadEl = document.getElementById('pdf-viewer-download');
   const pdfViewerCloseBtnEl = document.getElementById('pdf-viewer-close-btn');
@@ -2144,6 +2794,17 @@
   // get_user_location takes no arguments, so its tool-input payload is
   // empty/"{}" rather than a place name worth displaying - see
   // ToolCallProgressBridge.kt for where this string comes from.
+  /*
+   * The "show me this document" affordance on every resource card and on the
+   * files nested inside a Drive folder card (2026-08-24, user's own request
+   * to change it - was an eye). A magnifying glass is the conventional
+   * inspect/preview icon and reads as "look inside this" rather than
+   * "visibility of this", which is what an eye more usually means in a UI (and
+   * what it means where this app uses it nowhere else). Named once so the
+   * three card builders that draw it cannot drift apart.
+   */
+  const PREVIEW_ICON = 'search';
+
   function toolInputLabel(input) {
     return input && input !== '{}' && input !== 'null' ? input : '';
   }
@@ -2299,7 +2960,8 @@
     }
     if (anyFailed) {
       const warn = document.createElement('span');
-      warn.textContent = '⚠';
+      warn.className = 'trace-warn';
+      setIcon(warn, 'alert-triangle', 13);
       summary.appendChild(warn);
     }
     details.appendChild(summary);
@@ -2703,13 +3365,13 @@
   // fills in incrementally instead of the browser waiting for one final
   // response. A chunk boundary can land mid-object, hence the line buffer.
   //
-  // sessionId is always sent (unlike documentIds/projectId, which are
+  // sessionId is always sent (unlike documentIds/spaceId, which are
   // omitted when empty/absent) since activeSessionId always holds a value
   // once the page has loaded (2026-08-23, see that variable's own doc
   // comment) - ChatController passes it straight through to
   // ChatHistoryStore.recordTurn so this turn lands in the right session
   // file.
-  async function streamChat(live, message, location, documentIds, projectId, sessionId) {
+  async function streamChat(live, message, location, documentIds, spaceId, sessionId) {
     const res = await fetch('/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...csrfHeader() },
@@ -2718,7 +3380,7 @@
         sessionId,
         ...(location ?? {}),
         ...(documentIds && documentIds.length ? { documentIds } : {}),
-        ...(projectId ? { projectId } : {}),
+        ...(spaceId ? { spaceId } : {}),
       }),
     });
 
@@ -2823,6 +3485,12 @@
   // carry the flag on until it finishes.
   let wordDocuments = [];
   let wordUploading = null;
+  // Non-null while a .docx batch runs: { done, total, current } - the same
+  // shape and the same rendering as pdfBatch (2026-08-25, user's own request
+  // "springchat3 shall support to select multiple word documents for
+  // uploading"). wordUploading stays for the single-file case, which still
+  // shows a plain pending card rather than a counter.
+  let wordBatch = null;
 
   function formatCharCount(n) {
     return (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)) + ' chars';
@@ -2835,16 +3503,16 @@
   // see springchat3_projects_panel.md in project memory). renderDocList/
   // renderDriveSection/renderWorkingDocsSection below all filter their
   // source list through this one helper rather than each re-implementing the
-  // same comparison - `|| null` normalizes an absent/undefined `projectId`
+  // same comparison - `|| null` normalizes an absent/undefined `spaceId`
   // (a document/folder/Doc ingested with no active project, or a
   // pre-2026-08-23 one from before this field existed) to `null`, matching
-  // `activeProjectId`'s own "nothing selected" value. `activeProjectId`
+  // `activeSpaceId`'s own "nothing selected" value. `activeSpaceId`
   // itself is declared further down in this script (see that variable's own
   // doc comment) - safe to forward-reference here since this function is
   // only ever called later, after the whole script (and that declaration)
   // has already run, same as `uploadDocument`'s own forward reference to it.
-  function matchesActiveProject(itemProjectId) {
-    return (itemProjectId || null) === activeProjectId;
+  function matchesActiveSpace(itemProjectId) {
+    return (itemProjectId || null) === activeSpaceId;
   }
 
   // Bug fix (2026-08-23, user's own report "Document search: enlist
@@ -2853,38 +3521,117 @@
   // row could list a document the user could no longer even see selected).
   // Root cause: activeDocumentIds is one flat Set shared across every
   // project (see its own doc comment below) and was never pruned when
-  // activeProjectId changed - a document selected while an earlier project
+  // activeSpaceId changed - a document selected while an earlier project
   // was active stayed in the Set after switching to a different project,
   // invisibly, since renderDocList/renderDriveSection/
   // renderWorkingDocsSection/renderWebPagesSection all filter what's
-  // *rendered* through matchesActiveProject, but nothing filtered the
+  // *rendered* through matchesActiveSpace, but nothing filtered the
   // underlying Set itself. The next message sent from the new project would
   // then still include that stale id in documentIds, and ChatAgent.answer's
   // retrieval.filenames (correctly, on the backend's own terms) named
   // exactly what it was given - the defect was upstream of the backend
   // entirely.
   //
-  // Called from every place activeProjectId itself changes (same four call
+  // Called from every place activeSpaceId itself changes (same four call
   // sites renderActiveThread() was added to) - drops any selected id whose
   // owning document/Drive file/Working Document/Web Page doesn't belong to
-  // the now-active project, using the exact same per-source matchesActiveProject
+  // the now-active project, using the exact same per-source matchesActiveSpace
   // checks the four render functions already use, so "still selected" and
   // "still visible" can never drift apart again.
-  function pruneActiveDocumentSelection() {
-    const visible = new Set([
-      ...documents.filter((doc) => matchesActiveProject(doc.projectId)).map((doc) => doc.documentId),
+  //
+  // Enumerating that is now shared with the composer chips (2026-08-24),
+  // which need the same "selectable in the active space" set plus a label
+  // per id - hence visibleResources() rather than two parallel copies of
+  // these five filters that could drift.
+  //
+  // Placeholder entries (an optimistic "syncing…" card, documentId null -
+  // see linkDriveFolder/linkGoogleDoc) are filtered out: they're not real
+  // documents yet, can't be selected, and would otherwise render as a
+  // nameless chip.
+  function visibleResources() {
+    return [
+      ...documents
+        .filter((doc) => matchesActiveSpace(doc.spaceId))
+        .map((doc) => ({ documentId: doc.documentId, label: doc.filename })),
       ...driveStatus.folders
-        .filter((f) => matchesActiveProject(f.projectId))
-        .flatMap((f) => f.files.map((file) => file.documentId)),
+        .filter((f) => matchesActiveSpace(f.spaceId))
+        .flatMap((f) => f.files.map((file) => ({ documentId: file.documentId, label: file.filename }))),
       ...driveStatus.workingDocuments
-        .filter((d) => matchesActiveProject(d.projectId))
-        .map((d) => d.documentId),
-      ...webPages.filter((p) => matchesActiveProject(p.projectId)).map((p) => p.documentId),
-    ]);
+        .filter((d) => matchesActiveSpace(d.spaceId))
+        .map((d) => ({ documentId: d.documentId, label: d.filename })),
+      // wordDocuments was missing from the pre-2026-08-24 version of this
+      // enumeration - an uploaded .docx renders in the same list as a linked
+      // Google Doc but is held in its own array, so selecting one and then
+      // switching space dropped it from activeDocumentIds even on the way
+      // back to its own space. Fixed by including it here, which now also
+      // means it gets a chip like everything else.
+      ...wordDocuments
+        .filter((d) => matchesActiveSpace(d.spaceId))
+        .map((d) => ({ documentId: d.documentId, label: d.filename })),
+      ...webPages
+        .filter((p) => matchesActiveSpace(p.spaceId))
+        .map((p) => ({ documentId: p.documentId, label: p.title })),
+    ].filter((r) => r.documentId);
+  }
+
+  function pruneActiveDocumentSelection() {
+    const visible = new Set(visibleResources().map((r) => r.documentId));
     for (const id of Array.from(activeDocumentIds)) {
       if (!visible.has(id)) activeDocumentIds.delete(id);
     }
   }
+
+  // One chip per selected document, above the composer. This is the only
+  // place the selection is visible now that the resource cards live behind
+  // #resources-overlay - without it you'd have to open a modal to find out
+  // what you're about to send.
+  function renderAttachedDocs() {
+    attachedDocsEl.innerHTML = '';
+    const byId = new Map(visibleResources().map((r) => [r.documentId, r.label]));
+    const selected = Array.from(activeDocumentIds).filter((id) => byId.has(id));
+    attachedDocsEl.hidden = selected.length === 0;
+    for (const id of selected) {
+      const chip = document.createElement('span');
+      chip.className = 'attached-doc-chip';
+      chip.title = byId.get(id);
+      const name = document.createElement('span');
+      name.className = 'attached-doc-chip-name';
+      name.textContent = byId.get(id);
+      chip.appendChild(name);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'attached-doc-chip-remove';
+      remove.title = 'Do not send this document';
+      setIcon(remove, 'x', 13);
+      // Detaches only - the document itself stays in the space. Re-renders
+      // the four lists so the card behind the modal loses its .active
+      // highlight too.
+      remove.addEventListener('click', () => {
+        activeDocumentIds.delete(id);
+        renderDocList();
+        renderDriveSection();
+        renderWorkingDocsSection();
+        renderWebPagesSection();
+      });
+      chip.appendChild(remove);
+      attachedDocsEl.appendChild(chip);
+    }
+  }
+
+  // Counts what the modal would render for [spaceId] - shown next to each
+  // space row's + so a space isn't opaque from the outside now that its
+  // contents are behind a modal. Counts a linked Drive folder as one thing,
+  // not as its file count: that matches what you see in the list.
+  function resourceCountFor(spaceId) {
+    const mine = (item) => (item.spaceId || null) === spaceId;
+    return documents.filter(mine).length +
+      driveStatus.folders.filter(mine).length +
+      driveStatus.workingDocuments.filter(mine).length +
+      wordDocuments.filter(mine).length +
+      webPages.filter(mine).length;
+  }
+
+
 
   // [badge] (e.g. "DRIVE", see buildDriveDocItem below/springchat3_google_drive.md
   // in project memory) is optional - a plain uploaded document renders with
@@ -2895,7 +3642,7 @@
   //
   // (2026-08-23: this used to take three more params - [viewUrl] for a
   // linked web page, then [onSync]/[driveDocUrl] for a linked Google Doc's
-  // ↻ resync and "open in Google Docs" actions. All three went away as
+  // resync resync and "open in Google Docs" actions. All three went away as
   // those two features moved to their own .drive-folder-card-styled cards -
   // buildWebPageCard, then buildWorkingDocCard - each of which builds its
   // own action icons rather than going through this flat row at all. What's
@@ -2908,7 +3655,7 @@
 
     const icon = document.createElement('span');
     icon.className = 'doc-item-icon';
-    icon.textContent = '📄';
+    setIcon(icon, 'file-text', 15);
     item.appendChild(icon);
 
     const info = document.createElement('span');
@@ -2943,16 +3690,16 @@
     // document stored after this feature existed) or 404s (predates it) -
     // either way it's just a normal link the browser resolves on click, no
     // JS-side success/failure handling needed here.
-    // "View in the app" (2026-08-23) - kept alongside the ↗ new-tab link
+    // "View in the app" (2026-08-23) - kept alongside the open-in-new-tab new-tab link
     // rather than replacing it. For a PDF the two show the same bytes, which
-    // is redundant on purpose: the eye then sits in the same place on every
-    // kind of document row, including the Word cards below where ↗ means
+    // is redundant on purpose: the preview icon then sits in the same place on
+    // every kind of document row, including the Word cards below where open-in-new-tab means
     // "download the .docx" instead.
     const previewBtn = document.createElement('button');
     previewBtn.type = 'button';
     previewBtn.className = 'doc-item-view';
     previewBtn.title = 'View in the app';
-    previewBtn.textContent = '👁';
+    setIcon(previewBtn, PREVIEW_ICON, 14);
     previewBtn.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the item active/inactive
       openPdfViewer(doc.documentId, doc.filename);
@@ -2965,7 +3712,7 @@
     viewLink.target = '_blank';
     viewLink.rel = 'noopener';
     viewLink.title = 'Open PDF in a new tab';
-    viewLink.textContent = '↗';
+    setIcon(viewLink, 'external-link', 14);
     viewLink.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the item active/inactive
     });
@@ -2974,7 +3721,7 @@
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'doc-item-remove';
-    removeBtn.textContent = '×';
+    setIcon(removeBtn, 'x', 14);
     removeBtn.title = 'Delete this document';
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the item active/inactive
@@ -3015,20 +3762,173 @@
     return item;
   }
 
-  function renderDocList() {
-    docDropzoneEl.innerHTML = '';
-    const visible = documents.filter((doc) => matchesActiveProject(doc.projectId));
-    if (!visible.length) {
-      const hint = document.createElement('div');
-      hint.className = 'doc-empty-hint';
-      hint.innerHTML = 'No PDFs uploaded yet.<br>Drag one here, or click ＋ above.';
-      docDropzoneEl.appendChild(hint);
-    } else {
-      for (const doc of visible) {
-        docDropzoneEl.appendChild(buildDocItem(doc));
-      }
-    }
+  /*
+   * An uploaded PDF as a card (2026-08-24). Every other resource kind already
+   * rendered as a .drive-folder-card - Web Pages moved to it in v13, Working
+   * Documents alongside - and once the four section headers went away, a flat
+   * list mixing card-shaped resources with buildDocItem's compact flat rows
+   * read as broken rather than as one list. So this is the same card the
+   * other three build, with a PDF badge carrying the provenance the section
+   * header used to.
+   *
+   * buildDocItem itself is deliberately NOT changed: it still renders the
+   * files nested inside a Drive folder card, where a compact row is right and
+   * a card-inside-a-card would not be.
+   */
+  function buildUploadedDocCard(doc) {
+    const card = document.createElement('div');
+    card.className = 'drive-folder-card workingdoc-card' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
+    card.title = doc.filename;
+    makeDocumentDraggable(card, doc.documentId);
+
+    const header = document.createElement('div');
+    header.className = 'drive-folder-header workingdoc-card-header';
+
+    const icon = document.createElement('span');
+    icon.className = 'drive-folder-icon';
+    setIcon(icon, 'file-text', 16);
+    header.appendChild(icon);
+
+    const info = document.createElement('div');
+    info.className = 'drive-folder-info';
+    const nameRow = document.createElement('div');
+    nameRow.className = 'drive-folder-name-row';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'drive-folder-name';
+    nameEl.textContent = doc.filename;
+    nameRow.appendChild(nameEl);
+    const badgeEl = document.createElement('span');
+    badgeEl.className = 'drive-badge';
+    badgeEl.textContent = 'PDF';
+    nameRow.appendChild(badgeEl);
+    info.appendChild(nameRow);
+    const metaEl = document.createElement('div');
+    metaEl.className = 'drive-folder-meta';
+    metaEl.textContent = formatUploadedAt(doc.uploadedAt) + ' · ' + formatCharCount(doc.characterCount);
+    info.appendChild(metaEl);
+    header.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'drive-folder-actions';
+
+    const previewBtn = document.createElement('button');
+    previewBtn.type = 'button';
+    previewBtn.title = 'View in the app';
+    setIcon(previewBtn, PREVIEW_ICON, 14);
+    previewBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openPdfViewer(doc.documentId, doc.filename);
+    });
+    actions.appendChild(previewBtn);
+
+    const viewLink = document.createElement('a');
+    viewLink.href = '/documents/' + encodeURIComponent(doc.documentId) + '/file';
+    viewLink.target = '_blank';
+    viewLink.rel = 'noopener';
+    viewLink.title = 'Open PDF in a new tab';
+    setIcon(viewLink, 'external-link', 14);
+    viewLink.addEventListener('click', (e) => e.stopPropagation());
+    actions.appendChild(viewLink);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.title = 'Delete this document';
+    setIcon(removeBtn, 'x', 14);
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteDocument(doc.documentId);
+    });
+    actions.appendChild(removeBtn);
+
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    // Same shared-activeDocumentIds toggle buildDocItem's own click handler
+    // documents in full - all four lists re-render because the newly
+    // (in)active document could live in any of them.
+    card.addEventListener('click', () => {
+      if (activeDocumentIds.has(doc.documentId)) activeDocumentIds.delete(doc.documentId);
+      else activeDocumentIds.add(doc.documentId);
+      renderDocList();
+      renderDriveSection();
+      renderWorkingDocsSection();
+      renderWebPagesSection();
+    });
+
+    return card;
   }
+
+  /*
+   * One render pass for every expanded space's block (2026-08-24). This used
+   * to be four functions each filling one global container filtered to the
+   * ACTIVE space; once more than one space can be expanded at a time
+   * (independently of which is active) there is no single container to fill,
+   * so each block renders its own space from its own data-space-id.
+   *
+   * renderDocList / renderDriveSection / renderWorkingDocsSection /
+   * renderWebPagesSection are kept as aliases below rather than being
+   * updated at their ~15 call sites. That means a chain calling all four
+   * rebuilds four times over, which is irrelevant at this app's scale (a
+   * handful of spaces, tens of resources, and the whole file already
+   * discards-and-rebuilds everywhere) and is worth far more than the risk of
+   * missing one call site - a mistake this file has already made twice.
+   */
+  function renderResources() {
+    for (const block of projectsListEl.querySelectorAll('.space-resources')) {
+      const spaceId = block.dataset.spaceId;
+      const mine = (item) => (item.spaceId || null) === spaceId;
+      const lists = {
+        uploaded: block.querySelector('.uploaded-doc-list'),
+        drive: block.querySelector('.drive-folder-list'),
+        working: block.querySelector('.workingdoc-list'),
+        web: block.querySelector('.webpage-list'),
+      };
+      for (const el of Object.values(lists)) el.innerHTML = '';
+
+      for (const doc of documents.filter(mine)) {
+        lists.uploaded.appendChild(buildUploadedDocCard(doc));
+      }
+      for (const folder of driveStatus.folders.filter(mine)) {
+        lists.drive.appendChild(buildDriveFolderCard(folder));
+      }
+      for (const doc of driveStatus.workingDocuments.filter(mine)) {
+        lists.working.appendChild(doc.syncing ? buildPendingWorkingDocCard(doc.filename, 'Linking…') : buildWorkingDocCard(doc, 'gdoc'));
+      }
+      for (const doc of wordDocuments.filter(mine)) {
+        lists.working.appendChild(buildWorkingDocCard(doc, 'word'));
+      }
+      // An in-flight .docx upload always belongs to the space that was active
+      // when it started, which is the only space it can have been dropped or
+      // picked into. Same for a running PDF batch.
+      if (wordUploading && spaceId === activeSpaceId) {
+        lists.working.appendChild(buildPendingWorkingDocCard(wordUploading, 'Uploading…'));
+      }
+      if (wordBatch && spaceId === activeSpaceId) {
+        lists.working.appendChild(buildPendingWorkingDocCard(
+          wordBatch.current,
+          'Uploading ' + (wordBatch.done + 1) + ' of ' + wordBatch.total + '…',
+        ));
+      }
+      if (pdfBatch && spaceId === activeSpaceId) {
+        lists.uploaded.appendChild(buildPendingWorkingDocCard(
+          pdfBatch.current,
+          'Uploading ' + (pdfBatch.done + 1) + ' of ' + pdfBatch.total + '…',
+        ));
+      }
+      for (const page of webPages.filter(mine)) {
+        lists.web.appendChild(buildWebPageCard(page));
+      }
+
+      const empty = !Object.values(lists).some((el) => el.childElementCount > 0);
+      block.querySelector('.space-resources-empty').hidden = !empty;
+    }
+    renderAttachedDocs();
+  }
+
+  // Kept as names so every existing call site works unchanged - see
+  // renderResources' own doc comment for why this is an alias rather than a
+  // rename across the file.
+  const renderDocList = renderResources;
 
   // Google Drive folder links (2026-08-22, user's own request "additionally
   // to upload Documents, it should be possible to link to a Google Drive
@@ -3081,15 +3981,23 @@
     }
   }
 
+  // Compact rather than toLocaleString() (2026-08-24): back in the 320px
+  // panel, a full "8/24/2025, 1:46:40 AM" pushed every card's meta line onto
+  // three rows, roughly doubling the height of the whole list. Seconds were
+  // never meaningful here; the date and the minute are.
+  function formatTimestamp(ts) {
+    return new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+  }
+
   function formatSyncedAt(ts) {
-    return ts ? 'Synced ' + new Date(ts).toLocaleString() : 'Not yet synced';
+    return ts ? 'Synced ' + formatTimestamp(ts) : 'Not yet synced';
   }
 
   // An uploaded Word document has no sync history to report (2026-08-23),
   // so its card's meta line says when it was uploaded instead - same shape
   // as formatSyncedAt above so the two read alike side by side.
   function formatUploadedAt(ts) {
-    return ts ? 'Uploaded ' + new Date(ts).toLocaleString() : 'Uploaded';
+    return ts ? 'Uploaded ' + formatTimestamp(ts) : 'Uploaded';
   }
 
   // Builds one linked folder's card fresh, including its own sync/unlink
@@ -3147,7 +4055,7 @@
 
     const icon = document.createElement('span');
     icon.className = 'drive-folder-icon';
-    icon.textContent = '📁';
+    setIcon(icon, 'folder', 16);
     header.appendChild(icon);
 
     const info = document.createElement('div');
@@ -3181,7 +4089,7 @@
     const syncBtn = document.createElement('button');
     syncBtn.type = 'button';
     syncBtn.title = 'Sync now';
-    syncBtn.textContent = '↻';
+    setIcon(syncBtn, 'refresh-cw', 14);
     if (folder.syncing) {
       // A background sync is genuinely running for this folder right now -
       // either its very first one (just after linking) or a manual "Sync
@@ -3228,7 +4136,7 @@
     const unlinkBtn = document.createElement('button');
     unlinkBtn.type = 'button';
     unlinkBtn.title = 'Unlink folder';
-    unlinkBtn.textContent = '×';
+    setIcon(unlinkBtn, 'x', 14);
     if (folder.syncing) {
       // Nothing to unlink yet - POST /drive/link hasn't even responded, so
       // this folder isn't actually recorded by DriveLinkStore server-side.
@@ -3237,7 +4145,7 @@
       // Unlinking only clears THIS folder's link - already-synced documents
       // stay in the app's index untouched, and every other linked folder is
       // completely unaffected (same "removes it from the app, not from
-      // Drive" principle a per-file × delete follows, see DriveLinkStore.kt's
+      // Drive" principle a per-file delete delete follows, see DriveLinkStore.kt's
       // own doc comment) - so fetchDocuments() isn't called here, nothing
       // about the "Uploaded" list changes.
       unlinkBtn.addEventListener('click', async (e) => {
@@ -3290,12 +4198,7 @@
   // gets its own fresh card, in whatever order GET /drive/status reports
   // them (insertion order - see DriveLinkStore.kt's own list-append in
   // `link`).
-  function renderDriveSection() {
-    driveFolderListEl.innerHTML = '';
-    for (const folder of driveStatus.folders.filter((f) => matchesActiveProject(f.projectId))) {
-      driveFolderListEl.appendChild(buildDriveFolderCard(folder));
-    }
-  }
+  const renderDriveSection = renderResources;
 
   /*
    * Both kinds of Working Document - a linked Google Doc and an uploaded
@@ -3313,8 +4216,8 @@
    * [kind] is 'gdoc' or 'word'. What actually differs between them: the
    * DOC/WORD badge, the meta line ("Synced …" vs. "Uploaded …" - a Word
    * upload has no source to have synced FROM), and the actions - a linked
-   * Doc gets ↗ exported PDF, the pencil "open in Google Docs" link, ↻
-   * resync and ×; an upload gets only ↗ download and ×, since there's
+   * Doc gets open-in-new-tab exported PDF, the pencil "open in Google Docs" link, resync
+   * resync and delete; an upload gets only open-in-new-tab download and delete, since there's
    * nothing live behind it (see WordDocumentStore.kt's own doc comment).
    */
   function buildWorkingDocCard(doc, kind) {
@@ -3322,13 +4225,14 @@
     const card = document.createElement('div');
     card.className = 'drive-folder-card workingdoc-card' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
     card.title = doc.filename;
+    makeDocumentDraggable(card, doc.documentId);
 
     const header = document.createElement('div');
     header.className = 'drive-folder-header workingdoc-card-header';
 
     const icon = document.createElement('span');
     icon.className = 'drive-folder-icon';
-    icon.textContent = '📄';
+    setIcon(icon, isWord ? 'file-pen' : 'file-text', 16);
     header.appendChild(icon);
 
     const info = document.createElement('div');
@@ -3361,7 +4265,7 @@
     const previewBtn = document.createElement('button');
     previewBtn.type = 'button';
     previewBtn.title = isWord ? 'View as PDF in the app' : 'View in the app';
-    previewBtn.textContent = '👁';
+    setIcon(previewBtn, PREVIEW_ICON, 14);
     previewBtn.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the card active/inactive
       openPdfViewer(doc.documentId, doc.filename);
@@ -3373,7 +4277,7 @@
     viewLink.target = '_blank';
     viewLink.rel = 'noopener';
     viewLink.title = isWord ? 'Download the Word file' : 'Open exported PDF in a new tab';
-    viewLink.textContent = '↗';
+    setIcon(viewLink, isWord ? 'download' : 'external-link', 14);
     viewLink.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the card active/inactive
     });
@@ -3391,11 +4295,7 @@
       gdocLink.target = '_blank';
       gdocLink.rel = 'noopener';
       gdocLink.title = 'Open in Google Docs';
-      gdocLink.innerHTML =
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-        '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>' +
-        '</svg>';
+      setIcon(gdocLink, 'pencil', 14);
       gdocLink.addEventListener('click', (e) => {
         e.stopPropagation(); // don't also toggle the card active/inactive
       });
@@ -3404,7 +4304,7 @@
       const syncBtn = document.createElement('button');
       syncBtn.type = 'button';
       syncBtn.title = 'Re-sync this Google Doc';
-      syncBtn.textContent = '↻';
+      setIcon(syncBtn, 'refresh-cw', 14);
       syncBtn.addEventListener('click', async (e) => {
         e.stopPropagation(); // don't also toggle the card active/inactive
         syncBtn.disabled = true;
@@ -3427,7 +4327,7 @@
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.title = isWord ? 'Delete this Word document' : 'Delete this Google Doc';
-    removeBtn.textContent = '×';
+    setIcon(removeBtn, 'x', 14);
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the card active/inactive
       deleteDocument(doc.documentId);
@@ -3458,18 +4358,7 @@
   // Linked Google Docs first, then uploaded Word documents (2026-08-23,
   // "add a 2nd box to upload MS Word document"), then a placeholder card for
   // an upload still in flight - both kinds share buildWorkingDocCard above.
-  function renderWorkingDocsSection() {
-    workingDocListEl.innerHTML = '';
-    for (const doc of driveStatus.workingDocuments.filter((d) => matchesActiveProject(d.projectId))) {
-      workingDocListEl.appendChild(doc.syncing ? buildPendingWorkingDocCard(doc.filename, 'Linking…') : buildWorkingDocCard(doc, 'gdoc'));
-    }
-    for (const doc of wordDocuments.filter((d) => matchesActiveProject(d.projectId))) {
-      workingDocListEl.appendChild(buildWorkingDocCard(doc, 'word'));
-    }
-    if (wordUploading) {
-      workingDocListEl.appendChild(buildPendingWorkingDocCard(wordUploading, 'Uploading…'));
-    }
-  }
+  const renderWorkingDocsSection = renderResources;
 
   // Same card, minus every action and with the char-count meta line replaced
   // by a progress hint - shown while a Google Doc is being linked (see
@@ -3486,7 +4375,7 @@
 
     const icon = document.createElement('span');
     icon.className = 'drive-folder-icon';
-    icon.textContent = '📄';
+    setIcon(icon, 'file-text', 16);
     header.appendChild(icon);
 
     const info = document.createElement('div');
@@ -3507,7 +4396,7 @@
     spinner.type = 'button';
     spinner.disabled = true;
     spinner.className = 'spinning';
-    spinner.textContent = '↻';
+    setIcon(spinner, 'refresh-cw', 14);
     actions.appendChild(spinner);
     header.appendChild(actions);
 
@@ -3658,24 +4547,24 @@
     // `{ folders: [...] }` literal would otherwise silently drop.
     driveStatus = {
       ...driveStatus,
-      // projectId on the placeholder itself (2026-08-23, see this section's
+      // spaceId on the placeholder itself (2026-08-23, see this section's
       // own opening comment) - without it, renderDriveSection's
-      // matchesActiveProject filter would drop this placeholder as soon as
-      // it's rendered (an undefined projectId only matches "no project
+      // matchesActiveSpace filter would drop this placeholder as soon as
+      // it's rendered (an undefined spaceId only matches "no project
       // active"), hiding the in-progress "linking…" card while a project IS
       // active.
-      folders: [...driveStatus.folders, { folderId, folderName, lastSyncedAt: null, files: [], syncing: true, projectId: activeProjectId }],
+      folders: [...driveStatus.folders, { folderId, folderName, lastSyncedAt: null, files: [], syncing: true, spaceId: activeSpaceId }],
     };
     renderDriveSection();
     try {
       const res = await fetch('/drive/link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-        // projectId (2026-08-23, see this section's own opening comment) is
+        // spaceId (2026-08-23, see this section's own opening comment) is
         // whatever project is active in the left panel right now - fixed at
-        // link time server-side (DriveLink.projectId), not re-read on a
+        // link time server-side (DriveLink.spaceId), not re-read on a
         // later "Sync now".
-        body: JSON.stringify({ folderId, folderName, projectId: activeProjectId }),
+        body: JSON.stringify({ folderId, folderName, spaceId: activeSpaceId }),
       });
       if (!res.ok) throw new Error('Server responded with ' + res.status);
       // POST /drive/link now responds as soon as the folder is linked and
@@ -3765,8 +4654,9 @@
   }
 
   /*
-   * In-app PDF viewer (2026-08-23, user's own choice of an "overlay inside
-   * the app"). GET /documents/{id}/preview serves every document kind as
+   * In-app PDF viewer - a docked right-hand pane since 2026-08-24 (was a
+   * centered overlay from 2026-08-23; see #side-panel's own HTML comment).
+   * GET /documents/{id}/preview serves every document kind as
    * PDF - converting a .docx through LibreOffice and caching the result,
    * passing anything already stored as PDF straight through (see
    * PdfPreviewService.kt) - so this one function opens any document without
@@ -3797,15 +4687,32 @@
     }
   }
 
+  // Shown whenever no document is open - the pane is always present now, so
+  // it needs something to say for itself rather than sitting blank.
+  const PDF_VIEWER_IDLE_HINT = 'No document open.\nClick the magnifier on a document in the left panel to preview it here.';
+
+  // Title/download/close only mean anything while a document is actually
+  // open; with none, the header degrades to the plain "Preview" label plus
+  // the collapse chevron.
+  function setPdfViewerDocumentOpen(open, filename, documentId) {
+    pdfViewerTitleEl.textContent = open ? filename : 'Preview';
+    pdfViewerTitleEl.title = open ? filename : '';
+    pdfViewerDownloadEl.hidden = !open;
+    pdfViewerCloseBtnEl.hidden = !open;
+    if (open) pdfViewerDownloadEl.href = '/documents/' + encodeURIComponent(documentId) + '/file';
+    else pdfViewerDownloadEl.removeAttribute('href');
+  }
+
   async function openPdfViewer(documentId, filename) {
     const requestId = ++pdfViewerRequestId;
-    pdfViewerTitleEl.textContent = filename;
-    pdfViewerDownloadEl.href = '/documents/' + encodeURIComponent(documentId) + '/file';
+    setPdfViewerDocumentOpen(true, filename, documentId);
     pdfViewerFrameEl.hidden = true;
     pdfViewerFrameEl.removeAttribute('src');
     releasePdfViewerUrl();
     setPdfViewerStatus('Preparing preview…');
-    pdfViewerOverlayEl.hidden = false;
+    // A preview requested while the pane is collapsed would otherwise load
+    // into 44px of invisible width - expanding is the whole point of the click.
+    if (sidePanelEl.classList.contains('collapsed')) setPanelCollapsed(false);
     try {
       const res = await fetch('/documents/' + encodeURIComponent(documentId) + '/preview');
       if (!res.ok) throw new Error(await readErrorMessage(res));
@@ -3821,31 +4728,20 @@
     }
   }
 
+  // Clears the open document but leaves the pane itself in place - there's
+  // no overlay to dismiss any more, so this is "close this document", not
+  // "close the viewer". Collapsing the pane is the chevron's job.
   function closePdfViewer() {
     pdfViewerRequestId++;
-    pdfViewerOverlayEl.hidden = true;
+    setPdfViewerDocumentOpen(false);
     pdfViewerFrameEl.hidden = true;
     pdfViewerFrameEl.removeAttribute('src');
     releasePdfViewerUrl();
-    setPdfViewerStatus(null);
+    setPdfViewerStatus(PDF_VIEWER_IDLE_HINT);
   }
 
   pdfViewerCloseBtnEl.addEventListener('click', closePdfViewer);
-
-  // Same one-listener-per-modal wiring as the other overlays on this page -
-  // backdrop clicks only (e.target === the overlay itself, never a click
-  // inside the dialog), plus Escape.
-  pdfViewerOverlayEl.addEventListener('click', (e) => {
-    if (e.target === pdfViewerOverlayEl) closePdfViewer();
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !pdfViewerOverlayEl.hidden) closePdfViewer();
-  });
-
-  pdfViewerDownloadEl.addEventListener('click', (e) => {
-    e.stopPropagation();
-  });
+  closePdfViewer();
 
   // POST /drive/link-doc (DriveController.kt) exports the picked Google Doc
   // as a PDF and ingests it through the exact same pipeline any other PDF
@@ -3862,18 +4758,18 @@
   async function linkGoogleDoc(fileId, fileName) {
     driveStatus = {
       ...driveStatus,
-      // projectId on the placeholder - same reasoning as linkDriveFolder's
+      // spaceId on the placeholder - same reasoning as linkDriveFolder's
       // own placeholder above.
-      workingDocuments: [...driveStatus.workingDocuments, { documentId: null, filename: fileName, lastSyncedAt: null, syncing: true, projectId: activeProjectId }],
+      workingDocuments: [...driveStatus.workingDocuments, { documentId: null, filename: fileName, lastSyncedAt: null, syncing: true, spaceId: activeSpaceId }],
     };
     renderWorkingDocsSection();
     try {
       const res = await fetch('/drive/link-doc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-        // projectId - same "active project at link time" value linkDriveFolder
+        // spaceId - same "active project at link time" value linkDriveFolder
         // sends above (2026-08-23, see this section's own opening comment).
-        body: JSON.stringify({ fileId, fileName, projectId: activeProjectId }),
+        body: JSON.stringify({ fileId, fileName, spaceId: activeSpaceId }),
       });
       if (!res.ok) throw new Error(await readErrorMessage(res));
       driveStatus = await res.json();
@@ -3917,21 +4813,29 @@
     const card = document.createElement('div');
     card.className = 'drive-folder-card webpage-card' + (activeDocumentIds.has(page.documentId) ? ' active' : '');
     card.title = page.title;
+    makeDocumentDraggable(card, page.documentId);
 
     const header = document.createElement('div');
     header.className = 'drive-folder-header webpage-card-header';
 
     const icon = document.createElement('span');
     icon.className = 'drive-folder-icon';
-    icon.textContent = '🌐';
+    setIcon(icon, 'globe', 16);
     header.appendChild(icon);
 
     const info = document.createElement('div');
     info.className = 'drive-folder-info';
+    const nameRow = document.createElement('div');
+    nameRow.className = 'drive-folder-name-row';
     const nameEl = document.createElement('div');
     nameEl.className = 'drive-folder-name';
     nameEl.textContent = page.title;
-    info.appendChild(nameEl);
+    nameRow.appendChild(nameEl);
+    const badgeEl = document.createElement('span');
+    badgeEl.className = 'drive-badge';
+    badgeEl.textContent = 'WEB';
+    nameRow.appendChild(badgeEl);
+    info.appendChild(nameRow);
     const metaEl = document.createElement('div');
     metaEl.className = 'drive-folder-meta';
     metaEl.textContent = formatSyncedAt(page.lastSyncedAt) + ' · ' + formatCharCount(page.characterCount);
@@ -3941,7 +4845,7 @@
     const actions = document.createElement('div');
     actions.className = 'drive-folder-actions';
 
-    // "Open in a new tab" (buildDocItem's own ↗ view link has the same
+    // "Open in a new tab" (buildDocItem's own open-in-new-tab view link has the same
     // idea/title text for a PDF - this is its web-page counterpart, opening
     // [page.url] itself rather than a PDF snapshot this document never has).
     const viewLink = document.createElement('a');
@@ -3949,7 +4853,7 @@
     viewLink.target = '_blank';
     viewLink.rel = 'noopener';
     viewLink.title = 'Open web page in a new tab';
-    viewLink.textContent = '↗';
+    setIcon(viewLink, 'external-link', 14);
     viewLink.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the card active/inactive
     });
@@ -3958,7 +4862,7 @@
     const syncBtn = document.createElement('button');
     syncBtn.type = 'button';
     syncBtn.title = 'Re-sync this web page';
-    syncBtn.textContent = '↻';
+    setIcon(syncBtn, 'refresh-cw', 14);
     syncBtn.addEventListener('click', async (e) => {
       e.stopPropagation(); // don't also toggle the card active/inactive
       syncBtn.disabled = true;
@@ -3981,7 +4885,7 @@
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.title = 'Delete this web page';
-    removeBtn.textContent = '×';
+    setIcon(removeBtn, 'x', 14);
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation(); // don't also toggle the card active/inactive
       deleteDocument(page.documentId);
@@ -4010,12 +4914,7 @@
     return card;
   }
 
-  function renderWebPagesSection() {
-    webPageListEl.innerHTML = '';
-    for (const page of webPages.filter((p) => matchesActiveProject(p.projectId))) {
-      webPageListEl.appendChild(buildWebPageCard(page));
-    }
-  }
+  const renderWebPagesSection = renderResources;
 
   async function fetchWebPages() {
     try {
@@ -4076,10 +4975,10 @@
       const res = await fetch('/webpages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-        // projectId - same "active project at link time" convention every
+        // spaceId - same "active project at link time" convention every
         // other link-a-thing flow in this panel follows (linkDriveFolder/
         // linkGoogleDoc above).
-        body: JSON.stringify({ url, projectId: activeProjectId }),
+        body: JSON.stringify({ url, spaceId: activeSpaceId }),
       });
       if (!res.ok) throw new Error(await readErrorMessage(res));
       webPages.push(await res.json());
@@ -4131,7 +5030,424 @@
     // and via the "Signed in as" line in the settings popup for touch users.
     userFirstnameEl.textContent = (data.name || '').trim().split(/\s+/)[0] || '';
     signedInEmailEl.textContent = data.email || '(unknown)';
+    currentUserEmail = (data.email || '').toLowerCase();
+    applyGoogleCapability(data.canUseGoogleDrive !== false);
+    if (data.mustChangePassword) openPasswordOverlay();
   }
+
+  // The two Drive actions need a live Google OAuth token, not just an
+  // identity, so a password account cannot use them at all (2026-08-24 - see
+  // springchat3_local_accounts.md in project memory). Greyed out with the
+  // reason on hover rather than hidden; SessionGateWebFilter refuses
+  // /drive/** for such a session regardless, so this is the explanation, not
+  // the guard.
+  function applyGoogleCapability(canUseGoogleDrive) {
+    [driveLinkRowEl, workingDocLinkRowEl].forEach((el) => {
+      if (!el) return;
+      el.classList.toggle('unavailable', !canUseGoogleDrive);
+      if (canUseGoogleDrive) {
+        el.removeAttribute('title');
+        el.removeAttribute('aria-disabled');
+        el.setAttribute('tabindex', '0');
+      } else {
+        el.title = 'Needs a Google account - this one signs in with a password.';
+        el.setAttribute('aria-disabled', 'true');
+        el.removeAttribute('tabindex');
+      }
+    });
+  }
+
+  // Capture phase, so it runs before each row's own click handler and can
+  // stop it - the alternative, a flag checked inside every Drive handler, is
+  // the kind of thing that gets forgotten when a third one is added.
+  [driveLinkRowEl, workingDocLinkRowEl].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('click', (event) => {
+      if (el.classList.contains('unavailable')) {
+        event.stopPropagation();
+        event.preventDefault();
+      }
+    }, true);
+  });
+
+  function openPasswordOverlay() {
+    passwordErrorEl.hidden = true;
+    passwordOverlayEl.hidden = false;
+    passwordCurrentEl.focus();
+  }
+
+  passwordFormEl.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    passwordErrorEl.hidden = true;
+    passwordSubmitBtnEl.disabled = true;
+    try {
+      const res = await fetch('/account/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({
+          currentPassword: passwordCurrentEl.value,
+          newPassword: passwordNewEl.value,
+        }),
+      });
+      if (!res.ok) {
+        // ResponseStatusException renders its reason as the `message` field
+        // of Spring's own error body, which is what every other failure path
+        // in this file reads too.
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || ('Server responded with ' + res.status));
+      }
+      // Everything else was refused until now (SessionGateWebFilter), so this
+      // page was loaded against a session that could fetch nothing. Reloading
+      // is both the simplest and the most honest way to start again.
+      location.reload();
+    } catch (err) {
+      passwordErrorEl.textContent = err.message;
+      passwordErrorEl.hidden = false;
+      passwordSubmitBtnEl.disabled = false;
+    }
+  });
+
+  // Sharing (2026-08-24, "owners should be able to add members to their
+  // spaces" - see springchat3_multi_user.md in project memory). Everything
+  // below is a courtesy: POST/DELETE /projects/{id}/members are owner-only
+  // server-side, so hiding the row and the dialog only saves someone a 403
+  // they would otherwise discover by clicking.
+
+  // Filled once from GET /users on first use, then reused - the roster
+  // changes only when an env var or users.json does, neither of which
+  // happens while a dialog is open.
+  let knownUsers = null;
+
+  function isOwnedByMe(space) {
+    return !!space && !!space.owner && !!currentUserEmail &&
+      space.owner.toLowerCase() === currentUserEmail;
+  }
+
+  function roleLabel(role) {
+    return role === 'VIEWER' ? 'Can view' : 'Can edit';
+  }
+
+  function memberLabel(email) {
+    return email === '*' ? 'Anyone who can sign in' : email;
+  }
+
+  async function ensureKnownUsers() {
+    if (knownUsers) return knownUsers;
+    try {
+      const res = await fetch('/users');
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      knownUsers = await res.json();
+    } catch (err) {
+      console.error('Could not load the list of users:', err);
+      knownUsers = [];
+    }
+    return knownUsers;
+  }
+
+  async function openShareModal() {
+    const space = projects.find((p) => p.spaceId === activeSpaceId);
+    if (!isOwnedByMe(space)) return;
+    shareErrorEl.hidden = true;
+    shareTitleEl.textContent = 'Share ' + space.name;
+    shareOverlayEl.hidden = false;
+    renderShareMembers();
+    await ensureKnownUsers();
+    renderSharePicker();
+  }
+
+  function closeShareModal() {
+    shareOverlayEl.hidden = true;
+  }
+
+  function renderShareMembers() {
+    const space = projects.find((p) => p.spaceId === activeSpaceId);
+    const members = (space && space.members) || [];
+    shareMembersEl.innerHTML = '';
+    if (members.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'share-empty';
+      empty.textContent = 'Nobody yet - this space is private.';
+      shareMembersEl.appendChild(empty);
+      return;
+    }
+    members.forEach((member) => {
+      const row = document.createElement('div');
+      row.className = 'share-member';
+
+      const email = document.createElement('span');
+      email.className = 'share-member-email';
+      email.textContent = memberLabel(member.email);
+      email.title = member.email;
+      row.appendChild(email);
+
+      // Changing a role is the same call as adding, since the server
+      // replaces an existing entry for that address rather than duplicating
+      // it - so there is no separate update endpoint to keep in step.
+      const role = document.createElement('select');
+      role.className = 'share-member-role';
+      ['EDITOR', 'VIEWER'].forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = roleLabel(value);
+        option.selected = value === member.role;
+        role.appendChild(option);
+      });
+      role.addEventListener('change', () => shareWith(member.email, role.value));
+      row.appendChild(role);
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'panel-icon-btn';
+      remove.title = 'Stop sharing with ' + memberLabel(member.email);
+      setIcon(remove, 'x', 14);
+      remove.addEventListener('click', () => unshareWith(member.email));
+      row.appendChild(remove);
+
+      shareMembersEl.appendChild(row);
+    });
+  }
+
+  // Only people who are not already members, and never the owner - an
+  // address that would just be rejected has no business being offered.
+  function renderSharePicker() {
+    const space = projects.find((p) => p.spaceId === activeSpaceId);
+    const taken = new Set(((space && space.members) || []).map((m) => m.email.toLowerCase()));
+    if (space && space.owner) taken.add(space.owner.toLowerCase());
+    shareEmailEl.innerHTML = '';
+
+    const candidates = (knownUsers || []).filter((u) => !taken.has(u.email.toLowerCase()));
+    candidates.forEach((user) => {
+      const option = document.createElement('option');
+      option.value = user.email;
+      option.textContent = user.displayName ? `${user.displayName} (${user.email})` : user.email;
+      shareEmailEl.appendChild(option);
+    });
+    if (!taken.has('*')) {
+      const everyone = document.createElement('option');
+      everyone.value = '*';
+      everyone.textContent = 'Anyone who can sign in';
+      shareEmailEl.appendChild(everyone);
+    }
+    const nothingLeft = shareEmailEl.options.length === 0;
+    if (nothingLeft) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'Everyone who can sign in is already on the list';
+      shareEmailEl.appendChild(option);
+    }
+    shareEmailEl.disabled = nothingLeft;
+    shareAddBtnEl.disabled = nothingLeft;
+  }
+
+  // Both share calls return the updated space, so the local copy is replaced
+  // from the response rather than re-fetching every space - and the panel is
+  // re-rendered because the row's Shared badge depends on it.
+  function applyUpdatedSpace(updated) {
+    const index = projects.findIndex((p) => p.spaceId === updated.spaceId);
+    if (index >= 0) projects[index] = updated;
+    renderProjects();
+    renderShareMembers();
+    renderSharePicker();
+  }
+
+  async function shareWith(email, role) {
+    shareErrorEl.hidden = true;
+    try {
+      const res = await fetch('/projects/' + encodeURIComponent(activeSpaceId) + '/members', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ email, role }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      applyUpdatedSpace(await res.json());
+    } catch (err) {
+      shareErrorEl.textContent = err.message;
+      shareErrorEl.hidden = false;
+      // The failed change may have been a role dropdown, which has already
+      // moved to a value the server rejected.
+      renderShareMembers();
+    }
+  }
+
+  async function unshareWith(email) {
+    shareErrorEl.hidden = true;
+    try {
+      const url = '/projects/' + encodeURIComponent(activeSpaceId) +
+        '/members?email=' + encodeURIComponent(email);
+      const res = await fetch(url, { method: 'DELETE', headers: csrfHeader() });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      applyUpdatedSpace(await res.json());
+    } catch (err) {
+      shareErrorEl.textContent = err.message;
+      shareErrorEl.hidden = false;
+    }
+  }
+
+  // Deleting a space (2026-08-24 - see springchat3_space_deletion.md in
+  // project memory). Owner-only server-side; hiding the row for anyone else
+  // only saves them a 403.
+  function openDeleteSpaceModal() {
+    const space = projects.find((p) => p.spaceId === activeSpaceId);
+    if (!isOwnedByMe(space)) return;
+    deleteSpaceErrorEl.hidden = true;
+    deleteSpaceTextEl.textContent =
+      `${space.name} and everything in it will be removed from SpringChat3. ` +
+      'Files linked from Google Drive stay in Drive.';
+    deleteSpaceOverlayEl.hidden = false;
+  }
+
+  function closeDeleteSpaceModal() {
+    deleteSpaceOverlayEl.hidden = true;
+  }
+
+  // Everything that still points at the space has to let go of it, not just
+  // the list: the active selection, the persisted expanded set, and the
+  // middle panel if it happens to be showing one of that space's chats.
+  function forgetSpace(spaceId) {
+    projects = projects.filter((p) => p.spaceId !== spaceId);
+    if (expandedSpaceIds.delete(spaceId)) persistExpandedSpaces();
+    chatHistory = chatHistory.filter((entry) => entry.spaceId !== spaceId);
+    if (activeSpaceId === spaceId) {
+      // Straight to another space rather than to nothing, matching the
+      // first-space auto-select on load - an app with spaces left in it
+      // should not land the user in the no-space state.
+      const next = projects.length > 0 ? projects[0].spaceId : null;
+      activeSessionId = crypto.randomUUID();
+      showEmptyState();
+      selectProject(next);
+    } else {
+      renderProjects();
+    }
+    renderChatHistory();
+    updateSidePanelEnabled();
+  }
+
+  async function deleteActiveSpace() {
+    const spaceId = activeSpaceId;
+    deleteSpaceErrorEl.hidden = true;
+    deleteSpaceConfirmBtnEl.disabled = true;
+    try {
+      const res = await fetch('/projects/' + encodeURIComponent(spaceId), {
+        method: 'DELETE',
+        headers: csrfHeader(),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      closeDeleteSpaceModal();
+      forgetSpace(spaceId);
+    } catch (err) {
+      deleteSpaceErrorEl.textContent = err.message;
+      deleteSpaceErrorEl.hidden = false;
+    } finally {
+      deleteSpaceConfirmBtnEl.disabled = false;
+    }
+  }
+
+  deleteSpaceRowEl.addEventListener('click', openDeleteSpaceModal);
+
+  /*
+   * Renaming a space (2026-08-25, user's own request "I think we should
+   * support to rename a Space"). Cheap on the server for one reason worth
+   * repeating here: the name is not a key anywhere - the folder is
+   * spaces/<spaceId>/ and every stored row references the 6-digit id - so
+   * this changes one field and nothing cascades.
+   *
+   * The space being renamed is captured when the modal opens, not read from
+   * activeSpaceId at submit time: the popup that opened this already
+   * selected that space, but a rename is one round trip and the active space
+   * is user-controllable state.
+   */
+  let renamingSpaceId = null;
+
+  function showRenameSpaceError(message) {
+    renameSpaceErrorEl.textContent = message;
+    renameSpaceErrorEl.hidden = false;
+  }
+
+  function openRenameSpaceModal() {
+    const space = projects.find((p) => p.spaceId === activeSpaceId);
+    if (!space) return;
+    renamingSpaceId = space.spaceId;
+    renameSpaceNameEl.value = space.name;
+    renameSpaceErrorEl.textContent = '';
+    renameSpaceErrorEl.hidden = true;
+    renameSpaceOverlayEl.hidden = false;
+    renameSpaceNameEl.focus();
+    renameSpaceNameEl.select();
+  }
+
+  function closeRenameSpaceModal() {
+    renameSpaceOverlayEl.hidden = true;
+    renamingSpaceId = null;
+  }
+
+  renameSpaceRowEl.addEventListener('click', openRenameSpaceModal);
+  renameSpaceCloseBtnEl.addEventListener('click', closeRenameSpaceModal);
+  renameSpaceCancelBtnEl.addEventListener('click', closeRenameSpaceModal);
+  renameSpaceOverlayEl.addEventListener('click', (e) => {
+    if (e.target === renameSpaceOverlayEl) closeRenameSpaceModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !renameSpaceOverlayEl.hidden) closeRenameSpaceModal();
+  });
+
+  renameSpaceFormEl.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const spaceId = renamingSpaceId;
+    const name = renameSpaceNameEl.value.trim();
+    if (!spaceId || !name) return;
+    const space = projects.find((p) => p.spaceId === spaceId);
+    if (space && space.name === name) {
+      closeRenameSpaceModal();
+      return;
+    }
+    renameSpaceSubmitBtnEl.disabled = true;
+    try {
+      const res = await fetch('/projects/' + encodeURIComponent(spaceId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      const updated = await res.json();
+      // Replace the whole object rather than assigning .name: the response is
+      // the current Project, so this also picks up anything else that changed
+      // server-side since this page last fetched it.
+      const index = projects.findIndex((p) => p.spaceId === spaceId);
+      if (index >= 0) projects[index] = updated;
+      renderProjects();
+      // The name is shown in two more places built from `projects`: the chat
+      // history group titles and the add popup's own "Add to <name>" heading,
+      // which is rebuilt each time it opens.
+      renderChatHistory();
+      closeRenameSpaceModal();
+    } catch (err) {
+      showRenameSpaceError('Could not rename space: ' + err.message);
+    } finally {
+      renameSpaceSubmitBtnEl.disabled = false;
+    }
+  });
+  deleteSpaceConfirmBtnEl.addEventListener('click', deleteActiveSpace);
+  deleteSpaceCancelBtnEl.addEventListener('click', closeDeleteSpaceModal);
+  deleteSpaceCloseBtnEl.addEventListener('click', closeDeleteSpaceModal);
+
+  shareRowEl.addEventListener('click', openShareModal);
+  shareAddBtnEl.addEventListener('click', () => {
+    if (shareEmailEl.value) shareWith(shareEmailEl.value, shareRoleEl.value);
+  });
+  shareCloseBtnEl.addEventListener('click', closeShareModal);
+  shareDoneBtnEl.addEventListener('click', closeShareModal);
+
+  // Spring Security's reactive logout is POST /logout with the CSRF token -
+  // a plain link would be a GET and would silently do nothing.
+  userMenuSignoutBtnEl.addEventListener('click', async () => {
+    closeUserMenu();
+    try {
+      await fetch('/logout', { method: 'POST', headers: csrfHeader() });
+    } catch (err) {
+      console.error('Could not sign out cleanly:', err);
+    }
+    location.href = '/login.html';
+  });
 
   async function fetchCurrentUser() {
     try {
@@ -4175,6 +5491,38 @@
     selectEl.dataset.activeValue = active; // last confirmed value, for the change handler below to revert to on failure
   }
 
+  // The allow-list checklist. Rebuilt from scratch on every applySettings for
+  // the same reason populateModelSelect is - a fresh list is simpler than
+  // diffing one - which is exactly why its change handler is delegated on the
+  // container below rather than bound per row.
+  function renderAllowedModels(installed, allowed, editable) {
+    allowedModelsListEl.innerHTML = '';
+    if (!installed.length) {
+      const empty = document.createElement('div');
+      empty.className = 'allowed-models-empty';
+      empty.textContent = 'Ollama reported no models.';
+      allowedModelsListEl.appendChild(empty);
+      return;
+    }
+    // A curated tag that is no longer pulled still has to be shown, or
+    // unticking it would be impossible and it would silently stay in force.
+    const rows = [...new Set([...installed, ...allowed])].sort();
+    rows.forEach((model) => {
+      const row = document.createElement('label');
+      row.className = 'allowed-model-row';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = model;
+      box.checked = allowed.includes(model);
+      box.disabled = !editable;
+      row.appendChild(box);
+      const name = document.createElement('span');
+      name.textContent = installed.includes(model) ? model : model + ' (not installed)';
+      row.appendChild(name);
+      allowedModelsListEl.appendChild(row);
+    });
+  }
+
   function applySettings(data) {
     populateModelSelect(modelToolSelectionEl, data.models.toolSelection, data.availableModels);
     populateModelSelect(modelDocStrategyEl, data.models.documentSearchStrategy, data.availableModels);
@@ -4183,6 +5531,13 @@
     modelEmbeddingEl.textContent = data.embeddingModel;
     toolsEnabledToggleEl.checked = data.toolsEnabled;
     docEditingToggleEl.checked = data.documentEditingEnabled;
+    // Visible to everyone, operable by an admin, and refused server-side
+    // regardless - see Admins and this section's own markup comment. Disabling
+    // rather than hiding also means a stale page whose admin flag has since
+    // been revoked can't fire a POST that would only 403.
+    settingsAdminHintEl.hidden = !!data.admin;
+    docEditingToggleEl.disabled = !data.admin;
+    renderAllowedModels(data.installedModels || [], data.allowedModels || [], !!data.admin);
   }
 
   function showSettingsError(message) {
@@ -4322,6 +5677,34 @@
   wireSettingsToggle(toolsEnabledToggleEl, '/settings/tools');
   wireSettingsToggle(docEditingToggleEl, '/settings/document-editing');
 
+  // Delegated, not bound per checkbox: renderAllowedModels discards and
+  // rebuilds every row on each applySettings, including the one triggered by
+  // this very handler's own response. Posts the whole list rather than a
+  // delta, matching POST /settings/allowed-models' "this is the new list"
+  // shape - an empty list is a real value there, meaning "no curation".
+  allowedModelsListEl.addEventListener('change', async (e) => {
+    const box = e.target;
+    if (!box || box.type !== 'checkbox') return;
+    const boxes = Array.from(allowedModelsListEl.querySelectorAll('input[type=checkbox]'));
+    const models = boxes.filter((b) => b.checked).map((b) => b.value);
+    boxes.forEach((b) => { b.disabled = true; });
+    clearSettingsError();
+    try {
+      const res = await fetch('/settings/allowed-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ models }),
+      });
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      applySettings(await res.json());
+    } catch (err) {
+      box.checked = !box.checked;
+      showSettingsError('Could not save: ' + err.message);
+    } finally {
+      boxes.forEach((b) => { b.disabled = false; });
+    }
+  });
+
   // Each of the three selectable-role <select>s carries its role key in
   // data-role (matching ModelRoleKeys on the backend) - one shared handler
   // rather than three near-identical ones. Reverts to the previously active
@@ -4378,58 +5761,118 @@
   }
 
   // POST /word-documents (WordDocumentController.kt) - same multipart +
-  // ?projectId= shape as uploadDocument's own /upload call above, and the
+  // ?spaceId= shape as uploadDocument's own /upload call above, and the
   // same "select it right away" follow-up, so an uploaded Word file is
   // immediately part of the next question's context. Server-side errors
   // come back as {"message": ...} (the convention this app's newer
   // endpoints use), read via the shared readErrorMessage helper.
-  async function uploadWordDocument(file) {
-    if (wordUploading) return;
-    wordUploading = file.name;
-    wordUploadRowEl.classList.add('linking');
-    renderWorkingDocsSection();
+  // opts.select:false and opts.silent:true are what uploadWordDocuments()
+  // passes for a batch member, exactly as uploadDocument takes them from
+  // uploadPdfs - see that pair for why a batch neither auto-selects nor
+  // reports per file. The pending card and the row's in-flight class are
+  // skipped during a batch, which draws its own counter card instead.
+  async function uploadWordDocument(file, opts = {}) {
+    const { select = true, silent = false } = opts;
+    if (!wordBatch) {
+      wordUploading = file.name;
+      wordUploadRowEl.classList.add('linking');
+      renderWorkingDocsSection();
+    }
     try {
       const formData = new FormData();
-      formData.append('file', file);
-      const url = activeProjectId ? '/word-documents?projectId=' + encodeURIComponent(activeProjectId) : '/word-documents';
+      // Explicit basename, same reason uploadDocument does it: a dropped
+      // folder reports each file's name as its path relative to that folder,
+      // and the browser sends THAT as the multipart filename - so a .docx
+      // nested in a folder would be stored and displayed as
+      // "contracts/2026/nda.docx". Only reachable now that a folder drop can
+      // deliver .docx files here rather than having them ignored.
+      formData.append('file', file, (file.name || 'document.docx').split(/[\\/]/).pop());
+      const url = activeSpaceId ? '/word-documents?spaceId=' + encodeURIComponent(activeSpaceId) : '/word-documents';
       const res = await fetch(url, { method: 'POST', headers: csrfHeader(), body: formData });
       if (!res.ok) throw new Error(await readErrorMessage(res));
       const doc = await res.json();
       wordDocuments.push(doc);
-      activeDocumentIds.add(doc.documentId);
+      if (select) activeDocumentIds.add(doc.documentId);
     } catch (err) {
+      if (silent) throw err;
       addRow('error', 'Could not upload ' + file.name + ': ' + err.message);
     } finally {
-      wordUploading = null;
-      wordUploadRowEl.classList.remove('linking');
-      renderWorkingDocsSection();
+      if (!wordBatch) {
+        wordUploading = null;
+        wordUploadRowEl.classList.remove('linking');
+        renderWorkingDocsSection();
+      }
     }
   }
 
+  const isDocx = (file) => file.name.toLowerCase().endsWith('.docx');
+
+  /*
+   * Several .docx files at once (2026-08-25, user's own request). Deliberately
+   * the same three rules uploadPdfs already settled on - sequential so the
+   * server-side Tika extraction queues one at a time and a failure is
+   * attributable, one failure never aborting the rest, and a batch never
+   * auto-selecting what it uploaded - so the two upload paths behave
+   * identically and there is one story to remember rather than two.
+   *
+   * opts.select:false is what the drop handler passes for a mixed drop: a lone
+   * .docx dropped by itself still auto-selects (you dropped it to ask about
+   * it), but one .docx that happened to be inside a folder of PDFs should not
+   * silently attach itself to the next message.
+   */
+  async function uploadWordDocuments(files, opts = {}) {
+    const { select = true } = opts;
+    if (wordBatch || wordUploading) return;
+    const docs = files.filter(isDocx);
+    const ignored = files.length - docs.length;
+
+    if (!docs.length) {
+      addRow('error', 'No Word documents in that selection.');
+      return;
+    }
+
+    if (docs.length === 1 && !ignored) {
+      await uploadWordDocument(docs[0], { select });
+      return;
+    }
+
+    const failures = [];
+    wordBatch = { done: 0, total: docs.length, current: docs[0].name };
+    wordUploadRowEl.classList.add('linking');
+    renderResources();
+    try {
+      for (const file of docs) {
+        wordBatch.current = file.name;
+        renderResources();
+        try {
+          await uploadWordDocument(file, { select: false, silent: true });
+        } catch (err) {
+          failures.push(file.name + ' (' + err.message + ')');
+        }
+        wordBatch.done += 1;
+      }
+    } finally {
+      wordBatch = null;
+      wordUploadRowEl.classList.remove('linking');
+      renderResources();
+    }
+
+    const uploaded = docs.length - failures.length;
+    const parts = [uploaded + ' Word document' + (uploaded === 1 ? '' : 's') + ' uploaded'];
+    if (ignored) parts.push(ignored + ' non-Word file' + (ignored === 1 ? '' : 's') + ' ignored');
+    if (failures.length) parts.push(failures.length + ' failed: ' + failures.join(', '));
+    addRow(failures.length ? 'error' : 'info', parts.join(' · ') + '.');
+  }
+
   wordUploadRowEl.addEventListener('click', () => {
-    if (wordUploading) return;
+    if (wordUploading || wordBatch) return;
     wordFileInputEl.click();
   });
 
   wordFileInputEl.addEventListener('change', () => {
-    const file = wordFileInputEl.files[0];
+    const files = Array.from(wordFileInputEl.files);
     wordFileInputEl.value = ''; // reset so picking the same file again still fires 'change'
-    if (file) uploadWordDocument(file);
-  });
-
-  // Drop target too, same four-event preventDefault() dance the Uploaded
-  // Documents dropzone needs (see its own comment) or the browser navigates
-  // to the dropped file instead.
-  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach((evt) => {
-    wordUploadRowEl.addEventListener(evt, (e) => e.preventDefault());
-  });
-  wordUploadRowEl.addEventListener('dragenter', () => wordUploadRowEl.classList.add('drag-over'));
-  wordUploadRowEl.addEventListener('dragover', () => wordUploadRowEl.classList.add('drag-over'));
-  wordUploadRowEl.addEventListener('dragleave', () => wordUploadRowEl.classList.remove('drag-over'));
-  wordUploadRowEl.addEventListener('drop', (e) => {
-    wordUploadRowEl.classList.remove('drag-over');
-    const file = e.dataTransfer?.files?.[0];
-    if (file) uploadWordDocument(file);
+    if (files.length) uploadWordDocuments(files);
   });
 
   async function fetchDocuments() {
@@ -4452,26 +5895,117 @@
   // selected stays selected (2026-08-22 multi-document change - see
   // activeDocumentIds' own doc comment).
   //
-  // projectId (2026-08-23, user's own request "when uploading a file...
+  // spaceId (2026-08-23, user's own request "when uploading a file...
   // then save the files in the project folder of the active project" - see
   // springchat3_projects_panel.md in project memory) is sent as a query
   // param, not a second multipart part - upload()'s own doc comment
   // (DocumentController.kt) explains why: avoiding Spring WebFlux
   // multipart-text-part binding, which this app has never relied on
   // elsewhere.
-  async function uploadDocument(file) {
+  /*
+   * Folder / multi-file PDF upload (2026-08-24, "can you support selecting a
+   * folder, all pdfs shall be uploaded. other files than pdf are ignored").
+   * Shared by the two pickers and by dropping files or folders onto a space.
+   *
+   * Three deliberate choices:
+   *
+   * 1. **Sequential, not parallel.** Every upload runs server-side text
+   *    extraction and embedding (see DocumentIndex), so firing thirty at once
+   *    would queue them on the backend anyway while making progress
+   *    unreportable and one failure hard to attribute.
+   *
+   * 2. **One failure does not abort the batch.** Failures are collected and
+   *    reported once at the end rather than as one error row per file, which
+   *    for a folder of mixed-quality PDFs would bury the chat.
+   *
+   * 3. **A batch does not auto-select what it uploaded.** A single upload
+   *    still does - dropping one PDF means you want to ask about it next.
+   *    Auto-selecting thirty would silently attach all of them to the next
+   *    message.
+   */
+  const isPdf = (file) => file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
+
+  // Non-null while a batch runs: { done, total, current }. renderResources()
+  // draws it as a pending card in the active space, the same way wordUploading
+  // is drawn for an in-flight .docx.
+  let pdfBatch = null;
+
+  async function uploadPdfs(files, source) {
+    if (pdfBatch) return;
+    const pdfs = files.filter(isPdf);
+    const ignored = files.length - pdfs.length;
+
+    if (!pdfs.length) {
+      addRow('error', source === 'folder'
+        ? 'No PDFs found in that folder' + (ignored ? ' (' + ignored + ' other file' + (ignored === 1 ? '' : 's') + ' ignored).' : '.')
+        : 'No PDFs in that selection.');
+      return;
+    }
+
+    // A single file keeps the original one-shot behaviour, auto-select included.
+    if (pdfs.length === 1 && !ignored) {
+      await uploadDocument(pdfs[0]);
+      return;
+    }
+
+    const failures = [];
+    pdfBatch = { done: 0, total: pdfs.length, current: pdfs[0].name };
+    docUploadBtnEl.disabled = true;
+    renderResources();
+    try {
+      for (const file of pdfs) {
+        pdfBatch.current = file.name;
+        renderResources();
+        try {
+          await uploadDocument(file, { select: false, silent: true });
+        } catch (err) {
+          failures.push(file.name + ' (' + err.message + ')');
+        }
+        pdfBatch.done += 1;
+      }
+    } finally {
+      pdfBatch = null;
+      updateSidePanelEnabled();
+      renderResources();
+    }
+
+    const uploaded = pdfs.length - failures.length;
+    const parts = [uploaded + ' PDF' + (uploaded === 1 ? '' : 's') + ' uploaded'];
+    if (ignored) parts.push(ignored + ' non-PDF file' + (ignored === 1 ? '' : 's') + ' ignored');
+    if (failures.length) parts.push(failures.length + ' failed: ' + failures.join(', '));
+    addRow(failures.length ? 'error' : 'info', parts.join(' · ') + '.');
+  }
+
+  // opts.select:false and opts.silent:true are what uploadPdfs() passes for a
+  // batch member - see that function's own doc comment for why a batch neither
+  // auto-selects nor reports per file. A lone upload keeps both defaults, and
+  // with silent:false a failure is reported here and swallowed; with
+  // silent:true it is rethrown for the batch to collect.
+  async function uploadDocument(file, opts = {}) {
+    const { select = true, silent = false } = opts;
     docUploadBtnEl.disabled = true;
     try {
       const formData = new FormData();
-      formData.append('file', file);
-      const url = activeProjectId ? '/upload?projectId=' + encodeURIComponent(activeProjectId) : '/upload';
+      // Explicit basename as the third argument. A directory picker reports a
+      // file's name as its path relative to the chosen folder, and the browser
+      // sends THAT as the multipart filename - so a folder upload would store
+      // and display documents called "reports/q3/summary.pdf". Harmless
+      // server-side (DocumentController passes filePart.filename() to
+      // DocumentStore.store as display metadata only; the bytes are written
+      // under ExtractedDocument.rawFilename, never under the uploaded name),
+      // but wrong in every card and trace line. Normalising here rather than
+      // at each call site covers the picker, a multi-select and a dropped
+      // folder in one place.
+      formData.append('file', file, (file.name || 'document.pdf').split(/[\\/]/).pop());
+      const url = activeSpaceId ? '/upload?spaceId=' + encodeURIComponent(activeSpaceId) : '/upload';
       const res = await fetch(url, { method: 'POST', headers: csrfHeader(), body: formData });
       if (!res.ok) throw new Error('Server responded with ' + res.status);
       const doc = await res.json();
       documents.push(doc);
-      activeDocumentIds.add(doc.documentId);
+      if (select) activeDocumentIds.add(doc.documentId);
       renderDocList();
     } catch (err) {
+      if (silent) throw err;
       addRow('error', 'Could not upload ' + file.name + ': ' + err.message);
     } finally {
       // updateSidePanelEnabled() (2026-08-23), not a bare `docUploadBtnEl.disabled
@@ -4481,7 +6015,7 @@
       // see that function's own doc comment), re-enabling the button
       // unconditionally here would leave it clickable with no project to
       // upload into.
-      updateSidePanelEnabled();
+      if (!pdfBatch) updateSidePanelEnabled();
     }
   }
 
@@ -4521,35 +6055,231 @@
   }
 
   docUploadBtnEl.addEventListener('click', () => docFileInputEl.click());
+  folderUploadRowEl.addEventListener('click', () => {
+    if (pdfBatch) return; // a batch is already running
+    folderFileInputEl.click();
+  });
 
   docFileInputEl.addEventListener('change', () => {
-    const file = docFileInputEl.files[0];
+    const files = Array.from(docFileInputEl.files);
     docFileInputEl.value = ''; // reset so picking the same file again still fires 'change'
-    if (file) uploadDocument(file);
+    if (files.length) uploadPdfs(files);
   });
 
-  // Drag-and-drop upload target - all four drag events need preventDefault()
-  // or the browser's own "open this file" navigation hijacks the drop
-  // instead of firing our handler below.
+  folderFileInputEl.addEventListener('change', () => {
+    const files = Array.from(folderFileInputEl.files);
+    folderFileInputEl.value = '';
+    if (files.length) uploadPdfs(files, 'folder');
+  });
+
+  /*
+   * One drop target for both file kinds (2026-08-24), replacing the two
+   * separate dashed boxes - #doc-dropzone for PDFs and #word-upload-row for
+   * .docx - that the flattened list did away with. Routing is by extension
+   * rather than by which box you hit: a .docx goes to POST /word-documents,
+   * anything else to POST /upload, which is where a wrong file type gets its
+   * error message anyway.
+   *
+   * Each expanded space's block is a drop target. Delegated on
+   * #projects-list rather than bound per block, because renderProjects()
+   * discards and rebuilds those blocks on every render - per-block listeners
+   * would have to be re-attached each time, and any drag in progress across
+   * a re-render would lose its target.
+   *
+   * All four drag events still need preventDefault() or the browser's own
+   * "open this file" navigation hijacks the drop before the handler runs.
+   * dragleave is filtered on `contains`, unlike the small dashed boxes this
+   * replaced: over a block this size the event fires constantly as the
+   * pointer crosses the cards inside it, which would otherwise flicker the
+   * highlight for the whole drag.
+   */
+  /*
+   * Two kinds of drag land on the same targets (2026-08-25, user's own
+   * request "Would it be possible to support drag and drop of a document from
+   * one space to another"): files from the desktop, and a resource card being
+   * re-filed from one space into another.
+   *
+   * They are told apart by a custom dataTransfer type rather than by
+   * inspecting the payload, because during dragenter/dragover getData()
+   * deliberately returns '' - only `types` is readable until the drop itself,
+   * so the decision has to be made from the presence of the type alone.
+   *
+   * A space ROW is a drop target as well as its resources block, so a document
+   * can be filed into a space that is collapsed - which is most of them.
+   */
+  const DOC_DRAG_TYPE = 'application/x-springchat3-document';
+  const DROP_TARGET_SELECTOR = '.space-resources, .project-item';
+
+  const isDocumentDrag = (e) => Array.from(e.dataTransfer?.types || []).includes(DOC_DRAG_TYPE);
+  const dropTargetFor = (e) => e.target?.closest?.(DROP_TARGET_SELECTOR) || null;
+
+  // Called by the three card builders. buildDocItem deliberately does NOT call
+  // it: a file nested inside a linked Drive folder belongs to that folder's
+  // sync, which would recreate it in the original space on the next run - the
+  // server refuses it with a 409 for the same reason.
+  function makeDocumentDraggable(card, documentId) {
+    card.draggable = true;
+    card.dataset.documentId = documentId;
+  }
+
+  projectsListEl.addEventListener('dragstart', (e) => {
+    const card = e.target?.closest?.('[data-document-id]');
+    if (!card || !e.dataTransfer) return;
+    e.dataTransfer.setData(DOC_DRAG_TYPE, card.dataset.documentId);
+    e.dataTransfer.effectAllowed = 'move';
+    card.classList.add('dragging');
+  });
+
+  projectsListEl.addEventListener('dragend', (e) => {
+    e.target?.closest?.('[data-document-id]')?.classList.remove('dragging');
+  });
+
+  // undefined for an id this page doesn't know (a stale card from before a
+  // refresh), which is different from null - the unscoped bucket.
+  function spaceIdOfDocument(documentId) {
+    const lists = [documents, wordDocuments, webPages, driveStatus.workingDocuments];
+    for (const list of lists) {
+      const row = list.find((d) => d.documentId === documentId);
+      if (row) return row.spaceId ?? null;
+    }
+    return undefined;
+  }
+
+  // PATCH, not POST: the document keeps its id across the move, which is what
+  // keeps it selected and attached to the conversation. The server moves the
+  // whole directory - embeddings included - so there is nothing to re-upload
+  // and nothing to reindex here.
+  async function moveDocumentToSpace(documentId, targetSpaceId) {
+    const current = spaceIdOfDocument(documentId);
+    if (current === undefined || current === targetSpaceId) return;
+    try {
+      const res = await fetch('/documents/' + encodeURIComponent(documentId) + '/space', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ spaceId: targetSpaceId }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+    } catch (err) {
+      addRow('error', 'Could not move the document: ' + err.message);
+      return;
+    }
+    // Whichever list holds it - the same "touch every list, the others are
+    // no-ops" shape deleteDocument uses, for the same reason: which array a
+    // documentId lives in isn't tracked anywhere.
+    for (const list of [documents, wordDocuments, webPages, driveStatus.workingDocuments]) {
+      const row = list.find((d) => d.documentId === documentId);
+      if (row) row.spaceId = targetSpaceId;
+    }
+    // A document that left the active space can no longer be attached to the
+    // next message; renderResources() re-renders the chips at its end.
+    pruneActiveDocumentSelection();
+    // Expand the destination, the same "an add always lands somewhere visible"
+    // rule selectProject and the ＋ already follow - otherwise a document
+    // dropped on a collapsed row appears to vanish.
+    if (targetSpaceId) setSpaceExpanded(targetSpaceId, true);
+    else renderResources();
+  }
+
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach((evt) => {
-    docDropzoneEl.addEventListener(evt, (e) => e.preventDefault());
+    projectsListEl.addEventListener(evt, (e) => {
+      if (dropTargetFor(e)) e.preventDefault();
+    });
   });
-  docDropzoneEl.addEventListener('dragenter', () => docDropzoneEl.classList.add('drag-over'));
-  docDropzoneEl.addEventListener('dragover', () => docDropzoneEl.classList.add('drag-over'));
-  docDropzoneEl.addEventListener('dragleave', () => docDropzoneEl.classList.remove('drag-over'));
-  docDropzoneEl.addEventListener('drop', (e) => {
-    docDropzoneEl.classList.remove('drag-over');
-    const file = e.dataTransfer?.files?.[0];
-    if (file) uploadDocument(file);
+  ['dragenter', 'dragover'].forEach((evt) => {
+    projectsListEl.addEventListener(evt, (e) => {
+      const target = dropTargetFor(e);
+      if (!target) return;
+      projectsListEl.querySelectorAll('.drag-over').forEach((el) => {
+        if (el !== target) el.classList.remove('drag-over');
+      });
+      target.classList.add('drag-over');
+    });
+  });
+  projectsListEl.addEventListener('dragleave', (e) => {
+    const target = dropTargetFor(e);
+    if (target && !target.contains(e.relatedTarget)) target.classList.remove('drag-over');
+  });
+  /*
+   * Dropped folders (2026-08-24, alongside the folder picker). The entries
+   * have to be pulled out of dataTransfer.items SYNCHRONOUSLY - the items list
+   * is neutered the moment the handler yields, so webkitGetAsEntry() must run
+   * before the first await, and only the resulting entry objects survive.
+   *
+   * dataTransfer.files is kept as the fallback for anything without the entry
+   * API; it cannot describe a directory's contents, but a dropped directory
+   * appears there as a nameless typeless File that isPdf() rejects anyway.
+   */
+  function dropEntries(dataTransfer) {
+    const items = dataTransfer?.items;
+    if (!items || !items.length || typeof items[0].webkitGetAsEntry !== 'function') return null;
+    const entries = Array.from(items).map((item) => item.webkitGetAsEntry()).filter(Boolean);
+    return entries.length ? entries : null;
+  }
+
+  // Depth-first, and readEntries() is called in a loop until it returns empty:
+  // it yields at most ~100 children per call by spec, so a single call silently
+  // truncates a large folder.
+  async function collectEntryFiles(entry, out) {
+    if (entry.isFile) {
+      await new Promise((resolve) => entry.file((f) => { out.push(f); resolve(); }, resolve));
+      return;
+    }
+    if (!entry.isDirectory) return;
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((resolve) => reader.readEntries(resolve, () => resolve([])));
+      if (!batch.length) break;
+      for (const child of batch) await collectEntryFiles(child, out);
+    }
+  }
+
+  projectsListEl.addEventListener('drop', (e) => {
+    const target = dropTargetFor(e);
+    if (!target) return;
+    target.classList.remove('drag-over');
+    const spaceId = target.dataset.spaceId;
+    // A card being re-filed, not files from the desktop. Handled before the
+    // file path even looks at dataTransfer.files, which is empty for this kind
+    // of drag and would otherwise just fall through to `return`.
+    if (isDocumentDrag(e)) {
+      const documentId = e.dataTransfer.getData(DOC_DRAG_TYPE);
+      if (documentId && spaceId) moveDocumentToSpace(documentId, spaceId);
+      return;
+    }
+    const entries = dropEntries(e.dataTransfer);
+    const dropped = Array.from(e.dataTransfer?.files || []);
+    if (!entries && !dropped.length) return;
+    // Dropping into a space that isn't active must file it there, not into
+    // whatever happens to be selected - both upload paths send activeSpaceId.
+    if (spaceId && activeSpaceId !== spaceId) selectProject(spaceId);
+    (async () => {
+      let files = dropped;
+      if (entries) {
+        const out = [];
+        for (const entry of entries) await collectEntryFiles(entry, out);
+        files = out;
+      }
+      if (!files.length) return;
+      // Split by extension and run the two batches one after the other, never
+      // at once (2026-08-25, when .docx stopped being a single-file path):
+      // both are sequential precisely so the server extracts one document at
+      // a time, and starting them in parallel would give that up.
+      const docx = files.filter(isDocx);
+      const rest = files.filter((f) => !isDocx(f));
+      if (docx.length) await uploadWordDocuments(docx, { select: rest.length === 0 });
+      if (rest.length) await uploadPdfs(rest, entries?.some((en) => en.isDirectory) ? 'folder' : undefined);
+    })();
   });
 
-  // Per-section collapse state for the right panel's four resource sections
-  // (2026-08-23, "make the sections ... collapsable"), keyed by each
-  // <details>' data-section. Same localStorage pattern - and same
-  // storage-unavailable tolerance - as collapsedDriveFolderIds above; the
-  // <details> elements do the actual expanding/collapsing themselves, this
-  // only remembers the choice.
-  const panelSectionEls = Array.from(sidePanelContentEl.querySelectorAll('.panel-section'));
+  // Per-section collapse state for the four resource sections (2026-08-23,
+  // "make the sections ... collapsable") plus Chat History (2026-08-24, when
+  // the resource sections moved into this same panel), keyed by each
+  // <details>' data-section. Scoped to #projects-panel rather than the old
+  // #side-panel-content so it picks up both. Same localStorage pattern - and
+  // same storage-unavailable tolerance - as collapsedDriveFolderIds above;
+  // the <details> elements do the actual expanding/collapsing themselves,
+  // this only remembers the choice.
+  const panelSectionEls = Array.from(projectsPanelEl.querySelectorAll('.panel-section'));
   let collapsedPanelSections = new Set();
   try {
     const stored = localStorage.getItem('collapsedPanelSections');
@@ -4587,22 +6317,23 @@
   // silently vanish the next time it's expanded.
   function setPanelCollapsed(collapsed) {
     sidePanelEl.classList.toggle('collapsed', collapsed);
-    panelToggleEl.textContent = collapsed ? '‹' : '›';
-    panelToggleEl.title = collapsed ? 'Expand documents panel' : 'Collapse documents panel';
+    setIcon(panelToggleEl, collapsed ? 'chevron-left' : 'chevron-right');
+    panelToggleEl.title = collapsed ? 'Expand preview panel' : 'Collapse preview panel';
     panelResizeHandleEl.hidden = collapsed;
     if (collapsed) {
       sidePanelEl.style.width = '';
     } else {
       let storedWidth = null;
       try {
-        storedWidth = localStorage.getItem('sidePanelWidth');
+        storedWidth = localStorage.getItem('previewPanelWidth');
       } catch {
-        // Storage unavailable - falls through to the CSS default (300px).
+        // Storage unavailable - falls through to the CSS default (440px).
       }
-      if (storedWidth) sidePanelEl.style.width = storedWidth + 'px';
+      // Clamped: the window may be narrower now than when the width was stored.
+      if (storedWidth) sidePanelEl.style.width = clampPreviewPanelWidth(parseInt(storedWidth, 10) || 0) + 'px';
     }
     try {
-      localStorage.setItem('sidePanelCollapsed', collapsed ? '1' : '0');
+      localStorage.setItem('previewPanelCollapsed', collapsed ? '1' : '0');
     } catch {
       // Storage unavailable (private browsing, etc.) - the collapse choice
       // just won't survive a reload, which is a harmless degradation.
@@ -4621,24 +6352,43 @@
   // itself wouldn't survive.
   const PANEL_MIN_WIDTH = 220;
   const PANEL_MAX_WIDTH = 560;
+  // The preview pane's only ceiling is leaving this much for the chat itself
+  // (2026-08-25, user's own request to be able to widen it further - was a
+  // flat PREVIEW_PANEL_MAX_WIDTH = 1000). Measured against the left panel's
+  // *real* width rather than a constant, so collapsing that panel hands its
+  // space to the preview instead of it staying reserved.
+  const CHAT_MIN_WIDTH = 360;
+
+  function maxPreviewPanelWidth() {
+    const leftWidth = projectsPanelEl ? projectsPanelEl.getBoundingClientRect().width : 0;
+    return Math.max(PANEL_MIN_WIDTH, window.innerWidth - leftWidth - CHAT_MIN_WIDTH);
+  }
+
+  // Applied on every path that sets the width - drag, the width restored on
+  // expand, and a viewport that shrank under a stored width.
+  function clampPreviewPanelWidth(width) {
+    return Math.min(maxPreviewPanelWidth(), Math.max(PANEL_MIN_WIDTH, width));
+  }
+
   let panelResizeStartX = 0;
   let panelResizeStartWidth = 0;
 
   function onPanelResizeMove(e) {
-    // Leave at least ~320px for the chat pane itself even on a narrow
-    // viewport, on top of the fixed PANEL_MAX_WIDTH ceiling.
-    const maxWidth = Math.min(PANEL_MAX_WIDTH, window.innerWidth - 320);
     const delta = panelResizeStartX - e.clientX;
-    const width = Math.min(maxWidth, Math.max(PANEL_MIN_WIDTH, panelResizeStartWidth + delta));
-    sidePanelEl.style.width = width + 'px';
+    sidePanelEl.style.width = clampPreviewPanelWidth(panelResizeStartWidth + delta) + 'px';
   }
+
+  window.addEventListener('resize', () => {
+    if (sidePanelEl.classList.contains('collapsed') || !sidePanelEl.style.width) return;
+    sidePanelEl.style.width = clampPreviewPanelWidth(sidePanelEl.getBoundingClientRect().width) + 'px';
+  });
 
   function stopPanelResize() {
     sidePanelEl.classList.remove('resizing');
     panelResizeHandleEl.classList.remove('dragging');
     panelResizeHandleEl.removeEventListener('pointermove', onPanelResizeMove);
     try {
-      localStorage.setItem('sidePanelWidth', String(Math.round(sidePanelEl.getBoundingClientRect().width)));
+      localStorage.setItem('previewPanelWidth', String(Math.round(sidePanelEl.getBoundingClientRect().width)));
     } catch {
       // Storage unavailable - the chosen width just won't survive a reload.
     }
@@ -4656,12 +6406,17 @@
     panelResizeHandleEl.addEventListener('pointerup', stopPanelResize, { once: true });
   });
 
+  // Collapsed until a document is actually opened (2026-08-24) - an empty
+  // preview pane earns no width, and openPdfViewer() expands it on demand.
+  // New localStorage key rather than reusing sidePanelCollapsed, so an
+  // existing "expanded" choice made against the old resources panel doesn't
+  // carry over to a pane that means something entirely different.
   let initiallyCollapsed;
   try {
-    const stored = localStorage.getItem('sidePanelCollapsed');
-    initiallyCollapsed = stored !== null ? stored === '1' : window.matchMedia('(max-width: 700px)').matches;
+    const stored = localStorage.getItem('previewPanelCollapsed');
+    initiallyCollapsed = stored !== null ? stored === '1' : true;
   } catch {
-    initiallyCollapsed = false;
+    initiallyCollapsed = true;
   }
   setPanelCollapsed(initiallyCollapsed);
 
@@ -4672,8 +6427,8 @@
   // where it *shrinks* the right one) and which chevron means "expand".
   function setProjectsPanelCollapsed(collapsed) {
     projectsPanelEl.classList.toggle('collapsed', collapsed);
-    projectsToggleEl.textContent = collapsed ? '›' : '‹';
-    projectsToggleEl.title = collapsed ? 'Expand projects panel' : 'Collapse projects panel';
+    setIcon(projectsToggleEl, collapsed ? 'chevron-right' : 'chevron-left');
+    projectsToggleEl.title = collapsed ? 'Expand spaces panel' : 'Collapse spaces panel';
     projectsPanelResizeHandleEl.hidden = collapsed;
     if (collapsed) {
       projectsPanelEl.style.width = '';
@@ -4759,9 +6514,14 @@
   // change. Sent to the server on every upload/Drive-folder-link/Working-
   // Document-link since v7 (see uploadDocument/linkDriveFolder/linkGoogleDoc
   // below), and drives which project's resources the right panel shows
-  // since v8 (see matchesActiveProject) and whether it's usable at all since
+  // since v8 (see matchesActiveSpace) and whether it's usable at all since
   // v9 below (see updateSidePanelEnabled).
-  let activeProjectId = null;
+  let activeSpaceId = null;
+
+  // Who is signed in, lowercased - set from GET /me (see applyCurrentUser).
+  // Used only to tell whether a space is mine to share; every rule that
+  // matters is enforced server-side by SpaceAccess.
+  let currentUserEmail = '';
 
   // Chat session id (2026-08-23, user's own request "add a chat sessionId
   // to the chat-history, append questions and answer to the same chat
@@ -4771,7 +6531,7 @@
   // streamChat's own doc comment) so every turn from this browser tab lands
   // in the same session file (ChatHistoryStore.recordTurn) until "New Chat"
   // is clicked (see newChatBtnEl's own listener below), which mints a fresh
-  // one. Deliberately independent of activeProjectId/activeDocumentIds -
+  // one. Deliberately independent of activeSpaceId/activeDocumentIds -
   // switching projects does NOT start a new session, only the button does,
   // per the user's own answer that this is a storage-only change for now
   // (no session list/browse UI yet).
@@ -4789,45 +6549,193 @@
   // stores both halves of a turn, not filtered out here.
   let chatHistory = [];
 
-  // The right panel is disabled - its three resource sections hidden behind
-  // a plain explanatory message, and its own "+" upload button disabled -
-  // whenever no project is active (2026-08-23, user's own request "When no
-  // project in left panel, right panel should be disabled" - see
-  // springchat3_projects_panel.md in project memory): every resource there
-  // now belongs to a project (v7), so there's nothing meaningful to show or
-  // upload/link into without one selected. In practice this should rarely be
-  // seen once at least one project exists, since fetchProjects() below
-  // auto-selects the first project on load (same request, "When user logs
-  // in a project shall be selected. Choose first.") - it's mainly visible
-  // for a brand new user with zero projects yet, or if the user manually
-  // deselects the active project by clicking it again.
-  //
-  // Deliberately doesn't touch #drive-link-row/#workingdoc-link-row's own
-  // `disabled` state directly (they're plain `<div>`s, not real `<button>`
-  // elements, so there's no such attribute to set) - hiding their whole
-  // container (#side-panel-content) makes them unreachable regardless, same
-  // effect without needing a second, parallel disabling mechanism.
+  /*
+   * "Add to this space" (2026-08-24). The resource LIST is inline in the
+   * panel; this popup is only the five add actions, opened by the + on a
+   * space row - which selects that space first, so there is always an active
+   * space by construction. The guard below is what is left of
+   * updateSidePanelEnabled()'s older job: with no space active there is
+   * nothing to add into and nothing to show.
+   */
+  function openAddResourceModal() {
+    if (activeSpaceId === null) return;
+    const space = projects.find((p) => p.spaceId === activeSpaceId);
+    addResourceTitleEl.textContent = space ? `Add to ${space.name}` : 'Add to this space';
+    shareRowEl.hidden = !isOwnedByMe(space);
+    deleteSpaceRowEl.hidden = !isOwnedByMe(space);
+    addResourceOverlayEl.hidden = false;
+  }
+
+  function closeAddResourceModal() {
+    addResourceOverlayEl.hidden = true;
+  }
+
+  // The five items each run their own pre-existing handler (attached further
+  // down, on the very same elements these used to be as dashed connect-rows).
+  // This listener only dismisses the popup afterwards, in the capture phase
+  // so it still fires for the four that stopPropagation.
+  addResourceOverlayEl.querySelector('.add-menu')
+    .addEventListener('click', () => closeAddResourceModal(), true);
+
+  addResourceCloseBtnEl.addEventListener('click', closeAddResourceModal);
+
+  // Same backdrop-plus-Escape wiring as every other modal on this page.
+  addResourceOverlayEl.addEventListener('click', (e) => {
+    if (e.target === addResourceOverlayEl) closeAddResourceModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !addResourceOverlayEl.hidden) closeAddResourceModal();
+  });
+
+  /*
+   * Which spaces show their resources (2026-08-24, "Do not automatically
+   * collapse a space, when another space is selected") - a Set, not derived
+   * from activeSpaceId, which is the whole point: selecting a space expands
+   * it and leaves every other expansion alone. The only thing that collapses
+   * a space is its own chevron disclosure.
+   *
+   * Persisted like every other panel preference on this page, with the same
+   * storage-unavailable tolerance.
+   */
+  let expandedSpaceIds = new Set();
+  try {
+    const stored = localStorage.getItem('expandedSpaces');
+    if (stored) expandedSpaceIds = new Set(JSON.parse(stored));
+  } catch {
+    // Storage unavailable or corrupt - start with everything collapsed.
+  }
+
+  function persistExpandedSpaces() {
+    try {
+      localStorage.setItem('expandedSpaces', JSON.stringify(Array.from(expandedSpaceIds)));
+    } catch {
+      // Storage unavailable - the choice just won't survive a reload.
+    }
+  }
+
+  function setSpaceExpanded(spaceId, expanded) {
+    if (expanded) expandedSpaceIds.add(spaceId);
+    else expandedSpaceIds.delete(spaceId);
+    persistExpandedSpaces();
+    renderProjects();
+  }
+
   function updateSidePanelEnabled() {
-    const enabled = activeProjectId !== null;
-    sidePanelContentEl.hidden = !enabled;
-    sidePanelDisabledHintEl.hidden = enabled;
+    const enabled = activeSpaceId !== null;
     docUploadBtnEl.disabled = !enabled;
+    if (!enabled) closeAddResourceModal();
   }
   updateSidePanelEnabled();
 
+  // The four list containers and the empty hint, as classes rather than ids -
+  // there is one of each per expanded space now, not one per page.
+  function buildSpaceResources(spaceId) {
+    const block = document.createElement('div');
+    block.className = 'space-resources';
+    block.dataset.spaceId = spaceId;
+    for (const cls of ['uploaded-doc-list', 'drive-folder-list', 'workingdoc-list', 'webpage-list']) {
+      const list = document.createElement('div');
+      list.className = cls;
+      block.appendChild(list);
+    }
+    const empty = document.createElement('div');
+    empty.className = 'space-resources-empty resources-empty-hint';
+    empty.hidden = true;
+    empty.innerHTML = 'Nothing here yet.<br>Use + above, or drop a PDF or Word document here.';
+    block.appendChild(empty);
+
+    /*
+     * Selecting a document belongs to whichever space owns it, so a click
+     * inside a non-active space's block activates that space FIRST - in the
+     * capture phase, before the card's own toggle handler runs on the way
+     * back up. selectProject() prunes the previous space's selection (its
+     * documented behaviour), then the card's handler adds its own id, so the
+     * result is exactly "that one document, in its own space". Without this,
+     * the id would be added under the wrong activeSpaceId and pruned away at
+     * the next switch.
+     */
+    block.addEventListener('click', () => {
+      if (activeSpaceId !== spaceId) selectProject(spaceId);
+    }, true);
+
+    return block;
+  }
+
   function buildProjectItem(project) {
     const item = document.createElement('div');
-    item.className = 'project-item' + (project.projectId === activeProjectId ? ' active' : '');
+    item.className = 'project-item' + (project.spaceId === activeSpaceId ? ' active' : '');
     const nameRow = document.createElement('div');
+    item.dataset.spaceId = project.spaceId; // read by the drop handler, which has no closure over this
     nameRow.className = 'project-item-name-row';
+
+    // The only control that collapses a space. Selecting a different space
+    // deliberately leaves this one as it is.
+    const expanded = expandedSpaceIds.has(project.spaceId);
+    const disclosure = document.createElement('button');
+    disclosure.type = 'button';
+    disclosure.className = 'project-item-disclosure' + (expanded ? ' expanded' : '');
+    disclosure.title = expanded ? 'Collapse this space' : 'Show this space\'s resources';
+    setIcon(disclosure, 'chevron-right', 14);
+    disclosure.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also select the space
+      setSpaceExpanded(project.spaceId, !expandedSpaceIds.has(project.spaceId));
+    });
+    nameRow.appendChild(disclosure);
+
     const name = document.createElement('div');
     name.className = 'project-item-name';
     name.textContent = project.name;
     nameRow.appendChild(name);
     const id = document.createElement('span');
     id.className = 'project-item-id';
-    id.textContent = '#' + project.projectId;
+    id.textContent = '#' + project.spaceId;
     nameRow.appendChild(id);
+
+    if ((project.members || []).length > 0) {
+      const shared = document.createElement('span');
+      shared.className = 'project-item-shared';
+      shared.textContent = 'Shared';
+      const withWhom = project.members.map((m) => m.email === '*' ? 'anyone who can sign in' : m.email);
+      shared.title = 'Shared with ' + withWhom.join(', ');
+      nameRow.appendChild(shared);
+    }
+
+    /*
+     * + opens this space's resources (2026-08-24, the user's own choice of
+     * entry point). Selecting the space first is deliberate rather than
+     * incidental: every resource list filters through matchesActiveSpace, so
+     * opening a non-active space's resources without activating it would show
+     * the wrong space's contents. The count next to it is what stops a space
+     * being opaque now that its contents live behind a modal.
+     */
+    const add = document.createElement('div');
+    add.className = 'project-item-add';
+    const count = resourceCountFor(project.spaceId);
+    if (count > 0) {
+      const countEl = document.createElement('span');
+      countEl.className = 'project-item-add-count';
+      countEl.textContent = String(count);
+      add.appendChild(countEl);
+    }
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'panel-icon-btn project-item-add-btn';
+    addBtn.title = 'Add to this space';
+    setIcon(addBtn, 'plus', 15);
+    addBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also toggle the space's active state
+      // Selecting first is required, not cosmetic: every add path sends
+      // activeSpaceId, and every list filters through matchesActiveSpace, so
+      // adding into a space that isn't active would file it in the wrong one.
+      // selectProject() also expands, so an add always lands somewhere visible.
+      if (activeSpaceId !== project.spaceId) selectProject(project.spaceId);
+      else if (!expandedSpaceIds.has(project.spaceId)) setSpaceExpanded(project.spaceId, true);
+      openAddResourceModal();
+    });
+    add.appendChild(addBtn);
+    nameRow.appendChild(add);
+
     item.appendChild(nameRow);
     if (project.description) {
       const desc = document.createElement('div');
@@ -4835,36 +6743,62 @@
       desc.textContent = project.description;
       item.appendChild(desc);
     }
-    // Click toggles this project's active state, exclusively - picking a
-    // different project silently drops the previous selection, and
-    // clicking the already-active one deselects it entirely. Also refreshes
-    // the right panel's three resource lists (2026-08-23, user's own request
-    // "The right panel shall display the project resources of the selected
-    // project... when the user selects another project... the right panel
-    // shall be refreshed" - see springchat3_projects_panel.md in project
-    // memory) - documents/driveStatus themselves are unchanged (already hold
-    // every project's resources, fetched once - see matchesActiveProject's
-    // own doc comment), so this only needs to re-render, not re-fetch.
+    /*
+     * Selecting expands, and never collapses anything else. Deselecting (a
+     * second click on the active row) leaves the expansion alone too - since
+     * 2026-08-24 expansion is a state the user owns, not a side effect of
+     * which space happens to be active.
+     */
     item.addEventListener('click', () => {
-      activeProjectId = activeProjectId === project.projectId ? null : project.projectId;
-      pruneActiveDocumentSelection();
-      renderProjects();
-      renderDocList();
-      renderDriveSection();
-      renderWorkingDocsSection();
-      renderWebPagesSection();
-      updateSidePanelEnabled();
+      selectProject(activeSpaceId === project.spaceId ? null : project.spaceId);
       renderActiveThread();
     });
     return item;
   }
 
+  /*
+   * The one place the active space changes. Was an open-coded six-call chain
+   * duplicated at four sites (space click, chat-history click, first-space
+   * auto-select, new-space creation) - folded into a function on 2026-08-24
+   * when the + button became a fifth caller, since a chain that long copied
+   * five times is exactly how one copy ends up missing a call, which is a
+   * mistake this file has already made twice (see pruneActiveDocumentSelection
+   * and renderWebPagesSection's own bug-fix comments).
+   */
+  function selectProject(spaceId) {
+    activeSpaceId = spaceId;
+    // Selecting a space shows it - one rule covering all four entry points
+    // (row click, +, a chat-history row, and the first-space auto-select on
+    // load), rather than each remembering to expand for itself. It only ever
+    // ADDS: nothing here collapses another space, which is the whole point.
+    if (spaceId !== null && !expandedSpaceIds.has(spaceId)) {
+      expandedSpaceIds.add(spaceId);
+      persistExpandedSpaces();
+    }
+    pruneActiveDocumentSelection();
+    renderProjects();
+    renderDocList();
+    renderDriveSection();
+    renderWorkingDocsSection();
+    renderWebPagesSection();
+    updateSidePanelEnabled();
+  }
+
+  // Rebuilds every space row, and a fresh .space-resources block after each
+  // EXPANDED one - discard-and-rebuild, same as everything else in this file,
+  // rather than diffing. renderResources() then fills whichever blocks exist.
   function renderProjects() {
-    projectsListEl.querySelectorAll('.project-item').forEach((el) => el.remove());
+    projectsListEl.querySelectorAll('.project-item, .space-resources').forEach((el) => el.remove());
     projectsEmptyHintEl.hidden = projects.length > 0;
     for (const project of projects) {
-      projectsListEl.appendChild(buildProjectItem(project));
+      const item = buildProjectItem(project);
+      projectsListEl.appendChild(item);
+      if (expandedSpaceIds.has(project.spaceId)) {
+        item.classList.add('project-item--expanded');
+        projectsListEl.appendChild(buildSpaceResources(project.spaceId));
+      }
     }
+    renderResources();
   }
 
   // Cap per project group so one very chatty project can't push every other
@@ -4903,17 +6837,8 @@
     item.textContent = session.sessionName;
     item.title = new Date(session.lastTimestamp).toLocaleString() + '\n\n' + session.sessionName;
     item.addEventListener('click', () => {
-      const sessionProjectId = session.projectId || null;
-      if (sessionProjectId !== activeProjectId) {
-        activeProjectId = sessionProjectId;
-        pruneActiveDocumentSelection();
-        renderProjects();
-        renderDocList();
-        renderDriveSection();
-        renderWorkingDocsSection();
-        renderWebPagesSection();
-        updateSidePanelEnabled();
-      }
+      const sessionSpaceId = session.spaceId || null;
+      if (sessionSpaceId !== activeSpaceId) selectProject(sessionSpaceId);
       activeSessionId = session.sessionId;
       renderSessionThread(session.sessionId);
     });
@@ -4937,7 +6862,7 @@
     const questions = chatHistory.filter((entry) => entry.role === 'user');
     let anyGroup = false;
     for (const project of projects) {
-      const projectQuestions = questions.filter((entry) => (entry.projectId || null) === project.projectId);
+      const projectQuestions = questions.filter((entry) => (entry.spaceId || null) === project.spaceId);
       // One summary row per distinct sessionId - lastTimestamp (the latest
       // question's own timestamp within that session) both orders the
       // sessions below and, via .title, shows when the session was last
@@ -4948,7 +6873,7 @@
         if (!existing || entry.timestamp > existing.lastTimestamp) {
           sessionsById.set(entry.sessionId, {
             sessionId: entry.sessionId,
-            projectId: entry.projectId,
+            spaceId: entry.spaceId,
             sessionName: entry.sessionName,
             lastTimestamp: entry.timestamp,
           });
@@ -4988,7 +6913,7 @@
   // comment). Falls back to the empty-state placeholder when no project is
   // active, or the active project has no captured history yet.
   //
-  // Deliberately only called from the places activeProjectId itself changes
+  // Deliberately only called from the places activeSpaceId itself changes
   // via a *project* switch (a project click, the auto-select on load, and
   // creating a new project) - NOT from a chat-history-item (session) click,
   // which calls renderSessionThread() below directly for the specific
@@ -4998,7 +6923,7 @@
   // happens.
   //
   // Picks (or creates) which session becomes "the" active session for
-  // activeProjectId, then delegates to renderSessionThread() below for the
+  // activeSpaceId, then delegates to renderSessionThread() below for the
   // actual rendering (2026-08-23, user's own request "when switching the
   // project, the latest session of that project shall get active. If for
   // that project is not session yet, then create a new session." - see
@@ -5009,12 +6934,12 @@
   // Chat History section does), showing that session's whole transcript is the
   // consistent choice rather than reverting to a one-turn preview.
   function renderActiveThread() {
-    if (activeProjectId === null) {
+    if (activeSpaceId === null) {
       showEmptyState();
       return;
     }
     const questions = chatHistory.filter(
-      (entry) => entry.role === 'user' && (entry.projectId || null) === activeProjectId
+      (entry) => entry.role === 'user' && (entry.spaceId || null) === activeSpaceId
     );
     if (questions.length === 0) {
       // No captured session for this project at all yet - mint a fresh one
@@ -5087,23 +7012,14 @@
     // Only when nothing is already selected (a re-fetch mid-session, if this
     // function is ever called again later, must not silently override a
     // choice the user already made) and there's at least one project to
-    // pick (an empty list leaves activeProjectId null, same as before this
+    // pick (an empty list leaves activeSpaceId null, same as before this
     // feature - updateSidePanelEnabled() below then keeps the right panel
     // disabled, which is the correct state for a brand new user with no
     // projects yet). "First" is projects[0] - GET /projects's own order,
     // oldest-created first (see ProjectStore.list()'s own doc comment).
-    if (activeProjectId === null && projects.length > 0) {
-      activeProjectId = projects[0].projectId;
-    }
-    pruneActiveDocumentSelection();
-    renderProjects();
-    renderDocList();
-    renderDriveSection();
-    renderWorkingDocsSection();
-    renderWebPagesSection();
-    updateSidePanelEnabled();
+    selectProject(activeSpaceId === null && projects.length > 0 ? projects[0].spaceId : activeSpaceId);
     // Chat-history grouping is keyed off the `projects` array itself (for
-    // each group's name/order), not just `activeProjectId` - re-render here
+    // each group's name/order), not just `activeSpaceId` - re-render here
     // too so a re-fetch that changes the project list also refreshes it.
     renderChatHistory();
     // Also refills the middle thread for whichever project just became
@@ -5140,7 +7056,7 @@
 
   // "New Chat" (2026-08-23, see activeSessionId's own doc comment) - mints a
   // fresh session id and clears the middle thread back to the empty state.
-  // Deliberately does not touch activeProjectId/activeDocumentIds (a new
+  // Deliberately does not touch activeSpaceId/activeDocumentIds (a new
   // chat session stays within whichever project/documents are currently
   // selected) and does not call renderActiveThread() (which would just
   // redraw the previous session's last turn from chatHistory) - showEmptyState()
@@ -5186,23 +7102,16 @@
       // updateSidePanelEnabled() needs to re-check now that a project is
       // definitely active - relevant the very first time ever, when this is
       // also the user's first project and the panel was disabled until now).
-      activeProjectId = created.projectId;
-      pruneActiveDocumentSelection();
-      renderProjects();
-      renderDocList();
-      renderDriveSection();
-      renderWorkingDocsSection();
-      renderWebPagesSection();
-      updateSidePanelEnabled();
+      selectProject(created.spaceId);
       renderChatHistory();
       // A brand new project has no captured history yet, so this always
       // falls into renderActiveThread()'s empty-state branch today - called
-      // anyway for consistency with the other three activeProjectId-change
+      // anyway for consistency with the other three activeSpaceId-change
       // sites, and correct if this project is ever revisited later.
       renderActiveThread();
       closeNewProjectModal();
     } catch (err) {
-      showNewProjectError('Could not create project: ' + err.message);
+      showNewProjectError('Could not create space: ' + err.message);
     } finally {
       newProjectSubmitBtnEl.disabled = false;
     }
@@ -5244,9 +7153,9 @@
     // synthetic pending- id is enough - this entry only lives until that
     // re-fetch replaces the whole chatHistory array wholesale with what the
     // server actually persisted (which also adds the assistant's own reply
-    // entry, not knowable client-side yet). Harmless if activeProjectId is
+    // entry, not knowable client-side yet). Harmless if activeSpaceId is
     // null (no project exists yet) - same as a real server-recorded entry
-    // with a null projectId, it's captured but not shown anywhere until one
+    // with a null spaceId, it's captured but not shown anywhere until one
     // exists, per chatHistory's own doc comment.
     //
     // sessionId is activeSessionId itself, same as what's about to be sent
@@ -5270,7 +7179,7 @@
       turnId: pendingEntryId,
       sessionId: activeSessionId,
       sessionName: pendingSessionName,
-      projectId: activeProjectId,
+      spaceId: activeSpaceId,
       role: 'user',
       text: message,
       timestamp: Date.now(),
@@ -5284,7 +7193,7 @@
 
     try {
       const location = await getBrowserLocation();
-      await streamChat(live, message, location, Array.from(activeDocumentIds), activeProjectId, activeSessionId);
+      await streamChat(live, message, location, Array.from(activeDocumentIds), activeSpaceId, activeSessionId);
       // The turn is now captured server-side - ChatController's doOnNext
       // (see springchat3_projects_panel.md in project memory) runs before
       // the NDJSON stream's 'done' event finishes flushing to the browser,

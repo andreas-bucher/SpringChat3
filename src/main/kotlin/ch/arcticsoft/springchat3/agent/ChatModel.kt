@@ -57,9 +57,9 @@ data class ChatRequest(
      * request "the chat history shall be by project" - see
      * springchat3_projects_panel.md in project memory), the same "fixed at
      * the moment of the action, not re-read later" convention every other
-     * `projectId` field in this app already follows.
+     * `spaceId` field in this app already follows.
      */
-    val projectId: String? = null,
+    val spaceId: String? = null,
     /**
      * Whichever chat session was active in the browser (index.html's
      * `activeSessionId`) when this message was sent - a `crypto.randomUUID()`
@@ -73,7 +73,7 @@ data class ChatRequest(
      * [ch.arcticsoft.springchat3.chat.ChatHistoryStore.recordTurn] so every
      * turn from the same browser session lands in the same session file,
      * the same "fixed at the moment of the action, not re-read later"
-     * convention [projectId] above already follows. Defaults to blank for
+     * convention [spaceId] above already follows. Defaults to blank for
      * any caller that doesn't set it (e.g. a raw curl request, or a browser
      * tab left open from before this field existed) -
      * [ch.arcticsoft.springchat3.chat.ChatHistoryStore] folds a blank id
@@ -81,6 +81,53 @@ data class ChatRequest(
      * - see that class's own doc comment.
      */
     val sessionId: String = "",
+    /**
+     * Whether this turn is allowed to *change* anything in [spaceId] - set
+     * by [ch.arcticsoft.springchat3.web.ChatController.authorize] from the
+     * caller's role in that space (2026-08-24, shared spaces - see
+     * springchat3_multi_user.md in project memory), and read only by
+     * [ChatAgent.documentEdit].
+     *
+     * **Server-set, never client-supplied.** It is part of this request
+     * body's shape, so a client can send it; [ChatController] overwrites it
+     * on every path before the agent ever sees it. Defaults to false so that
+     * any future caller which forgets loses the edit tools rather than
+     * silently gaining them - the same fail-closed choice
+     * [ch.arcticsoft.springchat3.project.SpaceAccess] makes for a missing
+     * identity.
+     */
+    val documentEditingAllowed: Boolean = false,
+    /**
+     * Whether the agent may use tools for this turn - the *caller's* own
+     * setting, resolved by
+     * [ch.arcticsoft.springchat3.settings.SettingsResolver] and stamped by
+     * [ch.arcticsoft.springchat3.web.ChatController.authorize] (2026-08-25,
+     * the per-user settings split - see springchat3_settings.md in project
+     * memory). [ChatAgent.analyzeMessage] reads it instead of reaching into
+     * the settings store, which is what makes "per user" possible at all: the
+     * agent is a singleton and has no idea who is asking.
+     *
+     * **Server-set, never client-supplied**, exactly like
+     * [documentEditingAllowed] above - it is part of this body's shape, so a
+     * client can send it, and [ChatController] overwrites it on every path.
+     * Defaults to false so a caller that somehow skips that stamping loses
+     * the tools rather than silently gaining them.
+     */
+    val toolsEnabled: Boolean = false,
+    /**
+     * The caller's effective role-to-model overrides for this turn (keys are
+     * [ch.arcticsoft.springchat3.settings.ModelRoleKeys] constants), already
+     * merged over the server defaults and filtered through the admin's model
+     * allow-list. **Sparse on purpose**: a role missing here means "use the
+     * configured default", which [ChatAgent] still does through
+     * `withLlmByRole`/`withDefaultLlm` rather than by being handed an exact
+     * tag - see [ch.arcticsoft.springchat3.settings.SettingsResolver].
+     *
+     * Server-set and overwritten unconditionally, same as the two fields
+     * above: it decides which model runs, so accepting it from the body would
+     * hand any caller a way around the allow-list.
+     */
+    val modelOverrides: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -300,9 +347,6 @@ data class DocumentEdits(
     val executions: List<ToolExecution> = emptyList(),
     val seconds: Double = 0.0,
 )
-
-/** Just the reply text - what the single answering LLM call is actually asked to produce. */
-data class AnswerText(val text: String)
 
 /**
  * Final reply returned to the caller. [toolCalls], [steps], and [retrieval]

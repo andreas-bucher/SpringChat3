@@ -103,6 +103,13 @@ springchat3:
   # default (fails fast if unset) - an unset allow-list should never
   # silently mean "let everyone in".
   allowed-emails: ${SPRINGCHAT3_ALLOWED_EMAILS}
+  # Comma-separated list of addresses (Google or local accounts alike) allowed
+  # to change server policy from the settings popup - document editing and the
+  # model allow-list - see ch.arcticsoft.springchat3.security.Admins. Empty by
+  # default and empty means NOBODY, not everybody: before this existed any
+  # signed-in user could flip those for the whole server, so failing open here
+  # would keep that rather than fix it. Startup logs a WARN while it is unset.
+  admin-emails: ${SPRINGCHAT3_ADMIN_EMAILS:}
   google:
     # Google Cloud "Picker API key" (a browser/API key restricted by HTTP
     # referrer in the Cloud Console, not GOOGLE_CLIENT_SECRET - safe to send

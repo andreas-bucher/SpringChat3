@@ -1,11 +1,14 @@
 package ch.arcticsoft.springchat3.security
 
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
 import org.springframework.security.config.web.server.ServerHttpSecurity
+import org.springframework.security.core.userdetails.ReactiveUserDetailsService
+import org.springframework.security.core.userdetails.User
+import org.springframework.security.crypto.factory.PasswordEncoderFactories
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcReactiveOAuth2UserService
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest
 import org.springframework.security.oauth2.client.registration.ReactiveClientRegistrationRepository
@@ -16,6 +19,7 @@ import org.springframework.security.oauth2.core.OAuth2AuthenticationException
 import org.springframework.security.oauth2.core.OAuth2Error
 import org.springframework.security.oauth2.core.oidc.user.OidcUser
 import org.springframework.security.web.server.SecurityWebFilterChain
+import org.springframework.security.web.server.authentication.RedirectServerAuthenticationEntryPoint
 import org.springframework.security.web.server.authentication.RedirectServerAuthenticationFailureHandler
 import org.springframework.security.web.server.authentication.ServerAuthenticationFailureHandler
 import org.springframework.security.web.server.csrf.CookieServerCsrfTokenRepository
@@ -48,9 +52,7 @@ import reactor.core.publisher.Mono
  */
 @Configuration
 @EnableWebFluxSecurity
-class SecurityConfig(
-    @Value("\${springchat3.allowed-emails}") private val allowedEmailsRaw: String,
-) {
+class SecurityConfig {
     private val log = LoggerFactory.getLogger(SecurityConfig::class.java)
 
     companion object {
@@ -61,10 +63,32 @@ class SecurityConfig(
          * ever shown to explain why (see [oidcUserService]'s doc comment).
          */
         const val ACCESS_DENIED_PATH = "/access-denied.html"
-    }
 
-    private val allowedEmails: Set<String> by lazy {
-        allowedEmailsRaw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+        /**
+         * The sign-in page (2026-08-24, local accounts - see
+         * springchat3_local_accounts.md in project memory), offering both
+         * "Sign in with Google" and the email/password form.
+         *
+         * This app deliberately had **no** login page until now: with a
+         * single client registration Spring never generates one, and the
+         * entry point for an unauthenticated request went straight to
+         * `/oauth2/authorization/google`. A second sign-in method means
+         * there is now a choice to present, so [securityWebFilterChain]
+         * sets this as the entry point explicitly rather than relying on
+         * whichever of `formLogin`/`oauth2Login` would otherwise win.
+         */
+        const val LOGIN_PATH = "/login.html"
+
+        /**
+         * Where the login form POSTs. `formLogin()`'s own default
+         * processing URL, left as the default on purpose: overriding it
+         * through `loginPage(...)` on the reactive DSL also moves the
+         * entry-point redirect, which is set explicitly here instead.
+         * **If a sign-in POST ever 404s, check this first** - it is the one
+         * piece of this file's behaviour that comes from a Spring default
+         * rather than from an explicit call.
+         */
+        const val LOGIN_PROCESSING_PATH = "/login"
     }
 
     /**
@@ -123,6 +147,55 @@ class SecurityConfig(
         return resolver
     }
 
+    /**
+     * Hashes and verifies local account passwords. The *delegating* encoder
+     * rather than a bare [org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder]:
+     * it stores each hash with its algorithm as a `{bcrypt}` prefix, so a
+     * later move to a different algorithm can re-hash on next sign-in
+     * instead of invalidating every stored password at once. Nothing new on
+     * the classpath - `spring-boot-starter-oauth2-client` already brings
+     * spring-security-crypto in.
+     */
+    @Bean
+    fun passwordEncoder(): PasswordEncoder = PasswordEncoderFactories.createDelegatingPasswordEncoder()
+
+    /**
+     * Looks a local account up for the sign-in form (2026-08-24 - see
+     * [LocalUserStore]). Declaring this bean is all that is needed to make
+     * `formLogin` work: Spring Boot's reactive security autoconfiguration
+     * builds a `UserDetailsRepositoryReactiveAuthenticationManager` around a
+     * [ReactiveUserDetailsService] bean when one exists, using the
+     * [PasswordEncoder] bean above - and stops autoconfiguring its own
+     * random-password default user, which is the behaviour to notice if
+     * this bean is ever removed.
+     *
+     * Unknown email means [Mono.empty], not an error: Spring turns that into
+     * the same "bad credentials" the wrong password produces, so the form
+     * cannot be used to find out which addresses have accounts.
+     *
+     * [KnownUsers.isAllowedGoogleEmail] is deliberately NOT consulted here.
+     * That list gates *Google* sign-in; `users.json` is the gate for a local
+     * account, so each mechanism's roster lives where you would go looking
+     * for it.
+     */
+    @Bean
+    fun localUserDetailsService(localUserStore: LocalUserStore): ReactiveUserDetailsService =
+        ReactiveUserDetailsService { username ->
+            val user = localUserStore.find(username)
+            val hash = user?.passwordHash
+            if (user == null || hash.isNullOrBlank()) {
+                Mono.empty()
+            } else {
+                Mono.just(
+                    User.withUsername(user.email)
+                        .password(hash)
+                        .disabled(user.disabled)
+                        .roles("USER")
+                        .build(),
+                )
+            }
+        }
+
     @Bean
     fun securityWebFilterChain(
         http: ServerHttpSecurity,
@@ -131,22 +204,37 @@ class SecurityConfig(
         http
             .authorizeExchange { exchanges ->
                 exchanges
-                    .pathMatchers(ACCESS_DENIED_PATH).permitAll()
+                    .pathMatchers(ACCESS_DENIED_PATH, LOGIN_PATH, LOGIN_PROCESSING_PATH).permitAll()
                     .anyExchange().authenticated()
+            }
+            .exceptionHandling { exceptions ->
+                // Explicit, not inherited: with both formLogin and
+                // oauth2Login configured, which one's entry point handles an
+                // unauthenticated request is a question this app should not
+                // have to answer by experiment. Everyone lands on the one
+                // page that offers both.
+                exceptions.authenticationEntryPoint(RedirectServerAuthenticationEntryPoint(LOGIN_PATH))
+            }
+            .formLogin { form ->
+                // A failed local sign-in returns to the form with ?error,
+                // NOT to ACCESS_DENIED_PATH: a wrong password is something
+                // to try again, unlike an unauthorized Google account, which
+                // will never succeed no matter how often it is retried.
+                form.authenticationFailureHandler(
+                    RedirectServerAuthenticationFailureHandler("$LOGIN_PATH?error"),
+                )
             }
             .oauth2Login { oauth2 ->
                 oauth2.authorizationRequestResolver(offlineAccessAuthorizationRequestResolver(clientRegistrationRepository))
-                // Default failure handler redirects to "/login?error" - this
-                // app has no /login page at all (Spring only generates one
-                // when more than one client registration exists; there's
-                // only "google" here, so the default *entry point* for an
-                // unauthenticated request skips straight to
-                // /oauth2/authorization/google instead). Without this
-                // override, a rejected email (see oidcUserService below)
-                // would bounce straight into hitting that same nonexistent
-                // /login path, which - since it isn't permitAll'd either -
-                // just triggers another redirect to Google, with nothing
-                // ever telling the user why they can't get in.
+                // Default failure handler redirects to "/login?error",
+                // which is NOT where a rejected Google account belongs:
+                // /login is the local form's POST target (see
+                // LOGIN_PROCESSING_PATH), and an unauthorized Google email
+                // is not something retrying the form can fix. Before local
+                // accounts existed there was no /login at all and the
+                // default bounced into an endless redirect back to Google,
+                // with nothing ever telling the user why they couldn't get
+                // in - which is how this override came to be written.
                 //
                 // loggingAuthenticationFailureHandler wraps the redirect, not
                 // replaces it: this one handler fires for EVERY oauth2Login
@@ -206,9 +294,18 @@ class SecurityConfig(
     }
 
     /**
-     * Restricts sign-in to [allowedEmails] (`springchat3.allowed-emails`,
+     * Restricts sign-in to the allow-list (`springchat3.allowed-emails`,
      * comma-separated - see application.yml/.env), rejecting anyone else via
      * an [OAuth2AuthenticationException] rather than letting them in.
+     *
+     * The list itself is parsed by [KnownUsers] (2026-08-24) rather than
+     * here, so that this check and the "can this person actually accept a
+     * share?" check in
+     * [ch.arcticsoft.springchat3.web.ProjectController.addMember] read the
+     * same set. Injected as a **method** parameter, not through this class's
+     * constructor: [KnownUsers] needs [LocalUserStore], which needs the
+     * [passwordEncoder] bean declared above, and a constructor dependency
+     * would close that into a cycle Spring could not resolve at startup.
      *
      * Wraps [OidcReactiveOAuth2UserService] specifically - not the plain
      * `DefaultReactiveOAuth2UserService` - because Google's registration
@@ -231,12 +328,12 @@ class SecurityConfig(
      * bare `@Bean` to silently do the right thing here.
      */
     @Bean
-    fun oidcUserService(): ReactiveOAuth2UserService<OidcUserRequest, OidcUser> {
+    fun oidcUserService(knownUsers: KnownUsers): ReactiveOAuth2UserService<OidcUserRequest, OidcUser> {
         val delegate = OidcReactiveOAuth2UserService()
         return ReactiveOAuth2UserService { request ->
             delegate.loadUser(request).flatMap { oidcUser ->
                 val email = oidcUser.email?.lowercase()
-                if (email != null && email in allowedEmails) {
+                if (knownUsers.isAllowedGoogleEmail(email)) {
                     Mono.just(oidcUser)
                 } else {
                     log.warn("Rejected Google sign-in from unauthorized email: {}", email ?: "<none>")

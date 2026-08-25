@@ -8,20 +8,31 @@ import org.springframework.stereotype.Component
 import java.io.File
 
 /**
- * App-wide settings the user can change from index.html's settings popup
- * (2026-08-22, see springchat3_settings.md in project memory) - [toolsEnabled]
- * plus, since the same day, [modelOverrides] - a single object rather than
- * separate top-level values so a later setting can be added here without
- * another persistence-format change.
+ * Server-wide settings (2026-08-22, see springchat3_settings.md in project
+ * memory) - one object rather than separate top-level values so a later
+ * setting can be added here without another persistence-format change.
  *
- * Deliberately global, not per-conversation/per-request - this is a
- * single-user local app (see springchat3_document_qa.md's own reasoning for
- * why per-document scoping was needed there but not everywhere), so "a
- * setting" means one value for the whole running app, not something threaded
- * through [ch.arcticsoft.springchat3.agent.ChatRequest] the way
- * `documentId`/`latitude`/`longitude` are. A plain curl caller of `/chat`
- * gets the same tool-use behavior and model choices the browser UI just set,
- * without needing to know about new request fields.
+ * **Not all of these mean the same thing any more (2026-08-25).** This class
+ * was written when the app had one user; since it grew accounts and shared
+ * spaces, "a setting" splits in two, and this file now holds both halves:
+ *
+ *  - **Policy**, which one person decides for the whole server:
+ *    [documentEditingEnabled] and [allowedModels]. Both have effects beyond
+ *    the person flipping them - the agent writes into documents other people
+ *    can see, and every model runs on one shared Ollama host - so they are
+ *    admin-only ([ch.arcticsoft.springchat3.security.Admins]).
+ *  - **Defaults**, which every user simply inherits until they choose
+ *    otherwise: [toolsEnabled] and [modelOverrides]. The per-user choice
+ *    lives in [UserSettingsStore]; this is what a user who has never opened
+ *    the settings popup gets. Keeping them here rather than deleting them is
+ *    what makes the split migration-free: an existing `settings.json` keeps
+ *    behaving exactly as it did, for everyone, until someone picks their own.
+ *
+ * Nothing reads this store to answer "what applies to this caller" - that is
+ * [SettingsResolver]'s single job, and both the agent and the settings UI go
+ * through it. A plain curl caller of `/chat` still gets a server-resolved
+ * answer rather than having to know about new request fields; it is now
+ * resolved from *their* identity rather than from one global value.
  *
  * [modelOverrides] maps a [ModelRoleKeys] key to the exact Ollama tag the
  * user picked in the settings popup, in place of that role's
@@ -39,7 +50,9 @@ data class AppSettings(
     // memory). Only affects a fresh install with no settings.json yet, or a
     // load failure (see [loadPersisted] below) - an existing installation
     // that already persisted `toolsEnabled: true` keeps that value until the
-    // user flips the settings-popup toggle off themselves.
+    // user flips the settings-popup toggle off themselves. Since 2026-08-25
+    // this is the value a user inherits, not the value that applies: see
+    // [UserSettings.toolsEnabled].
     val toolsEnabled: Boolean = false,
     // Whether the agent may CHANGE a document, as opposed to reading one
     // (2026-08-23, the documentEdit action - see ChatAgent). Its own flag
@@ -51,6 +64,23 @@ data class AppSettings(
     // should be opted into, not discovered.
     val documentEditingEnabled: Boolean = false,
     val modelOverrides: Map<String, String> = emptyMap(),
+    /**
+     * The model tags a user is allowed to pick in the settings popup, or
+     * empty for "every model the local Ollama has" (2026-08-25, user's own
+     * request: "we could make it global configurable which models we allow,
+     * thereby we could ensure we only active some models and not all ollama
+     * has available"). Empty is the default precisely so an existing
+     * installation behaves exactly as before - same no-migration rule the
+     * ownership legacy cases use (see
+     * [ch.arcticsoft.springchat3.project.SpaceAccess]).
+     *
+     * The point is one shared Ollama host: three people each pinning their
+     * own 8B+ model thrash VRAM in a way a single shared choice never did.
+     * Enforced in [SettingsResolver], **not** by only filtering the
+     * dropdown - a curated list that lives in the browser is decoration, the
+     * same way client-side space filtering was not enforcement.
+     */
+    val allowedModels: List<String> = emptyList(),
 )
 
 /**
@@ -118,6 +148,10 @@ class AppSettingsStore(
         }
     }
 
+    // Synchronized since 2026-08-25: read-copy-write on a shared object was
+    // safe while one person could be changing settings; with accounts, two
+    // admins saving at once could drop one of the two changes.
+    @Synchronized
     private fun persist(updated: AppSettings): AppSettings {
         settings = updated
         try {
@@ -154,4 +188,15 @@ class AppSettingsStore(
         }
         return persist(settings.copy(modelOverrides = overrides))
     }
+
+    /**
+     * Replaces the curated model allow-list ([AppSettings.allowedModels]).
+     * Blank entries are dropped and duplicates collapsed; an empty result is
+     * stored as empty, which means "no curation - offer everything Ollama
+     * has" rather than "offer nothing". A tag that isn't currently pulled is
+     * kept rather than rejected: the list is a policy about names, and a
+     * model can be pulled again later.
+     */
+    fun setAllowedModels(models: List<String>): AppSettings =
+        persist(settings.copy(allowedModels = models.map { it.trim() }.filter { it.isNotEmpty() }.distinct()))
 }

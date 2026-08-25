@@ -1,11 +1,6 @@
 package ch.arcticsoft.springchat3.document
 
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
-import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
-import java.io.File
 
 /**
  * One uploaded Microsoft Word document (2026-08-23, user's own request "on
@@ -32,23 +27,25 @@ import java.io.File
  * [DocumentStore] persists them under a `document.docx` filename rather
  * than its usual `document.pdf`, see [ExtractedDocument.rawFilename].
  *
- * [projectId] is the project that was active at upload time, or null for
+ * [spaceId] is the project that was active at upload time, or null for
  * none - same "fixed at ingest time" treatment every other document source
- * in this app gets (see [DriveLink.projectId] / [LinkedGoogleDoc.projectId] /
- * [LinkedWebPage.projectId]); with nothing to resync there's no later pass
+ * in this app gets (see [DriveLink.spaceId] / [LinkedGoogleDoc.spaceId] /
+ * [LinkedWebPage.spaceId]); with nothing to resync there's no later pass
  * that could disagree with it.
  */
 data class UploadedWordDocument(
     val documentId: String,
     val filename: String,
     val uploadedAt: Long,
-    val projectId: String? = null,
+    val spaceId: String? = null,
 )
 
 /**
- * Persists every uploaded Word document to
- * `[data-dir]/word-documents.json` - same write-through, single-shared-file
- * JSON pattern [WorkingDocumentStore]/[WebPageStore] use, and the same
+ * Persists every uploaded Word document to `word-documents.json` **inside
+ * each space's own folder** (2026-08-24) - see [SpaceScopedJsonStore] for
+ * the layout, the unassigned bucket and why there's no migration off the old
+ * single `[data-dir]/word-documents.json`. Same write-through, load-once
+ * pattern [WorkingDocumentStore]/[WebPageStore] use, and the same
  * corrupt-file-at-startup behavior (log a warning, start empty, never fail
  * application startup).
  *
@@ -60,36 +57,12 @@ data class UploadedWordDocument(
  */
 @Component
 class WordDocumentStore(
-    @Value("\${springchat3.data-dir}") private val dataDir: String,
+    private val spaceScopedStore: SpaceScopedJsonStore,
 ) {
-    private val log = LoggerFactory.getLogger(WordDocumentStore::class.java)
-    private val objectMapper = jacksonObjectMapper()
-
     @Volatile
-    private var docs: List<UploadedWordDocument> = loadPersisted()
+    private var docs: List<UploadedWordDocument> = spaceScopedStore.load(STORE_FILENAME, UploadedWordDocument::class.java)
 
-    private fun storeFile() = File(dataDir, "word-documents.json")
-
-    private fun loadPersisted(): List<UploadedWordDocument> {
-        val file = storeFile()
-        if (!file.exists()) return emptyList()
-        return try {
-            objectMapper.readValue<List<UploadedWordDocument>>(file)
-        } catch (e: Exception) {
-            log.warn("Could not load persisted Word documents from {} - starting with none", file, e)
-            emptyList()
-        }
-    }
-
-    private fun persist() {
-        try {
-            val file = storeFile()
-            file.parentFile?.mkdirs()
-            objectMapper.writeValue(file, docs)
-        } catch (e: Exception) {
-            log.warn("Could not persist Word documents to {}", storeFile(), e)
-        }
-    }
+    private fun persist() = spaceScopedStore.persist(STORE_FILENAME, docs) { it.spaceId }
 
     fun getAll(): List<UploadedWordDocument> = docs
 
@@ -109,11 +82,30 @@ class WordDocumentStore(
      * [WebPageStore.remove] both document: the document exists *because* of
      * this entry, so the shared × delete is its only removal path.
      */
+    /**
+     * Re-files [documentId] under [spaceId], a no-op for an id that is not a
+     * uploaded Word document (2026-08-25, moving a document between spaces -
+     * see [ch.arcticsoft.springchat3.document.DocumentMoveService]). The row
+     * itself does not move between files here: [persist] rewrites every
+     * space's file from the whole list keyed on each entry's own spaceId, so
+     * changing this one field is what relocates it on disk.
+     */
+    fun setSpace(documentId: String, spaceId: String?) {
+        val index = docs.indexOfFirst { it.documentId == documentId }
+        if (index < 0) return
+        docs = docs.toMutableList().also { it[index] = it[index].copy(spaceId = spaceId) }
+        persist()
+    }
+
     fun remove(documentId: String) {
         val updated = docs.filterNot { it.documentId == documentId }
         if (updated.size != docs.size) {
             docs = updated
             persist()
         }
+    }
+
+    companion object {
+        private const val STORE_FILENAME = "word-documents.json"
     }
 }

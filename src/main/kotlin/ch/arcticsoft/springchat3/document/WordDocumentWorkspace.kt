@@ -55,7 +55,7 @@ class WordDocumentWorkspace(
     private val locks = ConcurrentHashMap<String, Any>()
 
     /**
-     * Every Word document in [projectId] - names only, deliberately no
+     * Every Word document in [spaceId] - names only, deliberately no
      * paragraph counts: this runs on every single tool call (see [resolve]),
      * and counting would mean a full docx4j parse per document per call.
      * [paragraphCount] does that part, only where a count is actually shown.
@@ -69,9 +69,9 @@ class WordDocumentWorkspace(
      * not merely discouraged as a target, it is invisible for the whole
      * turn. Null means the whole project and no caller passes it today.
      */
-    fun list(projectId: String?, onlyDocumentIds: Set<String>? = null): List<WordDocumentRef> =
+    fun list(spaceId: String?, onlyDocumentIds: Set<String>? = null): List<WordDocumentRef> =
         wordDocumentStore.getAll()
-            .filter { it.projectId == projectId }
+            .filter { it.spaceId == spaceId }
             .filter { onlyDocumentIds == null || it.documentId in onlyDocumentIds }
             .map { WordDocumentRef(it.documentId, it.filename) }
 
@@ -84,15 +84,15 @@ class WordDocumentWorkspace(
     }
 
     /**
-     * Resolves the name the model used to one document in [projectId]:
+     * Resolves the name the model used to one document in [spaceId]:
      * case-insensitive exact match first, then a unique
      * case-insensitive substring match (so "spec" finds "Spec v2.docx"),
      * and nothing otherwise. Ambiguity is never guessed at - two matches
      * resolve to null and the caller reports the candidates back to the
      * model, which is far better than silently editing the wrong file.
      */
-    fun resolve(projectId: String?, filename: String, onlyDocumentIds: Set<String>? = null): WordDocumentRef? {
-        val candidates = list(projectId, onlyDocumentIds)
+    fun resolve(spaceId: String?, filename: String, onlyDocumentIds: Set<String>? = null): WordDocumentRef? {
+        val candidates = list(spaceId, onlyDocumentIds)
         val needle = filename.trim()
         candidates.firstOrNull { it.filename.equals(needle, ignoreCase = true) }?.let { return it }
         val partial = candidates.filter { it.filename.contains(needle, ignoreCase = true) }
@@ -163,24 +163,24 @@ class WordDocumentWorkspace(
     }
 
     /**
-     * Creates a brand new .docx in [projectId] and registers it as an
+     * Creates a brand new .docx in [spaceId] and registers it as an
      * uploaded Word document, so it appears in the right panel's Working
      * Documents section exactly like one the user uploaded themselves -
      * same store, same card, same × delete. Goes through
      * [DocumentStore.store] (a genuinely new document, new id) rather than
      * [DocumentStore.update].
      */
-    fun create(projectId: String?, filename: String, text: String): WordDocumentRef {
+    fun create(spaceId: String?, filename: String, text: String): WordDocumentRef {
         val safeName = sanitizeFilename(filename)
         val bytes = wordDocumentService.create(text)
         val plain = wordDocumentService.plainText(bytes)
-        val documentId = documentStore.store(safeName, plain, bytes, projectId, rawFilename = RAW_DOCX_FILENAME)
+        val documentId = documentStore.store(safeName, plain, bytes, spaceId, rawFilename = RAW_DOCX_FILENAME)
         if (plain.isNotBlank()) {
             documentIndex.index(documentId, listOf(Document(UUID.randomUUID().toString(), plain, emptyMap())))
         }
-        wordDocumentStore.add(UploadedWordDocument(documentId, safeName, System.currentTimeMillis(), projectId))
+        wordDocumentStore.add(UploadedWordDocument(documentId, safeName, System.currentTimeMillis(), spaceId))
         pdfPreviewService.warm(documentId)
-        log.info("Created Word document '{}' ({}) in project {}", safeName, documentId, projectId)
+        log.info("Created Word document '{}' ({}) in project {}", safeName, documentId, spaceId)
         return WordDocumentRef(documentId, safeName)
     }
 

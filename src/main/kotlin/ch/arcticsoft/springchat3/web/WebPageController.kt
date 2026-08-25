@@ -4,6 +4,7 @@ import ch.arcticsoft.springchat3.document.DocumentIndex
 import ch.arcticsoft.springchat3.document.DocumentStore
 import ch.arcticsoft.springchat3.document.LinkedWebPage
 import ch.arcticsoft.springchat3.document.WebPageStore
+import ch.arcticsoft.springchat3.project.SpaceAccess
 import org.slf4j.LoggerFactory
 import org.springframework.ai.document.Document
 import org.springframework.beans.factory.annotation.Value
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
 import java.net.URI
@@ -29,11 +31,11 @@ import reactor.netty.http.client.HttpClient as ReactorHttpClient
  * Page" popup collected (2026-08-23, user's own request "add new section
  * 'WEB PAGES'... Button is Link a Web Page. When clicked a popup opens and
  * the user can enter an url" - see springchat3_projects_panel.md in project
- * memory). [projectId] is the same "active project at link time" value
- * [LinkFolderRequest.projectId]/[LinkDocRequest.projectId] carry - see
- * [LinkedWebPage.projectId].
+ * memory). [spaceId] is the same "active project at link time" value
+ * [LinkFolderRequest.spaceId]/[LinkDocRequest.spaceId] carry - see
+ * [LinkedWebPage.spaceId].
  */
-data class LinkWebPageRequest(val url: String, val projectId: String? = null)
+data class LinkWebPageRequest(val url: String, val spaceId: String? = null)
 
 /**
  * One linked web page's current state, as `GET /webpages` and
@@ -44,7 +46,7 @@ data class LinkWebPageRequest(val url: String, val projectId: String? = null)
  * [WorkingDocumentStatus] already follows for its own `filename`/
  * `characterCount` - see [LinkedWebPage]'s own doc comment for why nothing
  * here is read from [LinkedWebPage] itself beyond [url]/[linkedAt]/
- * [lastSyncedAt]/[projectId].
+ * [lastSyncedAt]/[spaceId].
  */
 data class WebPageStatus(
     val documentId: String,
@@ -53,7 +55,7 @@ data class WebPageStatus(
     val characterCount: Int,
     val linkedAt: Long,
     val lastSyncedAt: Long,
-    val projectId: String? = null,
+    val spaceId: String? = null,
 )
 
 /**
@@ -168,6 +170,7 @@ class WebPageController(
     private val documentIndex: DocumentIndex,
     @Value("\${springchat3.firecrawl.base-url}") private val firecrawlBaseUrl: String,
     @Value("\${springchat3.firecrawl.api-key:}") private val firecrawlApiKey: String,
+    private val spaceAccess: SpaceAccess,
     webClientBuilder: WebClient.Builder,
 ) {
     private val log = LoggerFactory.getLogger(WebPageController::class.java)
@@ -205,11 +208,12 @@ class WebPageController(
      */
     private fun statusFor(page: LinkedWebPage): WebPageStatus? =
         documentStore.get(page.documentId)?.let {
-            WebPageStatus(page.documentId, page.url, it.filename, it.text.length, page.linkedAt, page.lastSyncedAt, page.projectId)
+            WebPageStatus(page.documentId, page.url, it.filename, it.text.length, page.linkedAt, page.lastSyncedAt, page.spaceId)
         }
 
     @GetMapping("/webpages")
-    fun list(): List<WebPageStatus> = webPageStore.getAll().mapNotNull { statusFor(it) }
+    fun list(exchange: ServerWebExchange): List<WebPageStatus> =
+        webPageStore.getAll().filter { spaceAccess.canRead(exchange, it.spaceId) }.mapNotNull { statusFor(it) }
 
     /**
      * Links [LinkWebPageRequest.url] and immediately ingests it - same
@@ -222,20 +226,21 @@ class WebPageController(
      * than creating a duplicate one.
      */
     @PostMapping("/webpages")
-    fun link(@RequestBody request: LinkWebPageRequest): Mono<ResponseEntity<Any>> {
+    fun link(@RequestBody request: LinkWebPageRequest, exchange: ServerWebExchange): Mono<ResponseEntity<Any>> {
+        spaceAccess.requireWrite(exchange, request.spaceId)
         val uri = try {
             parseUrl(request.url)
         } catch (e: IllegalArgumentException) {
             return Mono.just(ResponseEntity.badRequest().body(mapOf("message" to (e.message ?: "That doesn't look like a valid URL."))))
         }
         val existing = webPageStore.getByUrl(uri.toString())
-        // existing?.projectId wins over the request's - same "a repeat link
+        // existing?.spaceId wins over the request's - same "a repeat link
         // is a resync, and a resync must not move an already-linked page to
         // whatever project happens to be active now" rule
-        // DriveController.linkDoc's own projectId resolution follows.
-        val projectId = existing?.projectId ?: request.projectId
+        // DriveController.linkDoc's own spaceId resolution follows.
+        val spaceId = existing?.spaceId ?: request.spaceId
         val linkedAt = existing?.linkedAt ?: System.currentTimeMillis()
-        return fetchAndIngest(uri, existing?.documentId, linkedAt, projectId)
+        return fetchAndIngest(uri, existing?.documentId, linkedAt, spaceId)
     }
 
     /**
@@ -248,9 +253,13 @@ class WebPageController(
      * Found` if [documentId] isn't (or is no longer) a linked web page.
      */
     @PostMapping("/webpages/sync/{documentId}")
-    fun sync(@PathVariable documentId: String): Mono<ResponseEntity<Any>> {
+    fun sync(@PathVariable documentId: String, exchange: ServerWebExchange): Mono<ResponseEntity<Any>> {
         val existing = webPageStore.get(documentId) ?: return Mono.just(ResponseEntity.notFound().build())
-        return fetchAndIngest(URI.create(existing.url), existing.documentId, existing.linkedAt, existing.projectId)
+        // The space comes from the existing entry, not the caller - see
+        // DocumentController.file for why an id-only route has to resolve
+        // its own space before acting on it.
+        spaceAccess.requireWrite(exchange, existing.spaceId)
+        return fetchAndIngest(URI.create(existing.url), existing.documentId, existing.linkedAt, existing.spaceId)
     }
 
     /**
@@ -268,7 +277,7 @@ class WebPageController(
      * Netty event-loop thread, same pattern
      * [DriveController.syncGoogleDocInternal] uses for [DriveController.ingestGoogleDoc].
      */
-    private fun fetchAndIngest(uri: URI, existingDocumentId: String?, linkedAt: Long, projectId: String?): Mono<ResponseEntity<Any>> {
+    private fun fetchAndIngest(uri: URI, existingDocumentId: String?, linkedAt: Long, spaceId: String?): Mono<ResponseEntity<Any>> {
         log.info("{} web page '{}' via Firecrawl ({})...", if (existingDocumentId == null) "Linking" else "Re-syncing", uri, firecrawlBaseUrl)
         return firecrawlApi.post()
             .uri("/v2/scrape")
@@ -293,7 +302,7 @@ class WebPageController(
                     )
                 } else {
                     val title = (resp.data.metadata?.get("title") as? String)?.trim()?.ifBlank { null } ?: uri.toString()
-                    Mono.just(ingestWebPage(uri.toString(), markdown, title, existingDocumentId, linkedAt, projectId))
+                    Mono.just(ingestWebPage(uri.toString(), markdown, title, existingDocumentId, linkedAt, spaceId))
                 }
             }
             .doOnNext { webPageStore.upsert(it) }
@@ -357,15 +366,15 @@ class WebPageController(
      * this id's value, same as [PdfTextExtractor]'s own per-page ids from
      * `PagePdfDocumentReader` are never referenced by identity either.
      */
-    private fun ingestWebPage(url: String, markdown: String, title: String, existingDocumentId: String?, linkedAt: Long, projectId: String?): LinkedWebPage {
+    private fun ingestWebPage(url: String, markdown: String, title: String, existingDocumentId: String?, linkedAt: Long, spaceId: String?): LinkedWebPage {
         existingDocumentId?.let { oldId ->
             documentIndex.remove(oldId)
             documentStore.remove(oldId)
         }
-        val documentId = documentStore.store(title, markdown, null, projectId)
+        val documentId = documentStore.store(title, markdown, null, spaceId)
         documentIndex.index(documentId, listOf(Document(UUID.randomUUID().toString(), markdown, emptyMap())))
         log.info("Linked web page '{}' ({} markdown chars) as {}", url, markdown.length, documentId)
-        return LinkedWebPage(url, documentId, linkedAt, System.currentTimeMillis(), projectId)
+        return LinkedWebPage(url, documentId, linkedAt, System.currentTimeMillis(), spaceId)
     }
 
     /**

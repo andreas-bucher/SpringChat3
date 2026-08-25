@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import java.io.File
+import java.nio.file.Files
 import java.util.Collections
 import java.util.UUID
 
@@ -30,14 +31,14 @@ import java.util.UUID
  * (via `jackson-module-kotlin`, already a dependency) can serialize/
  * deserialize it directly for [DocumentStore]'s persistence file.
  *
- * [projectId] (2026-08-23, user's own request "when uploading a file or link
+ * [spaceId] (2026-08-23, user's own request "when uploading a file or link
  * a google drive folder or link a working document then save the files in
  * the project folder of the active project" - see
  * springchat3_projects_panel.md in project memory) is null for a document
  * uploaded/synced with no active project - the pre-existing, still-supported
  * case - or the id of the project that was active at the time it was
  * ingested otherwise. Nullable with a default so a pre-2026-08-23
- * `document.json` with no `projectId` key at all still deserializes cleanly
+ * `document.json` with no `spaceId` key at all still deserializes cleanly
  * (a missing key on a nullable Kotlin constructor parameter binds to null via
  * plain Jackson behavior, not the separate/newer Kotlin-default-parameter
  * mechanism this project has been deliberately cautious about elsewhere -
@@ -51,13 +52,13 @@ import java.util.UUID
  * folder (see [ch.arcticsoft.springchat3.document.DriveLink.driveFolderLocalId]) -
  * null for a directly-uploaded document, or one from a linked Working
  * Document, neither of which this feature touches. Same nullable-with-
- * default reasoning as [projectId] above.
+ * default reasoning as [spaceId] above.
  */
 data class ExtractedDocument(
     val filename: String,
     val text: String,
     val uploadedAt: Long,
-    val projectId: String? = null,
+    val spaceId: String? = null,
     val driveFolderLocalId: String? = null,
     val rawFilename: String = DEFAULT_RAW_FILENAME,
 )
@@ -101,15 +102,15 @@ const val PREVIEW_HASH_FILENAME = "preview.sha256"
  * browser (see [ch.arcticsoft.springchat3.agent.ChatRequest.documentId]'s
  * doc comment for why the extracted text itself stays server-side).
  *
- * [projectId] (2026-08-23, user's own request "The right panel shall display
+ * [spaceId] (2026-08-23, user's own request "The right panel shall display
  * the project resources of the selected project of the left panel" - see
  * springchat3_projects_panel.md in project memory) mirrors
- * [ExtractedDocument.projectId] - null for a document with no active project
+ * [ExtractedDocument.spaceId] - null for a document with no active project
  * at ingest time. index.html filters its document/folder/working-doc lists
  * against `activeProjectId` using exactly this field, so the right panel
  * shows only the selected project's own resources.
  */
-data class DocumentSummary(val documentId: String, val filename: String, val characterCount: Int, val projectId: String? = null)
+data class DocumentSummary(val documentId: String, val filename: String, val characterCount: Int, val spaceId: String? = null)
 
 /**
  * Store for documents uploaded via
@@ -133,13 +134,13 @@ data class DocumentSummary(val documentId: String, val filename: String, val cha
  *
  * **A document's directory can be in any of up to four places, composed from
  * two independent, orthogonal choices (2026-08-23):** whether a project was
- * active at ingest time ([ExtractedDocument.projectId], own doc comment) and
+ * active at ingest time ([ExtractedDocument.spaceId], own doc comment) and
  * whether the document came from a linked Google Drive folder
  * ([ExtractedDocument.driveFolderLocalId], own doc comment) - `[dataDir]/<documentId>/`
  * (neither), `[dataDir]/gdrive-<driveFolderLocalId>/<documentId>/`
- * (Drive-sourced, no active project), `[dataDir]/projects/<projectId>/<documentId>/`
+ * (Drive-sourced, no active project), `[dataDir]/spaces/<spaceId>/<documentId>/`
  * (uploaded/linked with a project active), or
- * `[dataDir]/projects/<projectId>/gdrive-<driveFolderLocalId>/<documentId>/`
+ * `[dataDir]/spaces/<spaceId>/gdrive-<driveFolderLocalId>/<documentId>/`
  * (Drive-sourced, with a project active at link time) - [documentDir]
  * resolves which, and [loadPersisted] walks every layout at startup to
  * discover every document regardless of which one it's in.
@@ -195,20 +196,20 @@ class DocumentStore(
 
     /**
      * The container a document's own directory sits directly inside:
-     * the active project's own folder if [projectId] is set, otherwise the
+     * the active project's own folder if [spaceId] is set, otherwise the
      * flat data directory - then, if [driveFolderLocalId] is also set
      * (2026-08-23, see [ExtractedDocument.driveFolderLocalId]'s own doc
      * comment), one further `gdrive-<driveFolderLocalId>` level inside that.
      * The two choices are independent, hence the up-to-four-layouts list in
      * this class's own doc comment.
      */
-    private fun documentContainerFor(projectId: String?, driveFolderLocalId: String?): File {
-        val base = if (projectId != null) projectStore.projectDir(projectId) else File(dataDir)
+    private fun documentContainerFor(spaceId: String?, driveFolderLocalId: String?): File {
+        val base = if (spaceId != null) projectStore.spaceDir(spaceId) else File(dataDir)
         return if (driveFolderLocalId != null) File(base, "gdrive-$driveFolderLocalId") else base
     }
 
-    private fun documentDirFor(documentId: String, projectId: String?, driveFolderLocalId: String?): File =
-        File(documentContainerFor(projectId, driveFolderLocalId), documentId)
+    private fun documentDirFor(documentId: String, spaceId: String?, driveFolderLocalId: String?): File =
+        File(documentContainerFor(spaceId, driveFolderLocalId), documentId)
 
     /**
      * [documentId]'s own on-disk directory - null only if [documentId] isn't
@@ -222,13 +223,13 @@ class DocumentStore(
      * defensive behavior they had before this feature existed.
      */
     fun documentDir(documentId: String): File? =
-        documents[documentId]?.let { documentDirFor(documentId, it.projectId, it.driveFolderLocalId) }
+        documents[documentId]?.let { documentDirFor(documentId, it.spaceId, it.driveFolderLocalId) }
 
-    private fun documentFile(documentId: String, projectId: String?, driveFolderLocalId: String?) =
-        File(documentDirFor(documentId, projectId, driveFolderLocalId), "document.json")
+    private fun documentFile(documentId: String, spaceId: String?, driveFolderLocalId: String?) =
+        File(documentDirFor(documentId, spaceId, driveFolderLocalId), "document.json")
 
-    private fun documentRawFile(documentId: String, projectId: String?, driveFolderLocalId: String?, rawFilename: String) =
-        File(documentDirFor(documentId, projectId, driveFolderLocalId), rawFilename)
+    private fun documentRawFile(documentId: String, spaceId: String?, driveFolderLocalId: String?, rawFilename: String) =
+        File(documentDirFor(documentId, spaceId, driveFolderLocalId), rawFilename)
 
     /**
      * The one-level undo copy [backupBytes] writes and [getPreviousBytes]
@@ -239,14 +240,14 @@ class DocumentStore(
      * - a second edit overwrites the first edit's backup, which is what
      * "one-level undo" means.
      */
-    private fun documentPreviousRawFile(documentId: String, projectId: String?, driveFolderLocalId: String?, rawFilename: String) =
-        File(documentDirFor(documentId, projectId, driveFolderLocalId), "previous-$rawFilename")
+    private fun documentPreviousRawFile(documentId: String, spaceId: String?, driveFolderLocalId: String?, rawFilename: String) =
+        File(documentDirFor(documentId, spaceId, driveFolderLocalId), "previous-$rawFilename")
 
-    private fun documentPreviewFile(documentId: String, projectId: String?, driveFolderLocalId: String?) =
-        File(documentDirFor(documentId, projectId, driveFolderLocalId), PREVIEW_FILENAME)
+    private fun documentPreviewFile(documentId: String, spaceId: String?, driveFolderLocalId: String?) =
+        File(documentDirFor(documentId, spaceId, driveFolderLocalId), PREVIEW_FILENAME)
 
-    private fun documentPreviewHashFile(documentId: String, projectId: String?, driveFolderLocalId: String?) =
-        File(documentDirFor(documentId, projectId, driveFolderLocalId), PREVIEW_HASH_FILENAME)
+    private fun documentPreviewHashFile(documentId: String, spaceId: String?, driveFolderLocalId: String?) =
+        File(documentDirFor(documentId, spaceId, driveFolderLocalId), PREVIEW_HASH_FILENAME)
 
     private fun loadPersisted(): LinkedHashMap<String, ExtractedDocument> {
         val root = File(dataDir)
@@ -281,12 +282,12 @@ class DocumentStore(
             }
         }
         // Flat, unscoped documents (no active project at ingest time) - the
-        // "projects" subdirectory itself holds per-project data, not a
+        // "spaces" subdirectory itself holds per-space data, not a
         // document/gdrive container, so it's explicitly excluded here rather
         // than walked as if it were one.
-        loadContainer(root, exclude = setOf("projects"))
+        loadContainer(root, exclude = setOf("spaces"))
         // Documents nested one level deeper under each project's own folder.
-        File(root, "projects").listFiles { file -> file.isDirectory }?.forEach { projectDir -> loadContainer(projectDir) }
+        File(root, "spaces").listFiles { file -> file.isDirectory }?.forEach { spaceDir -> loadContainer(spaceDir) }
         loaded.sortBy { (_, doc) -> doc.uploadedAt }
         val map = LinkedHashMap<String, ExtractedDocument>()
         loaded.forEach { (id, doc) -> map[id] = doc }
@@ -295,21 +296,21 @@ class DocumentStore(
 
     private fun persist(documentId: String, document: ExtractedDocument) {
         try {
-            val dir = documentDirFor(documentId, document.projectId, document.driveFolderLocalId)
+            val dir = documentDirFor(documentId, document.spaceId, document.driveFolderLocalId)
             dir.mkdirs()
-            objectMapper.writeValue(documentFile(documentId, document.projectId, document.driveFolderLocalId), document)
+            objectMapper.writeValue(documentFile(documentId, document.spaceId, document.driveFolderLocalId), document)
         } catch (e: Exception) {
-            log.warn("Could not persist document {} to {}", documentId, documentFile(documentId, document.projectId, document.driveFolderLocalId), e)
+            log.warn("Could not persist document {} to {}", documentId, documentFile(documentId, document.spaceId, document.driveFolderLocalId), e)
         }
     }
 
-    private fun persistBytes(documentId: String, projectId: String?, driveFolderLocalId: String?, rawFilename: String, bytes: ByteArray) {
+    private fun persistBytes(documentId: String, spaceId: String?, driveFolderLocalId: String?, rawFilename: String, bytes: ByteArray) {
         try {
-            val dir = documentDirFor(documentId, projectId, driveFolderLocalId)
+            val dir = documentDirFor(documentId, spaceId, driveFolderLocalId)
             dir.mkdirs()
-            documentRawFile(documentId, projectId, driveFolderLocalId, rawFilename).writeBytes(bytes)
+            documentRawFile(documentId, spaceId, driveFolderLocalId, rawFilename).writeBytes(bytes)
         } catch (e: Exception) {
-            log.warn("Could not persist raw bytes for document {} to {}", documentId, documentRawFile(documentId, projectId, driveFolderLocalId, rawFilename), e)
+            log.warn("Could not persist raw bytes for document {} to {}", documentId, documentRawFile(documentId, spaceId, driveFolderLocalId, rawFilename), e)
         }
     }
 
@@ -317,7 +318,7 @@ class DocumentStore(
      * Stores [text] extracted from [filename] plus [bytes], the document's
      * original PDF content (2026-08-22, see this class's own doc comment) -
      * returns a fresh id to look either one up by later ([get]/[getBytes]).
-     * [projectId] (2026-08-23, see [ExtractedDocument.projectId]'s own doc
+     * [spaceId] (2026-08-23, see [ExtractedDocument.spaceId]'s own doc
      * comment) places this document's whole directory inside that project's
      * own folder instead of the flat, unscoped default when non-null;
      * [driveFolderLocalId] (2026-08-23, see [ExtractedDocument.driveFolderLocalId]'s
@@ -344,16 +345,16 @@ class DocumentStore(
         filename: String,
         text: String,
         bytes: ByteArray?,
-        projectId: String? = null,
+        spaceId: String? = null,
         driveFolderLocalId: String? = null,
         rawFilename: String = DEFAULT_RAW_FILENAME,
     ): String {
         val documentId = UUID.randomUUID().toString()
-        val document = ExtractedDocument(filename, text, System.currentTimeMillis(), projectId, driveFolderLocalId, rawFilename)
+        val document = ExtractedDocument(filename, text, System.currentTimeMillis(), spaceId, driveFolderLocalId, rawFilename)
         documents[documentId] = document
         persist(documentId, document)
         if (bytes != null) {
-            persistBytes(documentId, projectId, driveFolderLocalId, rawFilename, bytes)
+            persistBytes(documentId, spaceId, driveFolderLocalId, rawFilename, bytes)
         }
         return documentId
     }
@@ -365,14 +366,14 @@ class DocumentStore(
      * Returns [documentId]'s original PDF bytes, or null if there are none -
      * either [documentId] itself doesn't exist, or (2026-08-22, see this
      * class's own doc comment) it's a document stored before raw bytes were
-     * kept at all. Looks up [documentId]'s own recorded [ExtractedDocument.projectId]/
+     * kept at all. Looks up [documentId]'s own recorded [ExtractedDocument.spaceId]/
      * [ExtractedDocument.driveFolderLocalId] first (2026-08-23) to resolve
      * the right directory - unlike before this feature, [documentId] alone
      * is no longer enough to compute the path.
      */
     fun getBytes(documentId: String): ByteArray? {
         val document = documents[documentId] ?: return null
-        val file = documentRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename)
+        val file = documentRawFile(documentId, document.spaceId, document.driveFolderLocalId, document.rawFilename)
         if (!file.exists()) return null
         return try {
             file.readBytes()
@@ -403,7 +404,7 @@ class DocumentStore(
         val updated = existing.copy(text = text)
         documents[documentId] = updated
         persist(documentId, updated)
-        persistBytes(documentId, updated.projectId, updated.driveFolderLocalId, updated.rawFilename, bytes)
+        persistBytes(documentId, updated.spaceId, updated.driveFolderLocalId, updated.rawFilename, bytes)
         return true
     }
 
@@ -414,11 +415,11 @@ class DocumentStore(
      */
     fun backupBytes(documentId: String): Boolean {
         val document = documents[documentId] ?: return false
-        val current = documentRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename)
+        val current = documentRawFile(documentId, document.spaceId, document.driveFolderLocalId, document.rawFilename)
         if (!current.exists()) return false
         return try {
             current.copyTo(
-                documentPreviousRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename),
+                documentPreviousRawFile(documentId, document.spaceId, document.driveFolderLocalId, document.rawFilename),
                 overwrite = true,
             )
             true
@@ -431,7 +432,7 @@ class DocumentStore(
     /** The undo copy written by [backupBytes], or null if this document has never been edited. */
     fun getPreviousBytes(documentId: String): ByteArray? {
         val document = documents[documentId] ?: return null
-        val file = documentPreviousRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename)
+        val file = documentPreviousRawFile(documentId, document.spaceId, document.driveFolderLocalId, document.rawFilename)
         if (!file.exists()) return null
         return try {
             file.readBytes()
@@ -444,7 +445,7 @@ class DocumentStore(
     /** The cached PDF rendering written by [storePreview], or null if this document has none yet. */
     fun getPreviewBytes(documentId: String): ByteArray? {
         val document = documents[documentId] ?: return null
-        val file = documentPreviewFile(documentId, document.projectId, document.driveFolderLocalId)
+        val file = documentPreviewFile(documentId, document.spaceId, document.driveFolderLocalId)
         if (!file.exists()) return null
         return try {
             file.readBytes()
@@ -457,7 +458,7 @@ class DocumentStore(
     /** The source hash the cached preview was built from - see [PREVIEW_HASH_FILENAME]. Null if there is no preview. */
     fun previewHash(documentId: String): String? {
         val document = documents[documentId] ?: return null
-        val file = documentPreviewHashFile(documentId, document.projectId, document.driveFolderLocalId)
+        val file = documentPreviewHashFile(documentId, document.spaceId, document.driveFolderLocalId)
         if (!file.exists()) return null
         return try {
             file.readText().trim().ifBlank { null }
@@ -478,9 +479,9 @@ class DocumentStore(
     fun storePreview(documentId: String, pdfBytes: ByteArray, sourceHash: String): Boolean {
         val document = documents[documentId] ?: return false
         return try {
-            documentDirFor(documentId, document.projectId, document.driveFolderLocalId).mkdirs()
-            documentPreviewFile(documentId, document.projectId, document.driveFolderLocalId).writeBytes(pdfBytes)
-            documentPreviewHashFile(documentId, document.projectId, document.driveFolderLocalId).writeText(sourceHash)
+            documentDirFor(documentId, document.spaceId, document.driveFolderLocalId).mkdirs()
+            documentPreviewFile(documentId, document.spaceId, document.driveFolderLocalId).writeBytes(pdfBytes)
+            documentPreviewHashFile(documentId, document.spaceId, document.driveFolderLocalId).writeText(sourceHash)
             true
         } catch (e: Exception) {
             log.warn("Could not cache the PDF preview for document {}", documentId, e)
@@ -490,7 +491,7 @@ class DocumentStore(
 
     /** All stored documents as lightweight summaries, oldest upload first - backs the side panel's document list. */
     fun list(): List<DocumentSummary> = synchronized(documents) {
-        documents.map { (id, doc) -> DocumentSummary(id, doc.filename, doc.text.length, doc.projectId) }
+        documents.map { (id, doc) -> DocumentSummary(id, doc.filename, doc.text.length, doc.spaceId) }
     }
 
     /**
@@ -506,7 +507,7 @@ class DocumentStore(
      * own `vectorstore.json` to clean up there.
      *
      * **Call this LAST among the three per-document `remove` calls
-     * (2026-08-23, changed alongside [ExtractedDocument.projectId]):**
+     * (2026-08-23, changed alongside [ExtractedDocument.spaceId]):**
      * unlike before this feature, order now matters - [DocumentIndex.remove]/
      * [DocumentStructureStore.remove] resolve their own files via
      * [documentDir], which needs [documentId]'s entry to still be present
@@ -518,14 +519,89 @@ class DocumentStore(
      * and [ch.arcticsoft.springchat3.web.DriveController]'s `ingestFile`/
      * `ingestGoogleDoc` for the corrected call order.
      */
+    /**
+     * Moves [documentId] into [targetSpaceId] - the whole on-disk directory,
+     * not just the recorded space (2026-08-25, user's own request to drag a
+     * document from one space to another). Returns false for an unknown id,
+     * for a Drive-folder file, or if the directory could not be moved.
+     *
+     * **The directory IS the move.** `vectorstore.json`, `structure.json`,
+     * the raw bytes, the one-level undo copy and the cached PDF preview all
+     * live inside it, and [DocumentIndex]/[DocumentStructureStore] resolve
+     * their own files through [documentDir] *at call time* - so relocating
+     * the directory relocates the embeddings with it and nothing needs
+     * reindexing. This is the exact opposite of [remove]'s ordering rule,
+     * where those two must be cleaned out first: here they must not be
+     * touched at all.
+     *
+     * **A Drive-folder file is refused**, not moved. It lives under
+     * `gdrive-<localId>/` and is owned by the sync: the next "Sync now"
+     * would recreate it in the space the folder is linked to, leaving a
+     * duplicate and no way to tell which one is current. Moving a whole
+     * linked folder is a different operation and does not exist yet.
+     *
+     * **Fails without a half-move.** If the rename fails nothing is changed
+     * at all; if the metadata write then fails the directory is moved back,
+     * because a document whose recorded [ExtractedDocument.spaceId] and
+     * physical location disagree is invisible to [loadPersisted] after a
+     * restart - it would be read from wherever it sits but resolve its path
+     * from what the JSON says.
+     */
+    fun moveToSpace(documentId: String, targetSpaceId: String?): Boolean {
+        val document = documents[documentId] ?: return false
+        if (document.driveFolderLocalId != null) return false
+        if (document.spaceId == targetSpaceId) return true
+
+        val from = documentDirFor(documentId, document.spaceId, null)
+        val to = documentDirFor(documentId, targetSpaceId, null)
+        val moved = document.copy(spaceId = targetSpaceId)
+
+        if (from.exists()) {
+            try {
+                to.parentFile.mkdirs()
+                Files.move(from.toPath(), to.toPath())
+            } catch (e: Exception) {
+                log.warn("Could not move document {} from {} to {} - leaving it where it is", documentId, from, to, e)
+                return false
+            }
+        }
+
+        // Written here rather than through persist(), which logs and swallows:
+        // a failed write after a successful rename is the one case that would
+        // leave disk and metadata disagreeing, so it is undone instead.
+        try {
+            val dir = documentDirFor(documentId, targetSpaceId, null)
+            dir.mkdirs()
+            objectMapper.writeValue(documentFile(documentId, targetSpaceId, null), moved)
+        } catch (e: Exception) {
+            log.warn("Could not record document {}'s new space - moving it back to {}", documentId, from, e)
+            try {
+                if (to.exists()) Files.move(to.toPath(), from.toPath())
+            } catch (rollback: Exception) {
+                log.error(
+                    "Document {} is now at {} while its document.json still says space {} - it will not be found " +
+                        "after a restart until one of the two is corrected by hand",
+                    documentId,
+                    to,
+                    document.spaceId,
+                    rollback,
+                )
+            }
+            return false
+        }
+
+        documents[documentId] = moved
+        return true
+    }
+
     fun remove(documentId: String): Boolean {
         val document = documents.remove(documentId) ?: return false
-        documentFile(documentId, document.projectId, document.driveFolderLocalId).delete()
-        documentRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename).delete()
-        documentPreviousRawFile(documentId, document.projectId, document.driveFolderLocalId, document.rawFilename).delete()
-        documentPreviewFile(documentId, document.projectId, document.driveFolderLocalId).delete()
-        documentPreviewHashFile(documentId, document.projectId, document.driveFolderLocalId).delete()
-        documentDirFor(documentId, document.projectId, document.driveFolderLocalId).delete()
+        documentFile(documentId, document.spaceId, document.driveFolderLocalId).delete()
+        documentRawFile(documentId, document.spaceId, document.driveFolderLocalId, document.rawFilename).delete()
+        documentPreviousRawFile(documentId, document.spaceId, document.driveFolderLocalId, document.rawFilename).delete()
+        documentPreviewFile(documentId, document.spaceId, document.driveFolderLocalId).delete()
+        documentPreviewHashFile(documentId, document.spaceId, document.driveFolderLocalId).delete()
+        documentDirFor(documentId, document.spaceId, document.driveFolderLocalId).delete()
         // Does not also try to delete the now-possibly-empty gdrive-<id>
         // folder itself (2026-08-23, see this class's own doc comment) -
         // same "leaves an empty container behind, not addressed" precedent

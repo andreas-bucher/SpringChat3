@@ -56,24 +56,28 @@ class ChatAgent(
 
     /**
      * Resolves the LLM for tool selection - [ModelRoleKeys.TOOL_SELECTION]'s
-     * override if the user picked one in the settings popup (2026-08-22, see
+     * override if one applies to this caller (2026-08-22, see
      * springchat3_settings.md in project memory), else Embabel's own
      * `default-llm` (`Ai.withDefaultLlm()`, unchanged from before this
      * feature). A separate helper from [llmForRole] because tool selection
      * has no real Embabel role name to fall back to - it's `default-llm`,
      * not a `embabel.models.llms.*` entry.
+     *
+     * Reads [ChatRequest.modelOverrides] rather than the settings store since
+     * 2026-08-25: model choice is per user now, and this agent is a singleton
+     * that never learns who is asking - see that field's own doc comment.
      */
-    private fun toolSelectionLlm(context: OperationContext) =
-        appSettingsStore.get().modelOverrides[ModelRoleKeys.TOOL_SELECTION]
+    private fun toolSelectionLlm(request: ChatRequest, context: OperationContext) =
+        request.modelOverrides[ModelRoleKeys.TOOL_SELECTION]
             ?.let { context.ai().withLlm(it) }
             ?: context.ai().withDefaultLlm()
 
     /**
      * Resolves the LLM for [role] (one of [ModelRoleKeys.GENERATION]/
      * [ModelRoleKeys.DOCUMENT_SEARCH_STRATEGY], both real Embabel role names
-     * matching `embabel.models.llms.*`) - the user's override for that role
-     * if one is set, else `Ai.withLlmByRole(role)` exactly as before this
-     * feature. Embabel itself has no supported way to change a role's
+     * matching `embabel.models.llms.*`) - this caller's override for that
+     * role if one applies, else `Ai.withLlmByRole(role)` exactly as before
+     * this feature. Embabel itself has no supported way to change a role's
      * configured model at runtime (`embabel.models.*` is bound once at
      * startup, see [AppSettingsStore]'s own doc comment) - `Ai.withLlm(exact
      * model name)` sidesteps that entirely by naming the model directly
@@ -81,8 +85,8 @@ class ChatAgent(
      * embabel-agent-ollama-autoconfigure already registers every locally
      * pulled Ollama model as its own selectable LLM by tag.
      */
-    private fun llmForRole(context: OperationContext, role: String) =
-        appSettingsStore.get().modelOverrides[role]
+    private fun llmForRole(request: ChatRequest, context: OperationContext, role: String) =
+        request.modelOverrides[role]
             ?.let { context.ai().withLlm(it) }
             ?: context.ai().withLlmByRole(role)
 
@@ -97,33 +101,35 @@ class ChatAgent(
      * visibly reflected in the trace on the very next turn, not just
      * inferred from `application.yml`.
      */
-    private fun resolvedModel(role: String, default: String): String =
-        appSettingsStore.get().modelOverrides[role] ?: default
+    private fun resolvedModel(request: ChatRequest, role: String, default: String): String =
+        request.modelOverrides[role] ?: default
 
     /**
      * [documentSearchStrategy]'s trace/progress label, including the exact
      * model actually deciding this turn's strategy - recomputed (rather than
      * a stored constant, now that it's no longer a fixed string) in both
      * [documentSearchStrategy] itself and [answer]'s `steps` list, which is
-     * safe since [AppSettingsStore]'s settings can't change mid-request; a
-     * single function keeps both call sites from silently drifting apart the
-     * way a plain constant used to.
+     * safe because both read the same [ChatRequest], fixed when the turn was
+     * authorized (since 2026-08-25; it was the settings store's own
+     * immutability during a request before that). A single function keeps
+     * both call sites from silently drifting apart the way a plain constant
+     * used to.
      */
-    private fun documentSearchStrategyStepName(): String =
-        "Document search strategy (${resolvedModel(ModelRoleKeys.DOCUMENT_SEARCH_STRATEGY, documentSearchStrategyDefaultModel)}) ..."
+    private fun documentSearchStrategyStepName(request: ChatRequest): String =
+        "Document search strategy (${resolvedModel(request, ModelRoleKeys.DOCUMENT_SEARCH_STRATEGY, documentSearchStrategyDefaultModel)}) ..."
 
     /** Same idea as [documentSearchStrategyStepName], for [documentEdit]'s own step. */
-    private fun documentEditStepName(): String =
-        "Editing document (${resolvedModel(ModelRoleKeys.DOCUMENT_EDIT, documentEditDefaultModel)}) ..."
+    private fun documentEditStepName(request: ChatRequest): String =
+        "Editing document (${resolvedModel(request, ModelRoleKeys.DOCUMENT_EDIT, documentEditDefaultModel)}) ..."
 
     /** Same idea as [documentSearchStrategyStepName], for [answer]'s own generation step. */
-    private fun generatingAnswerStepName(): String =
-        "Generating answer (${resolvedModel(ModelRoleKeys.GENERATION, generationDefaultModel)}) ..."
+    private fun generatingAnswerStepName(request: ChatRequest): String =
+        "Generating answer (${resolvedModel(request, ModelRoleKeys.GENERATION, generationDefaultModel)}) ..."
 
     /**
-     * Short-circuits to no LLM call at all when tool use is switched off via
-     * the settings popup (2026-08-22, see springchat3_settings.md in project
-     * memory, [AppSettingsStore]) - with no tools to hand the model, there is
+     * Short-circuits to no LLM call at all when tool use is switched off in
+     * the settings popup by *this caller* (2026-08-22, per user since
+     * 2026-08-25 - see springchat3_settings.md in project memory) - with no tools to hand the model, there is
      * nothing left for this step to decide, so skip the round-trip entirely
      * rather than calling with an empty tool list. Emits no progress events
      * either, so "Analyzing message ..." simply doesn't appear in the trace
@@ -132,7 +138,7 @@ class ChatAgent(
      */
     @Action
     fun analyzeMessage(request: ChatRequest, context: OperationContext): ToolResults {
-        if (!appSettingsStore.get().toolsEnabled) {
+        if (!request.toolsEnabled) {
             return ToolResults(emptyList())
         }
 
@@ -157,7 +163,7 @@ class ChatAgent(
         // in the pipeline. It also makes these tools agree with the rest of
         // the turn: vector retrieval below already looks only at
         // request.documentIds, and skips entirely when nothing is attached.
-        val wordDocumentReadTool = WordDocumentReadTool(wordDocumentWorkspace, request.projectId, request.documentIds.toSet())
+        val wordDocumentReadTool = WordDocumentReadTool(wordDocumentWorkspace, request.spaceId, request.documentIds.toSet())
         // Typed List<GatheringTool>, not List<ChatTool> (2026-08-23) - the
         // compiler is what keeps an EditingTool out of this step now, rather
         // than a convention about which classes get @Component. See
@@ -270,7 +276,7 @@ class ChatAgent(
         val processId = context.agentProcess.id
         log.trace("analyzeMessage processId (context.agentProcess.id): {}", processId)
         val (note, executions) = toolCallBridge.withCapture(processId, request.correlationId) {
-            toolSelectionLlm(context)
+            toolSelectionLlm(request, context)
                 .withToolObjects(toolObjects)
                 .createObject(
                     analyzeMessagePrompt,
@@ -375,7 +381,7 @@ class ChatAgent(
             return DocumentSearchStrategy(useStructure = false, useVector = false)
         }
 
-        val stepName = documentSearchStrategyStepName()
+        val stepName = documentSearchStrategyStepName(request)
         progressBus.emit(request.correlationId, ChatProgressEvent.StepStarted(stepName))
         val start = System.currentTimeMillis()
 
@@ -451,7 +457,7 @@ class ChatAgent(
             log.trace("documentSearchStrategy prompt:\n{}", prompt)
 
             try {
-                val classification = llmForRole(context, ModelRoleKeys.DOCUMENT_SEARCH_STRATEGY)
+                val classification = llmForRole(request, context, ModelRoleKeys.DOCUMENT_SEARCH_STRATEGY)
                     .createObject(prompt, DocumentQuestionClassification::class.java)
                 log.debug(
                     "documentSearchStrategy classification: useStructure={} useVector={}",
@@ -485,13 +491,14 @@ class ChatAgent(
      * it ("editing a document should be made by answer"), before they asked
      * to reconsider the pipeline as a whole:
      *
-     *  1. [answer] is `@AchievesGoal` and must emit valid [AnswerText] JSON.
-     *     Structured output plus a tool-call loop in one call is the
-     *     shakiest combination available, and the recovery for malformed
-     *     JSON is to re-prompt - which can replay the tool calls. "Append
-     *     this paragraph" applied twice is a silently corrupted document. A
-     *     step with side effects must not be the one whose output format can
-     *     force a redo.
+     *  1. [answer] is `@AchievesGoal`, and when this was written it also had
+     *     to emit a parseable object. Structured output plus a tool-call loop
+     *     in one call is the shakiest combination available, and the recovery
+     *     for malformed JSON is to re-prompt - which can replay the tool
+     *     calls. "Append this paragraph" applied twice is a silently corrupted
+     *     document. A step with side effects must not be the one whose output
+     *     format can force a redo. ([answer] itself stopped asking for an
+     *     object on 2026-08-25, for the same family of reasons.)
      *  2. It separates deciding to change a document from describing the
      *     change. The "only when the user explicitly asked" guardrail is now
      *     this step's entire prompt, instead of one paragraph buried in a
@@ -523,11 +530,27 @@ class ChatAgent(
         // look identical from outside (2026-08-23 - which is exactly the
         // confusion the first version caused, with document editing simply
         // switched off in settings).
+        // Still read from the store rather than the request, unlike tool use
+        // and the model choices next to it in the same popup (2026-08-25):
+        // this one is server policy, not a preference. A permission a user
+        // grants themselves is not a permission, and these edits land in
+        // documents other people share - so it stays admin-only and global.
         if (!appSettingsStore.get().documentEditingEnabled) {
             log.debug("documentEdit skipped: document editing is switched off in settings")
             return DocumentEdits()
         }
-        if (request.projectId == null) {
+        // Set server-side from the caller's role in this space (2026-08-24,
+        // shared spaces - see ChatRequest.documentEditingAllowed): a viewer
+        // gets an agent that reads and answers but never writes. Checked
+        // alongside the global setting rather than folded into it - one is
+        // "this app does not edit documents", the other "this person does
+        // not", and a log line that can't tell them apart is exactly the
+        // confusion the surrounding comment warns about.
+        if (!request.documentEditingAllowed) {
+            log.debug("documentEdit skipped: this user has view-only access to space {}", request.spaceId)
+            return DocumentEdits()
+        }
+        if (request.spaceId == null) {
             log.debug("documentEdit skipped: no active project, so there is nothing this step could reach")
             return DocumentEdits()
         }
@@ -539,13 +562,13 @@ class ChatAgent(
         // happen to exist. The same set is handed to both tool objects below,
         // so this is a scope, not a hint - see WordDocumentEditTool.
         val selectedIds = request.documentIds.toSet()
-        val documents = wordDocumentWorkspace.list(request.projectId, selectedIds)
+        val documents = wordDocumentWorkspace.list(request.spaceId, selectedIds)
         if (documents.isEmpty() && !looksLikeDocumentCreation(request.message)) {
             log.debug(
                 "documentEdit skipped: none of the {} Word document(s) in project {} are selected, and \"{}\" " +
                     "doesn't look like a request to create one",
-                wordDocumentWorkspace.list(request.projectId).size,
-                request.projectId,
+                wordDocumentWorkspace.list(request.spaceId).size,
+                request.spaceId,
                 request.message,
             )
             return DocumentEdits()
@@ -553,10 +576,10 @@ class ChatAgent(
         log.debug(
             "documentEdit running against {} selected Word document(s) in project {}",
             documents.size,
-            request.projectId,
+            request.spaceId,
         )
 
-        val stepName = documentEditStepName()
+        val stepName = documentEditStepName(request)
         progressBus.emit(request.correlationId, ChatProgressEvent.StepStarted(stepName))
         val start = System.currentTimeMillis()
 
@@ -605,7 +628,7 @@ class ChatAgent(
             WordDocumentEditTool(
                 wordDocumentWorkspace,
                 wordDocumentService,
-                request.projectId,
+                request.spaceId,
                 request.message,
                 selectedIds,
             ) +
@@ -613,7 +636,7 @@ class ChatAgent(
             // about to change a document should not be able to read one it
             // isn't allowed to change. analyzeMessage's own read tool stays
             // project-wide - answering a question is a different job.
-            WordDocumentReadTool(wordDocumentWorkspace, request.projectId, selectedIds)
+            WordDocumentReadTool(wordDocumentWorkspace, request.spaceId, selectedIds)
 
         // generateText, NOT createObject (2026-08-23, after a real failure -
         // see below). This step's own text output is only ever logged: what
@@ -624,7 +647,7 @@ class ChatAgent(
         // type ToolGatheringNote from Array value") - a pointless second way
         // for this step to fail.
         val (note, executions) = toolCallBridge.withCapture(context.agentProcess.id, request.correlationId) {
-            llmForRole(context, ModelRoleKeys.DOCUMENT_EDIT)
+            llmForRole(request, context, ModelRoleKeys.DOCUMENT_EDIT)
                 .withToolObjects(toolObjects)
                 .generateText(prompt)
         }
@@ -632,7 +655,7 @@ class ChatAgent(
 
         val seconds = (System.currentTimeMillis() - start) / 1000.0
         progressBus.emit(request.correlationId, ChatProgressEvent.StepFinished(stepName, seconds))
-        return DocumentEdits(executions + leakedToolCallFailure(note, executions), seconds)
+        return DocumentEdits(executions + leakedToolCallFailure(request, note, executions), seconds)
     }
 
     /**
@@ -657,11 +680,60 @@ class ChatAgent(
      * marker but really called others is a partial success, and reporting a
      * blanket failure over it would be worse than saying nothing.
      */
-    private fun leakedToolCallFailure(note: String?, executions: List<ToolExecution>): List<ToolExecution> {
+    /**
+     * Tidies the raw generation output now that [answer] asks for plain text
+     * rather than a parsed object (2026-08-25).
+     *
+     * Two things the converter chain used to absorb, and one it did not:
+     *  - **Thinking blocks.** `createObject` went through Embabel's
+     *    `SuppressThinkingConverter`; `generateText` does not, so a reasoning
+     *    model would otherwise show its scratchpad to the user. Cutting at the
+     *    LAST `</think>` also handles the unclosed-opening-tag case.
+     *  - **A JSON envelope emitted out of habit** by a model that has seen
+     *    this shape before, optionally inside a code fence. Unwrapped only
+     *    when it is *exactly* one object with one textual `text` field, so a
+     *    reply that legitimately shows the user some JSON is left alone.
+     *
+     * Deliberately not a general-purpose cleaner: anything broader would start
+     * editing real answers.
+     */
+    private fun cleanAnswerText(raw: String?): String {
+        // Nullable purely so this compiles against either shape of
+        // generateText's return type; an empty reply is reported rather than
+        // shown as an empty bubble, which reads like the app hanging.
+        val text = raw ?: ""
+        val withoutThinking = if (text.contains("</think>")) text.substringAfterLast("</think>") else text
+        val trimmed = withoutThinking.trim()
+        val fenced = Regex("^```[a-zA-Z]*\\s*\\n(.*)\\n```$", RegexOption.DOT_MATCHES_ALL)
+            .find(trimmed)?.groupValues?.get(1)?.trim()
+        val candidate = fenced ?: trimmed
+        val unwrapped = if (!candidate.startsWith("{")) {
+            trimmed
+        } else {
+            try {
+                val node = objectMapper.readTree(candidate)
+                val field = node.get("text")
+                if (node.isObject && node.size() == 1 && field != null && field.isTextual) {
+                    field.asText().trim()
+                } else {
+                    trimmed
+                }
+            } catch (e: Exception) {
+                trimmed
+            }
+        }
+        if (unwrapped.isBlank()) {
+            log.warn("The generation model returned an empty reply")
+            return "The model returned an empty reply. Please try again."
+        }
+        return unwrapped
+    }
+
+    private fun leakedToolCallFailure(request: ChatRequest, note: String?, executions: List<ToolExecution>): List<ToolExecution> {
         if (executions.isNotEmpty() || note == null) return emptyList()
         val leaked = TOOL_CALL_LEAK_MARKERS.any { note.contains(it, ignoreCase = true) }
         if (!leaked) return emptyList()
-        val model = resolvedModel(ModelRoleKeys.DOCUMENT_EDIT, documentEditDefaultModel)
+        val model = resolvedModel(request, ModelRoleKeys.DOCUMENT_EDIT, documentEditDefaultModel)
         log.warn(
             "The document-editing model ({}) emitted a tool call as plain text instead of calling the tool: \"{}\". " +
                 "That model does not do native tool calling in this setup - pick one that does " +
@@ -790,7 +862,7 @@ class ChatAgent(
             )
         }
 
-        val answerStepName = generatingAnswerStepName()
+        val answerStepName = generatingAnswerStepName(request)
         progressBus.emit(request.correlationId, ChatProgressEvent.StepStarted(answerStepName))
         val start = System.currentTimeMillis()
 
@@ -963,11 +1035,9 @@ class ChatAgent(
             documentGuidance,
             documentEditGuidance,
             toolErrorGuidance,
-            "Respond with raw JSON only: one object with a single \"text\" " +
-                "field holding your reply (formatted as Markdown per the " +
-                "instructions above). Do not wrap the JSON object itself in " +
-                "markdown code fences or backticks, and do not add any other " +
-                "text before or after it.",
+            "Reply with the answer itself and nothing else - no JSON, no " +
+                "wrapper object, no surrounding code fence. Markdown inside " +
+                "the answer is expected, per the instructions above.",
         ).joinToString("\n\n")
         log.trace("chat llm answer prompt:\n{}", prompt)
 
@@ -975,8 +1045,19 @@ class ChatAgent(
         // summarize/draft/review passes. The (larger) generation model is
         // trusted to both pick out what's relevant and write the final reply
         // in one shot.
-        val answered = llmForRole(context, ModelRoleKeys.GENERATION)
-            .createObject(prompt, AnswerText::class.java)
+        //
+        // generateText, NOT createObject (2026-08-25, after a real failure -
+        // the user's log showed ten retries of a perfectly good Markdown
+        // summary being rejected for not being JSON, each retry a fresh
+        // generation-model call, and the converter chain turning the
+        // rejected text into "" so the reported cause was the useless "No
+        // content to map due to end-of-input"). The target was
+        // `AnswerText(val text: String)` - a single string - so the JSON
+        // envelope bought nothing and cost a whole class of failure. Same
+        // lesson documentEdit already learned; see its own comment.
+        val answered = cleanAnswerText(
+            llmForRole(request, context, ModelRoleKeys.GENERATION).generateText(prompt),
+        )
 
         val seconds = (System.currentTimeMillis() - start) / 1000.0
         progressBus.emit(request.correlationId, ChatProgressEvent.StepFinished(answerStepName, seconds))
@@ -999,7 +1080,7 @@ class ChatAgent(
         // regardless of the two document-related actions' actual concurrent
         // runtime order - see documentSearchStrategy's own doc comment.
         val documentSearchStrategyTiming = if (request.documentIds.isNotEmpty()) {
-            listOf(StepTiming(documentSearchStrategyStepName(), strategy.seconds))
+            listOf(StepTiming(documentSearchStrategyStepName(request), strategy.seconds))
         } else {
             emptyList()
         }
@@ -1007,12 +1088,12 @@ class ChatAgent(
         // 0.0 seconds when it short-circuited, same honesty rule the
         // strategy row above follows.
         val documentEditTiming = if (edits.seconds > 0.0) {
-            listOf(StepTiming(documentEditStepName(), edits.seconds))
+            listOf(StepTiming(documentEditStepName(request), edits.seconds))
         } else {
             emptyList()
         }
         val steps = results.timings + documentSearchStrategyTiming + documentEditTiming + StepTiming(answerStepName, seconds)
-        val reply = ChatReply(answered.text, toolCalls, steps, retrievalSummary)
+        val reply = ChatReply(answered, toolCalls, steps, retrievalSummary)
         // Terminal event for the live stream - ChatController's /chat/stream
         // endpoint could emit this itself once AgentInvocation.invoke(...)
         // returns the same reply, but emitting it here means answer, not
