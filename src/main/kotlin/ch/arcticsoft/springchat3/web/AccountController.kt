@@ -1,7 +1,7 @@
 package ch.arcticsoft.springchat3.web
 
 import ch.arcticsoft.springchat3.project.SpaceAccess
-import ch.arcticsoft.springchat3.security.LocalUserStore
+import ch.arcticsoft.springchat3.security.UserStore
 import org.springframework.http.HttpStatus
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.web.bind.annotation.PostMapping
@@ -27,14 +27,14 @@ data class ChangePasswordRequest(val currentPassword: String, val newPassword: S
  */
 @RestController
 class AccountController(
-    private val localUserStore: LocalUserStore,
+    private val userStore: UserStore,
     private val passwordEncoder: PasswordEncoder,
     private val spaceAccess: SpaceAccess,
 ) {
     @PostMapping("/account/password")
     fun changePassword(@RequestBody request: ChangePasswordRequest, exchange: ServerWebExchange) {
         val email = spaceAccess.currentUserEmail(exchange)
-        val user = localUserStore.find(email)
+        val user = userStore.find(email)
             ?: throw ResponseStatusException(HttpStatus.CONFLICT, "This account signs in with Google - change your password there.")
         val hash = user.passwordHash
         if (hash == null || !passwordEncoder.matches(request.currentPassword, hash)) {
@@ -50,7 +50,7 @@ class AccountController(
             // the same thing would clear the flag without fixing that.
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Please choose a password you have not used here before.")
         }
-        localUserStore.changePassword(email, fresh)
+        userStore.changePassword(email, fresh)
     }
 
     companion object {

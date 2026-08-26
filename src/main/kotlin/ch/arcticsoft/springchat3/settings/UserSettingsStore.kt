@@ -37,9 +37,29 @@ data class UserSettings(
     val toolsEnabled: Boolean? = null,
     /** Sparse: a role absent here falls back to [AppSettings.modelOverrides], then to the configured default. */
     val modelOverrides: Map<String, String> = emptyMap(),
+    /**
+     * The documents THIS user has unlocked for the agent to edit (2026-08-25,
+     * user's own reasoning: "if one user makes a document editable, and
+     * another works on the document without being aware that it is editable
+     * ... this votes for making this setting per user").
+     *
+     * **Per user, not per document, and that is the whole point.** A shared
+     * flag would make one person's convenience into another person's hazard -
+     * they would attach a document to ask a question and get an edit they
+     * never intended, from a switch someone else flipped. This is not an
+     * access rule: who may change a space's contents is already answered by
+     * [ch.arcticsoft.springchat3.project.SpaceRole], and an EDITOR can delete
+     * the file outright. It is a safety catch against your own agent, and a
+     * safety catch belongs to the person it protects.
+     *
+     * Empty by default, so every account starts with nothing unlocked and an
+     * unlock is always something you did to yourself.
+     */
+    val editableDocumentIds: List<String> = emptyList(),
 ) {
     /** True when this carries no choice at all, so the entry can be dropped rather than stored as noise. Deliberately NOT named `isEmpty` - see the class doc. */
-    fun hasNothingSet(): Boolean = toolsEnabled == null && modelOverrides.isEmpty()
+    fun hasNothingSet(): Boolean =
+        toolsEnabled == null && modelOverrides.isEmpty() && editableDocumentIds.isEmpty()
 }
 
 /**
@@ -109,6 +129,38 @@ class UserSettingsStore(
     /** Sets [email]'s own tool-use choice, or clears it - reverting them to the server default - when [enabled] is null. */
     fun setToolsEnabled(email: String, enabled: Boolean?): UserSettings =
         persist(email, get(email).copy(toolsEnabled = enabled))
+
+    /**
+     * Unlocks or re-locks [documentId] for [email] alone. Idempotent: an
+     * unlock that is already set, or a lock on something never unlocked,
+     * writes nothing.
+     */
+    fun setDocumentEditable(email: String, documentId: String, editable: Boolean): UserSettings {
+        val current = get(email)
+        val ids = if (editable) {
+            if (documentId in current.editableDocumentIds) return current
+            current.editableDocumentIds + documentId
+        } else {
+            if (documentId !in current.editableDocumentIds) return current
+            current.editableDocumentIds - documentId
+        }
+        return persist(email, current.copy(editableDocumentIds = ids))
+    }
+
+    /**
+     * Drops [documentId] from every user's unlocked set - called when the
+     * document itself is deleted, so the file does not accumulate ids that
+     * can never resolve again. A re-upload of the same file gets a fresh
+     * documentId, so this is housekeeping rather than a safety measure.
+     */
+    @Synchronized
+    fun forgetDocument(documentId: String) {
+        val affected = byEmail.filterValues { documentId in it.editableDocumentIds }
+        if (affected.isEmpty()) return
+        affected.forEach { (email, settings) ->
+            persist(email, settings.copy(editableDocumentIds = settings.editableDocumentIds - documentId))
+        }
+    }
 
     /**
      * Sets [email]'s own model for [role], or clears it - falling back to the

@@ -190,6 +190,32 @@ class DocumentIndex(
             Document(page.id, page.text.orEmpty(), cleanMetadata)
         }
         val chunks = splitter.apply(cleaned)
+        // SimpleVectorStore.add throws IllegalArgumentException("Documents
+        // list cannot be empty") rather than no-opping, and the splitter
+        // yields nothing at all for text that is empty or whitespace - which
+        // is exactly what a scanned, image-only PDF produces (2026-08-25,
+        // from a real 500 on POST /upload: PagePdfDocumentReader reported
+        // "Processed total 1 pages" and the page carried no text).
+        //
+        // Guarded here rather than at any call site because ALL SEVEN
+        // ingestion paths reach this one method - PDF upload, Word upload, a
+        // web page, both Drive sync paths and both Word-edit paths - and each
+        // of them can be handed a document with no extractable text. The edit
+        // paths matter most: there the file has already been written when
+        // this runs, so a throw would abort after the change was made.
+        //
+        // The document is still stored and still downloadable; it simply has
+        // nothing to retrieve. index.html reports that on upload, since a
+        // document that silently answers nothing is worse than one that says
+        // why.
+        if (chunks.isEmpty()) {
+            log.warn(
+                "No text to index for document {} - it has no extractable text (a scanned or image-only file?), " +
+                    "so it will not be searchable",
+                documentId,
+            )
+            return
+        }
         val store = storeFor(documentId)
         store.add(chunks)
         persist(documentId, store)

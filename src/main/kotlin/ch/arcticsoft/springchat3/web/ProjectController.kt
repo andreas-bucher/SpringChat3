@@ -32,6 +32,46 @@ data class CreateProjectRequest(val name: String, val description: String?)
 data class RenameProjectRequest(val name: String)
 
 /**
+ * What every `/projects` endpoint returns: the stored [Project] plus the
+ * **caller's own role in it** (2026-08-25).
+ *
+ * A separate type rather than a field on [Project] because [Project] IS the
+ * persisted shape - `ProjectStore` writes it straight to `space.json`, so a
+ * field added there would be written to disk, where a role belonging to
+ * whoever happened to save last is meaningless and immediately stale.
+ *
+ * [myRole] is what lets the browser decide whether a space's name is editable
+ * *before* someone types in it, and whether to offer the ＋ actions at all -
+ * without keeping its own copy of [SpaceAccess.roleOf]'s rules, which is the
+ * thing most likely to drift from the real ones. It is an affordance hint,
+ * never the enforcement: every endpoint still checks for itself.
+ *
+ * Never null here: a space the caller has no role in is not in
+ * [SpaceAccess.visibleSpaces] to begin with.
+ */
+data class ProjectView(
+    val spaceId: String,
+    val name: String,
+    val description: String,
+    val createdAt: Long,
+    val owner: String?,
+    val members: List<SpaceMember>,
+    val myRole: SpaceRole,
+) {
+    companion object {
+        fun of(project: Project, role: SpaceRole) = ProjectView(
+            project.spaceId,
+            project.name,
+            project.description,
+            project.createdAt,
+            project.owner,
+            project.members,
+            role,
+        )
+    }
+}
+
+/**
  * `POST /projects/{spaceId}/members`' request body. [role] is a plain
  * `String` rather than a [SpaceRole] so that a wrong value produces this
  * app's own explanation of which roles exist, instead of Jackson's
@@ -64,7 +104,8 @@ class ProjectController(
      * checks for itself, because a browser is not where this can be decided.
      */
     @GetMapping("/projects")
-    fun list(exchange: ServerWebExchange): List<Project> = spaceAccess.visibleSpaces(exchange)
+    fun list(exchange: ServerWebExchange): List<ProjectView> =
+        spaceAccess.visibleSpaces(exchange).map { ProjectView.of(it, spaceAccess.roleOf(exchange, it.spaceId) ?: SpaceRole.VIEWER) }
 
     /**
      * `400 Bad Request` if [CreateProjectRequest.name] is blank -
@@ -73,12 +114,16 @@ class ProjectController(
      * they share it.
      */
     @PostMapping("/projects")
-    fun create(@RequestBody request: CreateProjectRequest, exchange: ServerWebExchange): Project {
+    fun create(@RequestBody request: CreateProjectRequest, exchange: ServerWebExchange): ProjectView {
         val name = request.name.trim()
         if (name.isEmpty()) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Project name is required")
         }
-        return projectStore.create(name, request.description?.trim() ?: "", spaceAccess.currentUserEmail(exchange))
+        // The creator is always the owner, so no lookup is needed for the role.
+        return ProjectView.of(
+            projectStore.create(name, request.description?.trim() ?: "", spaceAccess.currentUserEmail(exchange)),
+            SpaceRole.OWNER,
+        )
     }
 
     /**
@@ -102,15 +147,16 @@ class ProjectController(
         @PathVariable spaceId: String,
         @RequestBody request: RenameProjectRequest,
         exchange: ServerWebExchange,
-    ): Project {
+    ): ProjectView {
         projectStore.get(spaceId) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No such space")
         spaceAccess.requireWrite(exchange, spaceId)
         val name = request.name.trim()
         if (name.isEmpty()) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Space name is required")
         }
-        return projectStore.rename(spaceId, name)
+        val renamed = projectStore.rename(spaceId, name)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No such space")
+        return ProjectView.of(renamed, spaceAccess.roleOf(exchange, spaceId) ?: SpaceRole.VIEWER)
     }
 
     /**
@@ -172,7 +218,7 @@ class ProjectController(
         @PathVariable spaceId: String,
         @RequestBody request: AddMemberRequest,
         exchange: ServerWebExchange,
-    ): Project {
+    ): ProjectView {
         spaceAccess.requireOwner(exchange, spaceId)
         val space = projectStore.get(spaceId) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No such space")
 
@@ -200,8 +246,11 @@ class ProjectController(
         }
 
         val members = space.members.filterNot { it.email.equals(email, ignoreCase = true) } + SpaceMember(email, role)
-        return projectStore.updateMembers(spaceId, members)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No such space")
+        return ProjectView.of(
+            projectStore.updateMembers(spaceId, members)
+                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No such space"),
+            SpaceRole.OWNER,
+        )
     }
 
     /**
@@ -218,12 +267,17 @@ class ProjectController(
         @PathVariable spaceId: String,
         @RequestParam email: String,
         exchange: ServerWebExchange,
-    ): Project {
+    ): ProjectView {
         spaceAccess.requireOwner(exchange, spaceId)
         val space = projectStore.get(spaceId) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No such space")
         val members = space.members.filterNot { it.email.equals(email.trim(), ignoreCase = true) }
-        if (members.size == space.members.size) return space
-        return projectStore.updateMembers(spaceId, members)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No such space")
+        // requireOwner above already established the caller's role, so these
+        // two never need to look it up again.
+        if (members.size == space.members.size) return ProjectView.of(space, SpaceRole.OWNER)
+        return ProjectView.of(
+            projectStore.updateMembers(spaceId, members)
+                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No such space"),
+            SpaceRole.OWNER,
+        )
     }
 }

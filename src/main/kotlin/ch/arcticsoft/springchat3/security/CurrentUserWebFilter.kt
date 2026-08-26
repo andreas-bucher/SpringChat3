@@ -64,7 +64,7 @@ const val CURRENT_USER_IS_GOOGLE_ATTRIBUTE = "springchat3.currentUserIsGoogle"
  * springchat3_local_accounts.md in project memory). A Google session's
  * principal is an [OidcUser] and the email is a claim on it; a local
  * session's is a [UserDetails] whose username *is* the email (see
- * [LocalUserStore]). [emailOf] handles both, and everything downstream
+ * [UserStore]). [emailOf] handles both, and everything downstream
  * ([ch.arcticsoft.springchat3.project.SpaceAccess], space membership,
  * chat-session ownership) sees the same lowercased string either way and
  * never learns which one it was.
@@ -110,7 +110,7 @@ class CurrentUserWebFilter : WebFilter {
 
     private fun emailOf(principal: Any?): String? = when (principal) {
         is OidcUser -> principal.email
-        // A local account's username IS its email - LocalUserStore builds
+        // A local account's username IS its email - UserStore builds
         // the UserDetails that way precisely so this stays a one-liner and
         // both sign-in methods produce the same identity.
         is UserDetails -> principal.username

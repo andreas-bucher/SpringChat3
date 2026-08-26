@@ -146,6 +146,18 @@ class SpaceAccess(
         }
     }
 
+    /**
+     * The caller's own role in [spaceId], or null if they have no access at
+     * all (2026-08-25). Exists so `GET /projects` can tell the browser what
+     * the caller may do with each space - see
+     * [ch.arcticsoft.springchat3.web.ProjectView.myRole]. The browser has
+     * deliberately never carried a copy of [roleOf]'s rules, and this is what
+     * keeps it that way now that the UI has to decide whether a name is
+     * editable *before* anyone types in it.
+     */
+    fun roleOf(exchange: ServerWebExchange, spaceId: String?): SpaceRole? =
+        roleOf(currentUserEmail(exchange), spaceId)
+
     /** `403` unless the caller owns [spaceId] - for re-sharing and, once it exists, deleting a space. */
     fun requireOwner(exchange: ServerWebExchange, spaceId: String?) {
         if (roleOf(currentUserEmail(exchange), spaceId) != SpaceRole.OWNER) {

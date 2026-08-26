@@ -32,6 +32,7 @@ class DocumentDeletionService(
     private val workingDocumentStore: WorkingDocumentStore,
     private val webPageStore: WebPageStore,
     private val wordDocumentStore: WordDocumentStore,
+    private val userSettingsStore: ch.arcticsoft.springchat3.settings.UserSettingsStore,
 ) {
     /**
      * Returns false if [documentId] was not a stored document - already
@@ -51,6 +52,9 @@ class DocumentDeletionService(
         workingDocumentStore.remove(documentId)
         webPageStore.remove(documentId)
         wordDocumentStore.remove(documentId)
+        // Housekeeping (2026-08-25): every user's per-document edit unlock
+        // keys on this id, and a deleted document can never resolve again.
+        userSettingsStore.forgetDocument(documentId)
         return true
     }
 }

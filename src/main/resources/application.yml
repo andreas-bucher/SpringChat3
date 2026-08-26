@@ -102,7 +102,7 @@ springchat3:
   # ch.arcticsoft.springchat3.security.SecurityConfig.oidcUserService. No
   # default (fails fast if unset) - an unset allow-list should never
   # silently mean "let everyone in".
-  allowed-emails: ${SPRINGCHAT3_ALLOWED_EMAILS}
+  #allowed-emails: ${SPRINGCHAT3_ALLOWED_EMAILS}
   # Comma-separated list of addresses (Google or local accounts alike) allowed
   # to change server policy from the settings popup - document editing and the
   # model allow-list - see ch.arcticsoft.springchat3.security.Admins. Empty by

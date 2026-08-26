@@ -460,6 +460,32 @@
     padding-right: 10px;
   }
 
+  .panel-section-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  /* Sits on the section-title row, so it matches that row's scale rather than
+     shouting - the label is the current state, and clicking cycles. */
+  .panel-section-sort-btn {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--muted);
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    padding: 2px 6px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+
+  .panel-section-sort-btn:hover {
+    color: var(--text);
+    background: var(--bg);
+  }
+
   .panel-section-action-btn {
     /* Cancels .panel-icon-btn's own 6px padding so the glyph lines up with the section title's right edge instead of sitting 6px further in. */
     margin: -6px -6px -6px 0;
@@ -524,13 +550,35 @@
     min-width: 0;
   }
 
+  /* The in-place rename field (2026-08-25) - sized to sit exactly where the
+     name it replaces sat, so the row does not jump when editing starts. */
+  .project-item-name-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 16px;
+    padding: 0 4px;
+    margin: -1px 0;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text);
+    /* The accent border already says "focused"; the UA ring on top of it is a
+       heavy black box at this size. */
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(47, 111, 237, 0.18);
+  }
+
   /*
    * The 6-digit id (2026-08-23) and the Shared badge are the same chip shape -
    * one 16px box each, so they align with each other and sit centred on the
    * title's line box whatever their own font-size.
    */
   .project-item-id,
-  .project-item-shared {
+  .project-item-shared,
+  .project-item-viewonly {
     display: inline-flex;
     align-items: center;
     height: 16px;
@@ -564,6 +612,15 @@
     text-transform: uppercase;
     color: var(--accent);
     border-color: var(--accent);
+  }
+
+  /* Deliberately quieter than Shared: it reports a limit, not a feature. */
+  .project-item-viewonly {
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-color: var(--border);
   }
 
   /* One person the space is shared with, inside the share dialog. */
@@ -794,6 +851,14 @@
   .modal-btn-primary {
     background: var(--accent);
     color: var(--accent-text);
+  }
+
+  /* The button that destroys something should not look like the button that
+     proceeds (2026-08-25). Reuses the --danger pair .add-menu-item.destructive
+     already established. */
+  .modal-btn-primary.destructive {
+    background: var(--danger, #b4232c);
+    color: #ffffff;
   }
 
   .modal-btn-primary:hover {
@@ -1944,6 +2009,18 @@
 
   /* The admin allow-list checklist (2026-08-25) - scrolls rather than growing
      the popup past the panel it is anchored inside. */
+  /* Locked is the default and the quiet state; unlocked is what deserves to
+     catch the eye, since it is the one where the agent can change the file. */
+  .workingdoc-lock.unlocked {
+    color: var(--accent);
+    opacity: 1;
+  }
+
+  .workingdoc-lock:disabled {
+    cursor: not-allowed;
+    opacity: 0.35;
+  }
+
   .allowed-models-list {
     max-height: 168px;
     overflow-y: auto;
@@ -2146,7 +2223,17 @@
     <div class="side-panel-body">
       <div class="panel-section-title panel-section-title-row">
         <span>Spaces</span>
-        <button id="new-project-btn" type="button" class="panel-icon-btn panel-section-action-btn" title="New space" data-icon="plus"></button>
+        <div class="panel-section-actions">
+          <!--
+            One control for every space's list, not one per space (2026-08-25):
+            several spaces can be expanded at once, so a per-space control
+            would cost a row of chrome each, and a sort is about how the
+            reader scans rather than a property of any one space. Cycles
+            rather than opening a menu - three states fit on one button.
+          -->
+          <button id="resource-sort-btn" type="button" class="panel-section-sort-btn">By type</button>
+          <button id="new-project-btn" type="button" class="panel-icon-btn panel-section-action-btn" title="New space" data-icon="plus"></button>
+        </div>
       </div>
       <!--
         Each EXPANDED space gets its own .space-resources block, built by
@@ -2378,6 +2465,15 @@
       <h3 id="add-resource-title">Add to this space</h3>
       <button id="add-resource-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
     </div>
+    <!--
+      Who owns this space and what you may do in it (2026-08-25). Neither was
+      visible anywhere before: myRole only decided whether the actions below
+      render, and owner only decided whether "Share this space" appears - so a
+      viewer saw actions quietly missing with nothing saying why or whom to
+      ask. This is the one place you already come to when you want to DO
+      something to a space, which is exactly when the answer matters.
+    -->
+    <div id="add-resource-access" class="settings-hint"></div>
     <div class="add-menu">
       <button id="doc-upload-btn" type="button" class="add-menu-item"><span class="add-menu-icon" data-icon="upload"></span>Upload PDFs</button>
       <div id="folder-upload-row" class="add-menu-item" role="button" tabindex="0"><span class="add-menu-icon" data-icon="folder"></span>Upload a folder of PDFs</div>
@@ -2405,6 +2501,13 @@
       <div id="rename-space-row" class="add-menu-item" role="button" tabindex="0"><span class="add-menu-icon" data-icon="pencil"></span>Rename this space</div>
       <div id="share-row" class="add-menu-item" role="button" tabindex="0" hidden><span class="add-menu-icon" data-icon="plus"></span>Share this space</div>
       <div id="delete-space-row" class="add-menu-item destructive" role="button" tabindex="0" hidden><span class="add-menu-icon" data-icon="x"></span>Delete this space</div>
+      <!--
+        Shown instead of the six add actions when the caller only has view
+        access (2026-08-25, once GET /projects started reporting myRole).
+        Before that this page had no way to know, so a viewer was offered all
+        six and every one of them 403'd.
+      -->
+      <div id="add-resource-viewonly" class="settings-hint" hidden></div>
     </div>
     <input type="file" id="doc-file-input" accept="application/pdf" multiple hidden>
     <!--
@@ -2449,6 +2552,27 @@
   version of this would just leave the app looking broken instead of
   explaining itself.
 -->
+<!--
+  A general-purpose confirmation (2026-08-25, user's own request that removing
+  a document ask first). Deliberately generic rather than a second
+  delete-a-document dialog: #delete-space-overlay below predates it and keeps
+  its own error line and in-flight state, but anything asked from here on
+  should come through askConfirm() rather than growing a third modal.
+-->
+<div id="confirm-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3 id="confirm-title">Are you sure?</h3>
+      <button id="confirm-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
+    </div>
+    <p id="confirm-text" class="settings-hint"></p>
+    <div class="modal-actions">
+      <button type="button" id="confirm-cancel-btn" class="modal-btn-secondary">Cancel</button>
+      <button type="button" id="confirm-ok-btn" class="modal-btn-primary destructive">Delete</button>
+    </div>
+  </div>
+</div>
+
 <div id="delete-space-overlay" class="modal-overlay" hidden>
   <div class="modal-dialog">
     <div class="modal-header">
@@ -2464,7 +2588,7 @@
     <div id="delete-space-error" class="settings-error" hidden></div>
     <div class="modal-actions">
       <button type="button" id="delete-space-cancel-btn" class="modal-btn-secondary">Cancel</button>
-      <button type="button" id="delete-space-confirm-btn" class="modal-btn-primary">Delete</button>
+      <button type="button" id="delete-space-confirm-btn" class="modal-btn-primary destructive">Delete</button>
     </div>
   </div>
 </div>
@@ -2512,26 +2636,6 @@
       <div id="password-error" class="settings-error" hidden></div>
       <div class="modal-actions">
         <button type="submit" id="password-submit-btn" class="modal-btn-primary">Save password</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<div id="rename-space-overlay" class="modal-overlay" hidden>
-  <div class="modal-dialog">
-    <div class="modal-header">
-      <h3>Rename Space</h3>
-      <button id="rename-space-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
-    </div>
-    <form id="rename-space-form">
-      <label class="modal-field">
-        <span class="modal-field-label">Name</span>
-        <input type="text" id="rename-space-name" required maxlength="80" placeholder="Space name">
-      </label>
-      <div id="rename-space-error" class="settings-error" hidden></div>
-      <div class="modal-actions">
-        <button type="button" id="rename-space-cancel-btn" class="modal-btn-secondary">Cancel</button>
-        <button type="submit" id="rename-space-submit-btn" class="modal-btn-primary">Rename</button>
       </div>
     </form>
   </div>
@@ -2597,6 +2701,11 @@
       '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
     search:
       '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/>',
+    lock:
+      '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    // The shackle swung open, so the two read as one control in two states.
+    unlock:
+      '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
     // A plain pencil, distinct from file-pen: renaming a space edits a label, not a document.
     pencil:
       '<path d="M12 20h9"/>' +
@@ -2659,6 +2768,7 @@
   const chatsListEl = document.getElementById('chats-list');
   const chatsEmptyHintEl = document.getElementById('chats-empty-hint');
   const newProjectBtnEl = document.getElementById('new-project-btn');
+  const resourceSortBtnEl = document.getElementById('resource-sort-btn');
   const newProjectOverlayEl = document.getElementById('new-project-overlay');
   const newProjectFormEl = document.getElementById('new-project-form');
   const newProjectNameEl = document.getElementById('new-project-name');
@@ -2685,13 +2795,14 @@
   const shareRowEl = document.getElementById('share-row');
   const deleteSpaceRowEl = document.getElementById('delete-space-row');
   const renameSpaceRowEl = document.getElementById('rename-space-row');
-  const renameSpaceOverlayEl = document.getElementById('rename-space-overlay');
-  const renameSpaceFormEl = document.getElementById('rename-space-form');
-  const renameSpaceNameEl = document.getElementById('rename-space-name');
-  const renameSpaceErrorEl = document.getElementById('rename-space-error');
-  const renameSpaceCloseBtnEl = document.getElementById('rename-space-close-btn');
-  const renameSpaceCancelBtnEl = document.getElementById('rename-space-cancel-btn');
-  const renameSpaceSubmitBtnEl = document.getElementById('rename-space-submit-btn');
+  const addResourceViewOnlyEl = document.getElementById('add-resource-viewonly');
+  const addResourceAccessEl = document.getElementById('add-resource-access');
+  const confirmOverlayEl = document.getElementById('confirm-overlay');
+  const confirmTitleEl = document.getElementById('confirm-title');
+  const confirmTextEl = document.getElementById('confirm-text');
+  const confirmOkBtnEl = document.getElementById('confirm-ok-btn');
+  const confirmCancelBtnEl = document.getElementById('confirm-cancel-btn');
+  const confirmCloseBtnEl = document.getElementById('confirm-close-btn');
   const deleteSpaceOverlayEl = document.getElementById('delete-space-overlay');
   const deleteSpaceTextEl = document.getElementById('delete-space-text');
   const deleteSpaceErrorEl = document.getElementById('delete-space-error');
@@ -3493,7 +3604,19 @@
   let wordBatch = null;
 
   function formatCharCount(n) {
+    // 0 is worth spelling out (2026-08-25): a scanned, image-only file is
+    // stored and previewable but has nothing to retrieve, and "0 chars" reads
+    // as a rounding artefact rather than as the reason questions about it
+    // come back empty.
+    if (!n) return 'No text found';
     return (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)) + ' chars';
+  }
+
+  const hasNoText = (doc) => !!doc && !doc.characterCount;
+
+  function noTextLine(name) {
+    return '"' + name + '" was uploaded, but no text could be extracted from it - it is most likely a scanned ' +
+      'image, so questions about it will not find anything.';
   }
 
   // The right panel shows only the selected project's own resources
@@ -3873,54 +3996,140 @@
    * discards-and-rebuilds everywhere) and is worth far more than the risk of
    * missing one call site - a mistake this file has already made twice.
    */
+  /*
+   * Everything in one space, as {kind, name, addedAt, build} - the single
+   * enumeration the sort then orders (2026-08-25). `kind` doubles as the
+   * tie-break rank for "By type", which is exactly the order the four
+   * separate containers used to produce, so that mode is the old behaviour
+   * preserved rather than a new one invented.
+   *
+   * `addedAt` is when the resource entered the space - uploadedAt for
+   * uploads, linkedAt for the three link kinds - and deliberately NOT the
+   * date the card shows for a linked resource, which is `lastSyncedAt`.
+   * Sorting on that would reshuffle the whole list every time a sync ran.
+   *
+   * `build` is a thunk: sorting names is much cheaper than sorting DOM nodes,
+   * and nothing needs building for a card that is about to be discarded.
+   */
+  /*
+   * How every space's resource list is ordered (2026-08-25, user's own
+   * choice of the three): 'type' (the pre-2026-08-25 grouping, and the
+   * default so nothing changes for anyone who never touches the control),
+   * 'name' (A-Z), 'newest'.
+   *
+   * A per-browser view preference in localStorage, alongside expandedSpaces /
+   * collapsedPanelSections / previewPanelWidth - not a stored property of a
+   * space. It is how one person reads a list, so it should not follow the
+   * space to everybody else, and it needs no endpoint.
+   *
+   * Declared here rather than with the other panel state further down purely
+   * for ordering: sortedResources() below closes over it.
+   */
+  /*
+   * The server-wide "Document editing" policy, mirrored from GET /settings
+   * (2026-08-25). The padlock on a Word card is meaningless while this is
+   * off - unlocking a document would promise an edit the agent is not allowed
+   * to make, which is exactly the "affordance offered then refused" trap the
+   * viewer-aware ＋ actions were fixed for.
+   *
+   * Defaults true so the padlocks do not flash disabled during the first
+   * paint, before /settings has answered.
+   */
+  let serverDocumentEditingEnabled = true;
+
+  const RESOURCE_SORTS = ['type', 'name', 'newest'];
+  const RESOURCE_SORT_LABELS = { type: 'By type', name: 'A–Z', newest: 'Newest' };
+  let resourceSort = 'type';
+  try {
+    const stored = localStorage.getItem('resourceSort');
+    if (RESOURCE_SORTS.includes(stored)) resourceSort = stored;
+  } catch {
+    // Storage unavailable - the default order, and the choice won't persist.
+  }
+
+  const RESOURCE_KIND_RANK = { uploaded: 0, drive: 1, gdoc: 2, word: 3, web: 4 };
+
+  function spaceResources(spaceId) {
+    const mine = (item) => (item.spaceId || null) === spaceId;
+    return [
+      ...documents.filter(mine).map((doc) => ({
+        kind: 'uploaded', name: doc.filename, addedAt: doc.uploadedAt || 0,
+        build: () => buildUploadedDocCard(doc),
+      })),
+      ...driveStatus.folders.filter(mine).map((folder) => ({
+        kind: 'drive', name: folder.folderName, addedAt: folder.linkedAt || 0,
+        build: () => buildDriveFolderCard(folder),
+      })),
+      ...driveStatus.workingDocuments.filter(mine).map((doc) => ({
+        kind: 'gdoc', name: doc.filename, addedAt: doc.linkedAt || 0,
+        build: () => (doc.syncing ? buildPendingWorkingDocCard(doc.filename, 'Linking…') : buildWorkingDocCard(doc, 'gdoc')),
+      })),
+      ...wordDocuments.filter(mine).map((doc) => ({
+        kind: 'word', name: doc.filename, addedAt: doc.uploadedAt || 0,
+        build: () => buildWorkingDocCard(doc, 'word'),
+      })),
+      ...webPages.filter(mine).map((page) => ({
+        kind: 'web', name: page.title, addedAt: page.linkedAt || 0,
+        build: () => buildWebPageCard(page),
+      })),
+    ];
+  }
+
+  /*
+   * localeCompare with numeric collation, never `<` (2026-08-25). A code-point
+   * comparison puts "Report 10" before "Report 2" and sorts "Ärztebericht"
+   * after "Zürich", which reads as a bug rather than as a sort order - and
+   * this app's documents are largely German-named.
+   */
+  const byName = (a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+
+  function sortedResources(spaceId) {
+    const items = spaceResources(spaceId);
+    if (resourceSort === 'name') return items.sort(byName);
+    // Newest first, with the name as the tie-break so a batch uploaded within
+    // the same millisecond still has a stable, meaningful order.
+    if (resourceSort === 'newest') return items.sort((a, b) => (b.addedAt - a.addedAt) || byName(a, b));
+    // 'type' - the pre-2026-08-25 order exactly: kind by kind, each kind in
+    // the order its own array already had (Array.sort is stable, so equal
+    // ranks keep it).
+    return items.sort((a, b) => RESOURCE_KIND_RANK[a.kind] - RESOURCE_KIND_RANK[b.kind]);
+  }
+
   function renderResources() {
     for (const block of projectsListEl.querySelectorAll('.space-resources')) {
       const spaceId = block.dataset.spaceId;
-      const mine = (item) => (item.spaceId || null) === spaceId;
-      const lists = {
-        uploaded: block.querySelector('.uploaded-doc-list'),
-        drive: block.querySelector('.drive-folder-list'),
-        working: block.querySelector('.workingdoc-list'),
-        web: block.querySelector('.webpage-list'),
-      };
-      for (const el of Object.values(lists)) el.innerHTML = '';
+      const list = block.querySelector('.space-resource-list');
+      list.innerHTML = '';
 
-      for (const doc of documents.filter(mine)) {
-        lists.uploaded.appendChild(buildUploadedDocCard(doc));
-      }
-      for (const folder of driveStatus.folders.filter(mine)) {
-        lists.drive.appendChild(buildDriveFolderCard(folder));
-      }
-      for (const doc of driveStatus.workingDocuments.filter(mine)) {
-        lists.working.appendChild(doc.syncing ? buildPendingWorkingDocCard(doc.filename, 'Linking…') : buildWorkingDocCard(doc, 'gdoc'));
-      }
-      for (const doc of wordDocuments.filter(mine)) {
-        lists.working.appendChild(buildWorkingDocCard(doc, 'word'));
-      }
-      // An in-flight .docx upload always belongs to the space that was active
-      // when it started, which is the only space it can have been dropped or
-      // picked into. Same for a running PDF batch.
-      if (wordUploading && spaceId === activeSpaceId) {
-        lists.working.appendChild(buildPendingWorkingDocCard(wordUploading, 'Uploading…'));
-      }
-      if (wordBatch && spaceId === activeSpaceId) {
-        lists.working.appendChild(buildPendingWorkingDocCard(
-          wordBatch.current,
-          'Uploading ' + (wordBatch.done + 1) + ' of ' + wordBatch.total + '…',
-        ));
-      }
-      if (pdfBatch && spaceId === activeSpaceId) {
-        lists.uploaded.appendChild(buildPendingWorkingDocCard(
-          pdfBatch.current,
-          'Uploading ' + (pdfBatch.done + 1) + ' of ' + pdfBatch.total + '…',
-        ));
-      }
-      for (const page of webPages.filter(mine)) {
-        lists.web.appendChild(buildWebPageCard(page));
+      // Pinned above everything, in every sort mode: an in-flight upload has
+      // no name and no date yet, so under A-Z it would land somewhere
+      // arbitrary and then jump when it completed. It also always belongs to
+      // the space that was active when it started, which is the only space it
+      // can have been dropped or picked into.
+      if (spaceId === activeSpaceId) {
+        if (wordUploading) {
+          list.appendChild(buildPendingWorkingDocCard(wordUploading, 'Uploading…'));
+        }
+        if (wordBatch) {
+          list.appendChild(buildPendingWorkingDocCard(
+            wordBatch.current,
+            'Uploading ' + (wordBatch.done + 1) + ' of ' + wordBatch.total + '…',
+          ));
+        }
+        if (pdfBatch) {
+          list.appendChild(buildPendingWorkingDocCard(
+            pdfBatch.current,
+            'Uploading ' + (pdfBatch.done + 1) + ' of ' + pdfBatch.total + '…',
+          ));
+        }
       }
 
-      const empty = !Object.values(lists).some((el) => el.childElementCount > 0);
-      block.querySelector('.space-resources-empty').hidden = !empty;
+      for (const item of sortedResources(spaceId)) {
+        list.appendChild(item.build());
+      }
+
+      block.querySelector('.space-resources-empty').hidden = list.childElementCount > 0;
     }
     renderAttachedDocs();
   }
@@ -4282,6 +4491,37 @@
       e.stopPropagation(); // don't also toggle the card active/inactive
     });
     actions.appendChild(viewLink);
+
+    /*
+     * The per-user edit lock (2026-08-25). Word documents only: nothing else
+     * in this app can be edited by the agent at all, so a padlock on a PDF
+     * would imply a risk that does not exist.
+     *
+     * `doc.editable` is THIS user's own answer, not a property of the file -
+     * see UserSettings.editableDocumentIds. Unlocking is one of four gates the
+     * agent must pass before it can change a byte, and the only one that is
+     * off by default.
+     */
+    if (isWord) {
+      const lockBtn = document.createElement('button');
+      lockBtn.type = 'button';
+      lockBtn.className = 'workingdoc-lock' + (doc.editable && serverDocumentEditingEnabled ? ' unlocked' : '');
+      // Disabled rather than hidden while the server-wide switch is off, and
+      // it says which switch - a padlock you can open onto a door that is
+      // bolted elsewhere is worse than no padlock at all.
+      lockBtn.disabled = !serverDocumentEditingEnabled;
+      lockBtn.title = !serverDocumentEditingEnabled
+        ? 'Document editing is switched off for this server - an administrator can enable it under Server policy in Settings.'
+        : doc.editable
+          ? 'Unlocked for you - the assistant may edit this document. Click to lock it.'
+          : 'Locked - the assistant cannot edit this document. Click to unlock it for yourself.';
+      setIcon(lockBtn, doc.editable && serverDocumentEditingEnabled ? 'unlock' : 'lock', 14);
+      lockBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setDocumentEditable(doc.documentId, !doc.editable);
+      });
+      actions.appendChild(lockBtn);
+    }
 
     if (!isWord) {
       // "Open in Google Docs" (2026-08-22, user's own follow-up "for working
@@ -5118,6 +5358,37 @@
   // happens while a dialog is open.
   let knownUsers = null;
 
+  /*
+   * The caller's own role in a space, straight from GET /projects
+   * (ProjectView.myRole) - this page deliberately keeps NO copy of
+   * SpaceAccess.roleOf's rules, since a second partial copy is the thing most
+   * likely to drift from the real one.
+   *
+   * Absent means an older payload: treat it as writable. These are affordance
+   * hints, not enforcement - every endpoint checks for itself - so failing
+   * open shows an action that might 403, while failing closed would hide
+   * every action from everyone the moment the field went missing.
+   */
+  function canWriteSpace(space) {
+    if (!space || !space.myRole) return true;
+    return space.myRole === 'OWNER' || space.myRole === 'EDITOR';
+  }
+
+  /*
+   * "Owned by X - you can edit", for the space action popup.
+   *
+   * A null owner is NOT missing data: it means the space predates ownership
+   * and is shared with everyone (see SpaceAccess's legacy rules), which is a
+   * real state deserving its own words rather than a blank. And an owner is
+   * told they own it rather than being told they can edit - that follows.
+   */
+  function spaceAccessSummary(space) {
+    if (!space) return '';
+    if (isOwnedByMe(space)) return 'You own this space';
+    const ownerPart = space.owner ? 'Owned by ' + space.owner : 'Shared with everyone';
+    return ownerPart + (canWriteSpace(space) ? ' · you can edit' : ' · you have view-only access');
+  }
+
   function isOwnedByMe(space) {
     return !!space && !!space.owner && !!currentUserEmail &&
       space.owner.toLowerCase() === currentUserEmail;
@@ -5345,62 +5616,38 @@
   deleteSpaceRowEl.addEventListener('click', openDeleteSpaceModal);
 
   /*
-   * Renaming a space (2026-08-25, user's own request "I think we should
-   * support to rename a Space"). Cheap on the server for one reason worth
-   * repeating here: the name is not a key anywhere - the folder is
-   * spaces/<spaceId>/ and every stored row references the 6-digit id - so
-   * this changes one field and nothing cascades.
+   * Renaming a space IN PLACE (2026-08-25 UI rework, user's own request:
+   * "changing the space name by click or double click on the space name").
+   * Replaced a modal, which is now gone - the ＋ popup's "Rename this space"
+   * calls straight into this, so there is one implementation with two
+   * triggers rather than two code paths that can disagree about validation.
    *
-   * The space being renamed is captured when the modal opens, not read from
-   * activeSpaceId at submit time: the popup that opened this already
-   * selected that space, but a rename is one round trip and the active space
-   * is user-controllable state.
+   * **Double click, never single**: a single click already means "select this
+   * space", the most frequent action in the app, and is not overloadable.
+   *
+   * Cheap on the server for a reason worth repeating: the space name is not a
+   * key anywhere - the folder is spaces/<spaceId>/ and every stored row
+   * references the 6-digit id - so this changes one field and nothing
+   * cascades.
    */
+  // What was selected before the current click gesture began - see the row's
+  // click handler and the dblclick-to-rename handler.
+  let activeSpaceBeforeClick = null;
   let renamingSpaceId = null;
+  /*
+   * Set while an inline rename editor is open, so renderProjects() can tear it
+   * down deliberately before it discards the rows.
+   *
+   * Needed because Chrome fires the input's `blur` while the node is still
+   * attached, so an `isConnected` check inside the blur handler does NOT tell a
+   * user clicking away from a re-render happening underneath - and a
+   * background re-render (the Drive status poll calls one) was therefore
+   * committing whatever was half-typed. Proven by a browser test; no amount of
+   * reading would have settled which way round Chrome ordered those two.
+   */
+  let cancelActiveRename = null;
 
-  function showRenameSpaceError(message) {
-    renameSpaceErrorEl.textContent = message;
-    renameSpaceErrorEl.hidden = false;
-  }
-
-  function openRenameSpaceModal() {
-    const space = projects.find((p) => p.spaceId === activeSpaceId);
-    if (!space) return;
-    renamingSpaceId = space.spaceId;
-    renameSpaceNameEl.value = space.name;
-    renameSpaceErrorEl.textContent = '';
-    renameSpaceErrorEl.hidden = true;
-    renameSpaceOverlayEl.hidden = false;
-    renameSpaceNameEl.focus();
-    renameSpaceNameEl.select();
-  }
-
-  function closeRenameSpaceModal() {
-    renameSpaceOverlayEl.hidden = true;
-    renamingSpaceId = null;
-  }
-
-  renameSpaceRowEl.addEventListener('click', openRenameSpaceModal);
-  renameSpaceCloseBtnEl.addEventListener('click', closeRenameSpaceModal);
-  renameSpaceCancelBtnEl.addEventListener('click', closeRenameSpaceModal);
-  renameSpaceOverlayEl.addEventListener('click', (e) => {
-    if (e.target === renameSpaceOverlayEl) closeRenameSpaceModal();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !renameSpaceOverlayEl.hidden) closeRenameSpaceModal();
-  });
-
-  renameSpaceFormEl.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const spaceId = renamingSpaceId;
-    const name = renameSpaceNameEl.value.trim();
-    if (!spaceId || !name) return;
-    const space = projects.find((p) => p.spaceId === spaceId);
-    if (space && space.name === name) {
-      closeRenameSpaceModal();
-      return;
-    }
-    renameSpaceSubmitBtnEl.disabled = true;
+  async function commitSpaceRename(spaceId, name) {
     try {
       const res = await fetch('/projects/' + encodeURIComponent(spaceId), {
         method: 'PATCH',
@@ -5409,23 +5656,122 @@
       });
       if (!res.ok) throw new Error(await readErrorMessage(res));
       const updated = await res.json();
-      // Replace the whole object rather than assigning .name: the response is
-      // the current Project, so this also picks up anything else that changed
-      // server-side since this page last fetched it.
+      // The whole ProjectView replaces the old object, so myRole and the
+      // member list stay in step with whatever the server now says.
       const index = projects.findIndex((p) => p.spaceId === spaceId);
       if (index >= 0) projects[index] = updated;
-      renderProjects();
-      // The name is shown in two more places built from `projects`: the chat
-      // history group titles and the add popup's own "Add to <name>" heading,
-      // which is rebuilt each time it opens.
-      renderChatHistory();
-      closeRenameSpaceModal();
     } catch (err) {
-      showRenameSpaceError('Could not rename space: ' + err.message);
-    } finally {
-      renameSpaceSubmitBtnEl.disabled = false;
+      addRow('error', 'Could not rename space: ' + err.message);
     }
-  });
+    // Unconditional: renderProjects() discards the row and rebuilds it from
+    // `projects`, which is also how the editor gets torn down - on success,
+    // on failure, and on cancel alike. renderChatHistory() because the group
+    // titles are built from the same list.
+    renderProjects();
+    renderChatHistory();
+  }
+
+  function beginRenameSpace(spaceId) {
+    if (renamingSpaceId) return;
+    const space = projects.find((p) => p.spaceId === spaceId);
+    // Gated on the role the server reported, so nobody is handed a text field
+    // whose save can only 403. The PATCH still checks for itself.
+    if (!space || !canWriteSpace(space)) return;
+    const row = projectsListEl.querySelector('.project-item[data-space-id="' + spaceId + '"]');
+    const nameEl = row && row.querySelector('.project-item-name');
+    if (!nameEl) return;
+
+    renamingSpaceId = spaceId;
+    // The chips and the ＋ group step aside so the field can take the row's
+    // width - at 320px it would otherwise be about 90px wide.
+    row.querySelectorAll('.project-item-id, .project-item-shared, .project-item-add')
+      .forEach((el) => { el.style.display = 'none'; });
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'project-item-name-input';
+    input.maxLength = 80;
+    input.value = space.name;
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    // One latch for all three exits: Escape re-renders the row, which blurs
+    // the input, which would otherwise commit what Escape just cancelled.
+    let finished = false;
+    // renderProjects() calls this before discarding the rows, so an edit
+    // interrupted by anything other than the user is dropped rather than
+    // committed. It must not re-render - it is being called from inside one.
+    cancelActiveRename = () => {
+      finished = true;
+      renamingSpaceId = null;
+      cancelActiveRename = null;
+    };
+    const finish = (commit) => {
+      if (finished) return;
+      finished = true;
+      renamingSpaceId = null;
+      cancelActiveRename = null;
+      const name = input.value.trim();
+      // An empty or unchanged name is a cancel, not an error - there is
+      // nothing to tell the user that they cannot see for themselves.
+      if (commit && name && name !== space.name) commitSpaceRename(spaceId, name);
+      else renderProjects();
+    };
+
+    input.addEventListener('keydown', (e) => {
+      // Escape must not reach the document-level handlers that close modals.
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener('blur', () => finish(true));
+    // Clicking inside the field must not reach the row's select handler.
+    ['click', 'dblclick', 'mousedown'].forEach((evt) => {
+      input.addEventListener(evt, (e) => e.stopPropagation());
+    });
+  }
+
+  /*
+   * Double click on the name opens the editor - implemented as a CAPTURE-phase
+   * `click` listener keyed on `e.detail === 2`, NOT as a `dblclick` listener.
+   *
+   * A real-browser test is what forced that. The row's own click handler calls
+   * selectProject(), which re-renders and therefore **destroys and rebuilds the
+   * row between the two clicks**. The two clicks then land on two different DOM
+   * nodes, so the browser raises `dblclick` on their nearest common ancestor -
+   * #projects-list - and `e.target.closest('.project-item-name')` finds
+   * nothing. The handler simply never fired. `e.detail` survives that, because
+   * the click counter is per-window and position-based, not per-node.
+   *
+   * Capture phase plus stopPropagation means the SECOND click never reaches the
+   * row's toggle at all - so exactly one toggle has happened by this point, and
+   * selectProject(activeSpaceBeforeClick) puts the selection back. Restoring it
+   * beats debouncing the single click, which would make the app's most common
+   * action feel laggy to accommodate a rare one.
+   */
+  projectsListEl.addEventListener('click', (e) => {
+    if (e.detail !== 2) return;
+    const nameEl = e.target && e.target.closest && e.target.closest('.project-item-name');
+    if (!nameEl) return;
+    const spaceId = nameEl.closest('.project-item')?.dataset.spaceId;
+    if (!spaceId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (activeSpaceId !== activeSpaceBeforeClick) {
+      selectProject(activeSpaceBeforeClick);
+      renderActiveThread();
+    }
+    beginRenameSpace(spaceId);
+  }, true);
+
+  renameSpaceRowEl.addEventListener('click', () => beginRenameSpace(activeSpaceId));
+
   deleteSpaceConfirmBtnEl.addEventListener('click', deleteActiveSpace);
   deleteSpaceCancelBtnEl.addEventListener('click', closeDeleteSpaceModal);
   deleteSpaceCloseBtnEl.addEventListener('click', closeDeleteSpaceModal);
@@ -5531,6 +5877,11 @@
     modelEmbeddingEl.textContent = data.embeddingModel;
     toolsEnabledToggleEl.checked = data.toolsEnabled;
     docEditingToggleEl.checked = data.documentEditingEnabled;
+    // The padlocks depend on it, so re-render them when it changes.
+    if (serverDocumentEditingEnabled !== data.documentEditingEnabled) {
+      serverDocumentEditingEnabled = data.documentEditingEnabled;
+      renderResources();
+    }
     // Visible to everyone, operable by an admin, and refused server-side
     // regardless - see Admins and this section's own markup comment. Disabling
     // rather than hiding also means a stale page whose admin flag has since
@@ -5733,6 +6084,7 @@
     });
   });
 
+
   // POST /logout (SecurityConfig.kt) clears the server-side session; the
   // reload that follows is what actually confirms it worked - an
   // unauthenticated GET / immediately redirects back to Google's sign-in
@@ -5793,6 +6145,7 @@
       const doc = await res.json();
       wordDocuments.push(doc);
       if (select) activeDocumentIds.add(doc.documentId);
+      return doc;
     } catch (err) {
       if (silent) throw err;
       addRow('error', 'Could not upload ' + file.name + ': ' + err.message);
@@ -5832,11 +6185,13 @@
     }
 
     if (docs.length === 1 && !ignored) {
-      await uploadWordDocument(docs[0], { select });
+      const doc = await uploadWordDocument(docs[0], { select });
+      if (hasNoText(doc)) addRow('info', noTextLine(docs[0].name));
       return;
     }
 
     const failures = [];
+    const noText = [];
     wordBatch = { done: 0, total: docs.length, current: docs[0].name };
     wordUploadRowEl.classList.add('linking');
     renderResources();
@@ -5845,7 +6200,8 @@
         wordBatch.current = file.name;
         renderResources();
         try {
-          await uploadWordDocument(file, { select: false, silent: true });
+          const doc = await uploadWordDocument(file, { select: false, silent: true });
+          if (hasNoText(doc)) noText.push(file.name);
         } catch (err) {
           failures.push(file.name + ' (' + err.message + ')');
         }
@@ -5860,6 +6216,7 @@
     const uploaded = docs.length - failures.length;
     const parts = [uploaded + ' Word document' + (uploaded === 1 ? '' : 's') + ' uploaded'];
     if (ignored) parts.push(ignored + ' non-Word file' + (ignored === 1 ? '' : 's') + ' ignored');
+    if (noText.length) parts.push(noText.length + ' with no extractable text');
     if (failures.length) parts.push(failures.length + ' failed: ' + failures.join(', '));
     addRow(failures.length ? 'error' : 'info', parts.join(' · ') + '.');
   }
@@ -5944,11 +6301,13 @@
 
     // A single file keeps the original one-shot behaviour, auto-select included.
     if (pdfs.length === 1 && !ignored) {
-      await uploadDocument(pdfs[0]);
+      const doc = await uploadDocument(pdfs[0]);
+      if (hasNoText(doc)) addRow('info', noTextLine(pdfs[0].name));
       return;
     }
 
     const failures = [];
+    const noText = [];
     pdfBatch = { done: 0, total: pdfs.length, current: pdfs[0].name };
     docUploadBtnEl.disabled = true;
     renderResources();
@@ -5957,7 +6316,8 @@
         pdfBatch.current = file.name;
         renderResources();
         try {
-          await uploadDocument(file, { select: false, silent: true });
+          const doc = await uploadDocument(file, { select: false, silent: true });
+          if (hasNoText(doc)) noText.push(file.name);
         } catch (err) {
           failures.push(file.name + ' (' + err.message + ')');
         }
@@ -5972,6 +6332,9 @@
     const uploaded = pdfs.length - failures.length;
     const parts = [uploaded + ' PDF' + (uploaded === 1 ? '' : 's') + ' uploaded'];
     if (ignored) parts.push(ignored + ' non-PDF file' + (ignored === 1 ? '' : 's') + ' ignored');
+    // Counted rather than named one by one: for a folder of scans this would
+    // otherwise be the whole message.
+    if (noText.length) parts.push(noText.length + ' with no extractable text');
     if (failures.length) parts.push(failures.length + ' failed: ' + failures.join(', '));
     addRow(failures.length ? 'error' : 'info', parts.join(' · ') + '.');
   }
@@ -6004,6 +6367,7 @@
       documents.push(doc);
       if (select) activeDocumentIds.add(doc.documentId);
       renderDocList();
+      return doc;
     } catch (err) {
       if (silent) throw err;
       addRow('error', 'Could not upload ' + file.name + ': ' + err.message);
@@ -6032,7 +6396,105 @@
   // folder (if any) [documentId] came from isn't tracked client-side -
   // workingDocuments is a flat list, so no such per-entry scan is needed
   // there.
+  // PATCH, and only this caller's own setting changes - the document itself is
+  // untouched, so nobody else's turn is affected by it.
+  async function setDocumentEditable(documentId, editable) {
+    try {
+      const res = await fetch('/documents/' + encodeURIComponent(documentId) + '/editable', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ editable }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+    } catch (err) {
+      addRow('error', 'Could not change the edit lock: ' + err.message);
+      return;
+    }
+    const row = wordDocuments.find((d) => d.documentId === documentId);
+    if (row) row.editable = editable;
+    renderResources();
+  }
+
+  /*
+   * One confirmation dialog, awaited as a promise so a caller reads as
+   * `if (!await askConfirm(...)) return;` rather than splitting into a
+   * callback. Never window.confirm(): this app has its own modal language,
+   * and a native dialog blocks the page.
+   *
+   * Every exit resolves exactly once - closeConfirm() clears the stored
+   * resolver first, so a stray Escape after a click cannot resolve a promise
+   * that already settled, and a second askConfirm() while one is open would
+   * abandon the first rather than leaving it pending forever.
+   */
+  let confirmResolve = null;
+
+  function closeConfirm(result) {
+    if (!confirmResolve) return;
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    confirmOverlayEl.hidden = true;
+    resolve(result);
+  }
+
+  function askConfirm({ title, message, confirmLabel = 'Delete' }) {
+    closeConfirm(false); // whatever was open is answered "no" before this replaces it
+    confirmTitleEl.textContent = title;
+    confirmTextEl.textContent = message;
+    confirmOkBtnEl.textContent = confirmLabel;
+    confirmOverlayEl.hidden = false;
+    confirmOkBtnEl.focus();
+    return new Promise((resolve) => { confirmResolve = resolve; });
+  }
+
+  confirmOkBtnEl.addEventListener('click', () => closeConfirm(true));
+  confirmCancelBtnEl.addEventListener('click', () => closeConfirm(false));
+  confirmCloseBtnEl.addEventListener('click', () => closeConfirm(false));
+  confirmOverlayEl.addEventListener('click', (e) => {
+    if (e.target === confirmOverlayEl) closeConfirm(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !confirmOverlayEl.hidden) closeConfirm(false);
+  });
+
+  // Whichever of the five lists holds it - the same "touch every list, the
+  // others are no-ops" shape deleteDocument itself uses below, because which
+  // array a documentId lives in is not tracked anywhere.
+  function documentLabelFor(documentId) {
+    const flat = [
+      ...documents,
+      ...driveStatus.folders.flatMap((f) => f.files || []),
+      ...driveStatus.workingDocuments,
+      ...wordDocuments,
+    ].find((d) => d.documentId === documentId);
+    if (flat) return flat.filename;
+    const page = webPages.find((p) => p.documentId === documentId);
+    return page ? page.title : 'this document';
+  }
+
+  const isDriveFolderFile = (documentId) =>
+    driveStatus.folders.some((f) => (f.files || []).some((d) => d.documentId === documentId));
+
   async function deleteDocument(documentId) {
+    /*
+     * Asked here rather than at each × (2026-08-25, user's own request), so
+     * all four card kinds are covered by one guard - the same reason the
+     * empty-index check went into DocumentIndex rather than its seven
+     * callers.
+     *
+     * A file inside a linked Drive folder gets a different sentence, because
+     * for it this is not permanent: the next sync copies it back. Saying
+     * "cannot be undone" there would be false.
+     */
+    const name = documentLabelFor(documentId);
+    const confirmed = await askConfirm({
+      title: 'Delete this document?',
+      message: isDriveFolderFile(documentId)
+        ? '"' + name + '" will be removed from this space along with anything indexed from it. ' +
+          'The file in Google Drive is untouched, and the next sync of its folder will copy it back.'
+        : '"' + name + '" will be removed from this space, along with anything indexed from it. ' +
+          'This cannot be undone.',
+    });
+    if (!confirmed) return;
     try {
       const res = await fetch('/documents/' + encodeURIComponent(documentId), { method: 'DELETE', headers: csrfHeader() });
       if (!res.ok && res.status !== 404) throw new Error('Server responded with ' + res.status);
@@ -6560,7 +7022,27 @@
   function openAddResourceModal() {
     if (activeSpaceId === null) return;
     const space = projects.find((p) => p.spaceId === activeSpaceId);
-    addResourceTitleEl.textContent = space ? `Add to ${space.name}` : 'Add to this space';
+    // "Add to X" promises something a viewer cannot do, so they get the
+    // space's name and nothing else.
+    const canWriteHere = canWriteSpace(space);
+    addResourceTitleEl.textContent = space
+      ? (canWriteHere ? `Add to ${space.name}` : space.name)
+      : 'Add to this space';
+    // Nothing in here works without write access, so a viewer is told once
+    // rather than being handed six actions that each end in a 403.
+    const canWrite = canWriteHere;
+    [
+      docUploadBtnEl, folderUploadRowEl, driveLinkRowEl,
+      workingDocLinkRowEl, wordUploadRowEl, webPageLinkRowEl, renameSpaceRowEl,
+    ].forEach((el) => { el.hidden = !canWrite; });
+    addResourceViewOnlyEl.hidden = canWrite;
+    // Not a restatement of the line above it - that one says what your access
+    // IS, this one says what to do about it, which is the question a viewer
+    // actually has when the six actions are missing.
+    addResourceViewOnlyEl.textContent = space && space.owner
+      ? 'Ask ' + space.owner + ' for edit access to add anything here.'
+      : 'You cannot add anything to this space.';
+    addResourceAccessEl.textContent = spaceAccessSummary(space);
     shareRowEl.hidden = !isOwnedByMe(space);
     deleteSpaceRowEl.hidden = !isOwnedByMe(space);
     addResourceOverlayEl.hidden = false;
@@ -6614,6 +7096,24 @@
     }
   }
 
+  function applyResourceSortLabel() {
+    resourceSortBtnEl.textContent = RESOURCE_SORT_LABELS[resourceSort];
+    resourceSortBtnEl.title = 'Sorting every space by ' + RESOURCE_SORT_LABELS[resourceSort].toLowerCase() +
+      ' - click to change';
+  }
+
+  resourceSortBtnEl.addEventListener('click', () => {
+    resourceSort = RESOURCE_SORTS[(RESOURCE_SORTS.indexOf(resourceSort) + 1) % RESOURCE_SORTS.length];
+    try {
+      localStorage.setItem('resourceSort', resourceSort);
+    } catch {
+      // Storage unavailable - the choice just won't survive a reload.
+    }
+    applyResourceSortLabel();
+    renderResources();
+  });
+  applyResourceSortLabel();
+
   function setSpaceExpanded(spaceId, expanded) {
     if (expanded) expandedSpaceIds.add(spaceId);
     else expandedSpaceIds.delete(spaceId);
@@ -6628,17 +7128,19 @@
   }
   updateSidePanelEnabled();
 
-  // The four list containers and the empty hint, as classes rather than ids -
-  // there is one of each per expanded space now, not one per page.
+  // ONE list container per expanded space since 2026-08-25, replacing the four
+  // per-kind ones (.uploaded-doc-list / .drive-folder-list / .workingdoc-list /
+  // .webpage-list). Those four were why the "flat list, no headers" list was
+  // not actually flat: each kind appended to its own div, so the visible order
+  // was always PDFs, then Drive folders, then Docs, then web pages, and no
+  // ordering across kinds was expressible. See sortedResources().
   function buildSpaceResources(spaceId) {
     const block = document.createElement('div');
     block.className = 'space-resources';
     block.dataset.spaceId = spaceId;
-    for (const cls of ['uploaded-doc-list', 'drive-folder-list', 'workingdoc-list', 'webpage-list']) {
-      const list = document.createElement('div');
-      list.className = cls;
-      block.appendChild(list);
-    }
+    const list = document.createElement('div');
+    list.className = 'space-resource-list';
+    block.appendChild(list);
     const empty = document.createElement('div');
     empty.className = 'space-resources-empty resources-empty-hint';
     empty.hidden = true;
@@ -6692,13 +7194,41 @@
     id.textContent = '#' + project.spaceId;
     nameRow.appendChild(id);
 
-    if ((project.members || []).length > 0) {
+    /*
+     * Shared and View only are mutually exclusive on the row (2026-08-25):
+     * view-only access is something you got BY being shared with, so both
+     * chips together say one thing twice - and at 320px the third chip
+     * crushed the name to "L…". View only wins because it is the more
+     * specific of the two, and it carries the owner in its tooltip so
+     * nothing is lost by dropping the Shared badge there.
+     */
+    const viewOnly = project.myRole === 'VIEWER';
+    if (!viewOnly && (project.members || []).length > 0) {
       const shared = document.createElement('span');
       shared.className = 'project-item-shared';
       shared.textContent = 'Shared';
       const withWhom = project.members.map((m) => m.email === '*' ? 'anyone who can sign in' : m.email);
-      shared.title = 'Shared with ' + withWhom.join(', ');
+      // The badge you would hover to ask "shared with whom?" is also where
+      // "and whose is it?" belongs.
+      shared.title = (project.owner ? 'Owned by ' + project.owner + ' · ' : '') +
+        'Shared with ' + withWhom.join(', ');
       nameRow.appendChild(shared);
+    }
+
+    /*
+     * A chip for the exception only (2026-08-25). There is deliberately no
+     * "Owner" chip to match: it would sit on nearly every row and say nothing.
+     * View-only is the state that surprises - actions are missing and the
+     * reason is otherwise invisible - so it is the one worth a chip you can
+     * see without opening anything.
+     */
+    if (viewOnly) {
+      const viewOnlyEl = document.createElement('span');
+      viewOnlyEl.className = 'project-item-viewonly';
+      viewOnlyEl.textContent = 'View only';
+      viewOnlyEl.title = (project.owner ? 'Owned by ' + project.owner + ' · ' : '') +
+        'you can read this space and ask questions about it, but not change it';
+      nameRow.appendChild(viewOnlyEl);
     }
 
     /*
@@ -6749,7 +7279,11 @@
      * 2026-08-24 expansion is a state the user owns, not a side effect of
      * which space happens to be active.
      */
-    item.addEventListener('click', () => {
+    item.addEventListener('click', (e) => {
+      // The first click of any gesture records what was selected before it,
+      // so a double click on the name can put it back - see the dblclick
+      // handler further down.
+      if (!e.detail || e.detail === 1) activeSpaceBeforeClick = activeSpaceId;
       selectProject(activeSpaceId === project.spaceId ? null : project.spaceId);
       renderActiveThread();
     });
@@ -6788,6 +7322,11 @@
   // EXPANDED one - discard-and-rebuild, same as everything else in this file,
   // rather than diffing. renderResources() then fills whichever blocks exist.
   function renderProjects() {
+    // An open inline rename editor is torn down first, deliberately: removing
+    // the rows underneath it blurs the field, and Chrome fires that blur while
+    // the node is still attached, so the blur handler cannot tell this apart
+    // from the user clicking away and would commit a half-typed name.
+    if (cancelActiveRename) cancelActiveRename();
     projectsListEl.querySelectorAll('.project-item, .space-resources').forEach((el) => el.remove());
     projectsEmptyHintEl.hidden = projects.length > 0;
     for (const project of projects) {

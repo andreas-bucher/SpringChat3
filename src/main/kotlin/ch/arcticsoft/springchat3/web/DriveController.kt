@@ -99,6 +99,14 @@ data class LinkDocRequest(val fileId: String, val fileName: String, val spaceId:
 data class DriveFolderStatus(
     val folderId: String,
     val folderName: String,
+    /**
+     * When the folder was linked, as opposed to when it last synced
+     * (2026-08-25, sorting - see springchat3_resource_sorting.md in project
+     * memory). The two are deliberately different: "newest first" means the
+     * order a space was filled in, and sorting on [lastSyncedAt] would
+     * reshuffle the whole list every time a sync runs.
+     */
+    val linkedAt: Long = 0,
     val lastSyncedAt: Long?,
     val files: List<DocumentSummary>,
     val syncing: Boolean = false,
@@ -132,6 +140,8 @@ data class WorkingDocumentStatus(
     val documentId: String,
     val filename: String,
     val characterCount: Int,
+    /** When the Doc was linked - see [DriveFolderStatus.linkedAt] for why this is not [lastSyncedAt]. */
+    val linkedAt: Long = 0,
     val lastSyncedAt: Long,
     val driveFileId: String,
     val spaceId: String? = null,
@@ -346,11 +356,14 @@ class DriveController(
         DriveStatusResponse(
             folders = driveLinkStore.getAll().filter { canSee(exchange, it.spaceId) }.map { link ->
                 val files = link.files.mapNotNull { f ->
-                    documentStore.get(f.documentId)?.let { DocumentSummary(f.documentId, it.filename, it.text.length, it.spaceId) }
+                    documentStore.get(f.documentId)?.let {
+                        DocumentSummary(f.documentId, it.filename, it.text.length, it.spaceId, it.uploadedAt)
+                    }
                 }
                 DriveFolderStatus(
                     folderId = link.folderId,
                     folderName = link.folderName,
+                    linkedAt = link.linkedAt,
                     lastSyncedAt = link.lastSyncedAt,
                     files = files,
                     syncing = link.folderId in syncingFolderIds,
@@ -359,7 +372,15 @@ class DriveController(
             },
             workingDocuments = workingDocumentStore.getAll().filter { canSee(exchange, it.spaceId) }.mapNotNull { doc ->
                 documentStore.get(doc.documentId)?.let {
-                    WorkingDocumentStatus(doc.documentId, it.filename, it.text.length, doc.lastSyncedAt, doc.driveFileId, doc.spaceId)
+                    WorkingDocumentStatus(
+                        doc.documentId,
+                        it.filename,
+                        it.text.length,
+                        doc.linkedAt,
+                        doc.lastSyncedAt,
+                        doc.driveFileId,
+                        doc.spaceId,
+                    )
                 }
             },
         )

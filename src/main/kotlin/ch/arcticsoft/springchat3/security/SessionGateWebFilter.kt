@@ -28,7 +28,7 @@ import reactor.core.publisher.Mono
  * (see `GET /me`'s `canUseGoogleDrive`), but that is the courtesy; this is
  * the rule.
  *
- * **2. A local account with [LocalUser.mustChangePassword] can do nothing
+ * **2. A local account with [AppUser.mustChangePassword] can do nothing
  * else first.** An admin-chosen password is a password the admin knows, so
  * it has to be replaced before the session is good for anything. Only the
  * page itself, the identity call, the change endpoint and signing out are
@@ -46,7 +46,7 @@ import reactor.core.publisher.Mono
 @Order(CURRENT_USER_FILTER_ORDER + 10)
 @Component
 class SessionGateWebFilter(
-    private val localUserStore: LocalUserStore,
+    private val userStore: UserStore,
 ) : WebFilter {
     private val log = LoggerFactory.getLogger(SessionGateWebFilter::class.java)
 
@@ -70,7 +70,7 @@ class SessionGateWebFilter(
         // caused by an account it never touched.
         val isLocalSession = exchange.getAttribute<Boolean>(CURRENT_USER_IS_GOOGLE_ATTRIBUTE) != true
         if (email != null && isLocalSession && path !in ALWAYS_ALLOWED &&
-            localUserStore.find(email)?.mustChangePassword == true
+            userStore.find(email)?.mustChangePassword == true
         ) {
             return Mono.error(
                 ResponseStatusException(

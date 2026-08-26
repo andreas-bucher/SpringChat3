@@ -126,7 +126,8 @@ class ChatController(
      * and answer but not edit a Word document - which is what "view-only" has
      * to mean once the agent has edit tools of its own (see
      * [ch.arcticsoft.springchat3.agent.ChatAgent.documentEdit]) - and nobody
-     * can select a model the allow-list forbids by hand-writing a request.
+     * can select a model the allow-list forbids, or unlock a document for
+     * editing, by hand-writing a request.
      */
     private fun authorize(request: ChatRequest, exchange: ServerWebExchange, email: String): ChatRequest {
         spaceAccess.requireRead(exchange, request.spaceId)
@@ -134,6 +135,7 @@ class ChatController(
             documentEditingAllowed = spaceAccess.canWrite(exchange, request.spaceId),
             toolsEnabled = settingsResolver.toolsEnabledFor(email),
             modelOverrides = settingsResolver.effectiveOverrides(email),
+            editableDocumentIds = settingsResolver.editableDocumentIdsFor(email),
         )
     }
 

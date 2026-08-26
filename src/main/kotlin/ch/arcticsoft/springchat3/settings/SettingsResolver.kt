@@ -89,6 +89,14 @@ class SettingsResolver(
         return server + own
     }
 
+    /**
+     * The documents [email] has unlocked for editing - see
+     * [UserSettings.editableDocumentIds] for why this is per user. No global
+     * layer to fall back to: nothing is unlocked for everyone.
+     */
+    fun editableDocumentIdsFor(email: String): Set<String> =
+        userSettingsStore.get(email).editableDocumentIds.toSet()
+
     /** The exact model tag [role] will actually use for [email]'s next turn. */
     fun activeModel(email: String, role: String): String =
         effectiveOverrides(email)[role] ?: defaultFor(role).orEmpty()

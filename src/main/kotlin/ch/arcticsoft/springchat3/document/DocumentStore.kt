@@ -110,7 +110,24 @@ const val PREVIEW_HASH_FILENAME = "preview.sha256"
  * against `activeProjectId` using exactly this field, so the right panel
  * shows only the selected project's own resources.
  */
-data class DocumentSummary(val documentId: String, val filename: String, val characterCount: Int, val spaceId: String? = null)
+data class DocumentSummary(
+    val documentId: String,
+    val filename: String,
+    val characterCount: Int,
+    val spaceId: String? = null,
+    /**
+     * When this document was added, from [ExtractedDocument.uploadedAt]
+     * (2026-08-25, sorting the resource list - see
+     * springchat3_resource_sorting.md in project memory).
+     *
+     * It was missing until then, which was a quiet bug as well as a gap:
+     * index.html's uploaded-document card already rendered
+     * `formatUploadedAt(doc.uploadedAt)`, so every PDF card has been showing
+     * a bare "Uploaded" with no date since the card was written. Defaulted so
+     * a caller that does not have the document to hand still compiles.
+     */
+    val uploadedAt: Long = 0,
+)
 
 /**
  * Store for documents uploaded via
@@ -491,7 +508,7 @@ class DocumentStore(
 
     /** All stored documents as lightweight summaries, oldest upload first - backs the side panel's document list. */
     fun list(): List<DocumentSummary> = synchronized(documents) {
-        documents.map { (id, doc) -> DocumentSummary(id, doc.filename, doc.text.length, doc.spaceId) }
+        documents.map { (id, doc) -> DocumentSummary(id, doc.filename, doc.text.length, doc.spaceId, doc.uploadedAt) }
     }
 
     /**

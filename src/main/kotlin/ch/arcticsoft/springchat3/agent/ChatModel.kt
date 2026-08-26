@@ -128,6 +128,22 @@ data class ChatRequest(
      * hand any caller a way around the allow-list.
      */
     val modelOverrides: Map<String, String> = emptyMap(),
+    /**
+     * The documents this caller has unlocked for editing (2026-08-25) - see
+     * [ch.arcticsoft.springchat3.settings.UserSettings.editableDocumentIds]
+     * for why the unlock is per user rather than a property of the document.
+     *
+     * Read by [ChatAgent.documentEdit], which hands it to
+     * [ch.arcticsoft.springchat3.tools.WordDocumentEditTool] as a **second
+     * hard scope** beside [documentIds]: a document must be both attached to
+     * this turn and unlocked by this person before a single byte of it can
+     * change.
+     *
+     * **Server-set, never client-supplied**, like the three fields above.
+     * Empty by default, so a caller that somehow skips the stamping edits
+     * nothing rather than everything.
+     */
+    val editableDocumentIds: Set<String> = emptySet(),
 )
 
 /**

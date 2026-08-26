@@ -2,7 +2,7 @@ package ch.arcticsoft.springchat3.web
 
 import ch.arcticsoft.springchat3.security.CURRENT_USER_EMAIL_ATTRIBUTE
 import ch.arcticsoft.springchat3.security.CURRENT_USER_IS_GOOGLE_ATTRIBUTE
-import ch.arcticsoft.springchat3.security.LocalUserStore
+import ch.arcticsoft.springchat3.security.UserStore
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.core.oidc.user.OidcUser
 import org.springframework.web.bind.annotation.GetMapping
@@ -65,7 +65,7 @@ data class CurrentUserResponse(
  */
 @RestController
 class CurrentUserController(
-    private val localUserStore: LocalUserStore,
+    private val userStore: UserStore,
 ) {
     /**
      * Reads the session rather than the principal (2026-08-24, local
@@ -88,7 +88,7 @@ class CurrentUserController(
     fun me(@AuthenticationPrincipal user: Mono<OidcUser>, exchange: ServerWebExchange): Mono<CurrentUserResponse> {
         val email = exchange.getAttribute<String>(CURRENT_USER_EMAIL_ATTRIBUTE)
         val isGoogle = exchange.getAttribute<Boolean>(CURRENT_USER_IS_GOOGLE_ATTRIBUTE) == true
-        val local = if (email == null) null else localUserStore.find(email)
+        val local = if (email == null) null else userStore.find(email)
         return user
             .map { CurrentUserResponse(it.email, it.fullName, it.picture, canUseGoogleDrive = true) }
             .defaultIfEmpty(

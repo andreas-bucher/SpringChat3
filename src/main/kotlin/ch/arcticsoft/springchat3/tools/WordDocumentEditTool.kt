@@ -57,6 +57,17 @@ class WordDocumentEditTool(
      * skips the step before it ever gets here.
      */
     private val selectedDocumentIds: Set<String>,
+    /**
+     * The documents THIS caller has unlocked for editing (2026-08-25) - a
+     * second hard scope, and the one that is off by default.
+     *
+     * Deliberately per user rather than a flag on the document: a shared flag
+     * would let one person's unlock surprise another, who attaches the file
+     * to ask a question and gets an edit they never intended. Who may change
+     * a space's contents at all is a different question, already answered by
+     * [ch.arcticsoft.springchat3.project.SpaceRole].
+     */
+    private val editableDocumentIds: Set<String>,
 ) : EditingTool {
 
     /**
@@ -102,6 +113,15 @@ class WordDocumentEditTool(
         }
         val ref = workspace.resolve(spaceId, filename, selectedDocumentIds)
             ?: return """{"error": "No selected Word document matches \"$filename\". Use the exact filename - list_word_documents shows what the user has selected."}"""
+        // Checked after resolve so the refusal can name the document, and
+        // before targetedByUser so a locked file is reported as locked rather
+        // than as ambiguous. Every tool method funnels through here, which is
+        // why this is the only place the lock is enforced.
+        if (ref.documentId !in editableDocumentIds) {
+            return """{"error": "\"${ref.filename}\" is locked. The user has not unlocked it for editing - """ +
+                """tell them they can unlock it with the padlock on the document's card in the side panel. """ +
+                """Do not attempt any other way of changing it."}"""
+        }
         if (!targetedByUser(ref, candidates.size)) {
             val names = candidates.joinToString(", ") { "\"${it.filename}\"" }
             return """{"error": "Refusing to change \"${ref.filename}\": the user has several documents selected and named none of them. """ +

@@ -28,7 +28,7 @@ data class KnownUser(
  *
  * Two rosters, deliberately kept in the two places they are administered -
  * `springchat3.allowed-emails` for Google accounts, `users.json` for password
- * accounts (see [LocalUserStore]) - joined here rather than merged on disk.
+ * accounts (see [UserStore]) - joined here rather than merged on disk.
  * This class is what stops that split becoming a trap: [SecurityConfig]'s
  * sign-in check and [ch.arcticsoft.springchat3.web.ProjectController]'s
  * "can this person actually accept?" check now read the *same* parsed set,
@@ -38,12 +38,12 @@ data class KnownUser(
 @Component
 class KnownUsers(
     @Value("\${springchat3.allowed-emails}") private val allowedEmailsRaw: String,
-    private val localUserStore: LocalUserStore,
+    private val userStore: UserStore,
 ) {
     /**
      * Comma-separated, trimmed, lowercased, blanks dropped. Parsed once -
      * this is a startup config value, unlike `users.json`, which
-     * [LocalUserStore] re-reads whenever it changes.
+     * [UserStore] re-reads whenever it changes.
      */
     private val allowedGoogleEmails: Set<String> by lazy {
         allowedEmailsRaw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
@@ -60,7 +60,7 @@ class KnownUsers(
      * exactly like sharing being broken.
      */
     fun canSignIn(email: String): Boolean =
-        isAllowedGoogleEmail(email) || localUserStore.find(email) != null
+        isAllowedGoogleEmail(email) || userStore.find(email) != null
 
     /**
      * Everyone who can sign in, Google accounts first, then local ones,
@@ -70,7 +70,7 @@ class KnownUsers(
      */
     fun list(): List<KnownUser> {
         val google = allowedGoogleEmails.sorted().map { KnownUser(it, it.substringBefore('@'), "google") }
-        val local = localUserStore.list()
+        val local = userStore.list()
             .filterNot { it.email in allowedGoogleEmails }
             .sortedBy { it.email }
             .map { KnownUser(it.email, it.displayName.ifBlank { it.email.substringBefore('@') }, "local") }

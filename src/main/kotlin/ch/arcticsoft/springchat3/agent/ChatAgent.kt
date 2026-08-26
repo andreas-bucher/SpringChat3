@@ -537,6 +537,36 @@ class ChatAgent(
         // documents other people share - so it stays admin-only and global.
         if (!appSettingsStore.get().documentEditingEnabled) {
             log.debug("documentEdit skipped: document editing is switched off in settings")
+            /*
+             * Silence is wrong when the user clearly expected an edit
+             * (2026-08-25, from a real report: a document was unlocked, an
+             * edit was asked for, and the only trace of the refusal was this
+             * DEBUG line in the server log - the reply just answered as
+             * though nothing had been requested).
+             *
+             * Intent is read from the unlocked set rather than from keywords
+             * in the message: unlocking a document is a deliberate act aimed
+             * at exactly this, so "they unlocked one of the documents they
+             * attached" is a far better signal than guessing at verbs, and it
+             * stays silent for everyone who never unlocked anything - this
+             * step runs on every turn with a Word document selected, so a
+             * blanket notice here would be noise on most of them.
+             */
+            val unlockedAndAttached = request.documentIds.toSet().intersect(request.editableDocumentIds)
+            if (unlockedAndAttached.isNotEmpty()) {
+                return DocumentEdits(
+                    listOf(
+                        ToolExecution(
+                            tool = "document_edit",
+                            input = "",
+                            rawOutput = """{"error": "Document editing is switched off for this server, so nothing """ +
+                                """was changed. The document's own padlock is unlocked, but an administrator also """ +
+                                """has to enable \"Document editing\" under Server policy in Settings."}""",
+                            durationMs = 0,
+                        ),
+                    ),
+                )
+            }
             return DocumentEdits()
         }
         // Set server-side from the caller's role in this space (2026-08-24,
@@ -631,6 +661,7 @@ class ChatAgent(
                 request.spaceId,
                 request.message,
                 selectedIds,
+                request.editableDocumentIds,
             ) +
             // Scoped to the same selection as the editing tool: whoever is
             // about to change a document should not be able to read one it

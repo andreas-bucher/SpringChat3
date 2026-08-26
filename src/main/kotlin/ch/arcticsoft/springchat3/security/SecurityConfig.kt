@@ -161,7 +161,7 @@ class SecurityConfig {
 
     /**
      * Looks a local account up for the sign-in form (2026-08-24 - see
-     * [LocalUserStore]). Declaring this bean is all that is needed to make
+     * [UserStore]). Declaring this bean is all that is needed to make
      * `formLogin` work: Spring Boot's reactive security autoconfiguration
      * builds a `UserDetailsRepositoryReactiveAuthenticationManager` around a
      * [ReactiveUserDetailsService] bean when one exists, using the
@@ -179,9 +179,9 @@ class SecurityConfig {
      * for it.
      */
     @Bean
-    fun localUserDetailsService(localUserStore: LocalUserStore): ReactiveUserDetailsService =
+    fun localUserDetailsService(userStore: UserStore): ReactiveUserDetailsService =
         ReactiveUserDetailsService { username ->
-            val user = localUserStore.find(username)
+            val user = userStore.find(username)
             val hash = user?.passwordHash
             if (user == null || hash.isNullOrBlank()) {
                 Mono.empty()
@@ -303,7 +303,7 @@ class SecurityConfig {
      * share?" check in
      * [ch.arcticsoft.springchat3.web.ProjectController.addMember] read the
      * same set. Injected as a **method** parameter, not through this class's
-     * constructor: [KnownUsers] needs [LocalUserStore], which needs the
+     * constructor: [KnownUsers] needs [UserStore], which needs the
      * [passwordEncoder] bean declared above, and a constructor dependency
      * would close that into a cycle Spring could not resolve at startup.
      *

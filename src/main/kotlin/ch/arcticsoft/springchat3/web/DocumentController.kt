@@ -16,6 +16,7 @@ import ch.arcticsoft.springchat3.document.WebPageStore
 import ch.arcticsoft.springchat3.document.WordDocumentStore
 import ch.arcticsoft.springchat3.document.WorkingDocumentStore
 import ch.arcticsoft.springchat3.project.SpaceAccess
+import ch.arcticsoft.springchat3.settings.UserSettingsStore
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
 import org.springframework.http.CacheControl
@@ -71,6 +72,9 @@ import reactor.core.scheduler.Schedulers
  */
 data class MoveDocumentRequest(val spaceId: String?)
 
+/** `PATCH /documents/{id}/editable`'s body. */
+data class DocumentEditableRequest(val editable: Boolean)
+
 @RestController
 class DocumentController(
     private val documentStore: DocumentStore,
@@ -86,6 +90,7 @@ class DocumentController(
     private val spaceAccess: SpaceAccess,
     private val documentDeletionService: DocumentDeletionService,
     private val documentMoveService: DocumentMoveService,
+    private val userSettingsStore: UserSettingsStore,
 ) {
     private val log = LoggerFactory.getLogger(DocumentController::class.java)
 
@@ -168,7 +173,13 @@ class DocumentController(
                             pages.size,
                             documentId,
                         )
-                        DocumentSummary(documentId, filePart.filename(), text.length, spaceId)
+                        DocumentSummary(
+                            documentId,
+                            filePart.filename(),
+                            text.length,
+                            spaceId,
+                            documentStore.get(documentId)?.uploadedAt ?: 0,
+                        )
                     }.subscribeOn(Schedulers.boundedElastic())
                 }
             }
@@ -416,6 +427,31 @@ class DocumentController(
                 mapOf("message" to "The document could not be moved. It is unchanged."),
             )
         }
+    }
+
+    /**
+     * Unlocks or re-locks [id] for the **calling user alone** (2026-08-25) -
+     * see [ch.arcticsoft.springchat3.settings.UserSettings.editableDocumentIds]
+     * for why this is per user rather than a property of the document.
+     *
+     * Requires write access to the document's space, not because the unlock
+     * itself changes anything shared - it does not, it is one row in the
+     * caller's own settings - but because a viewer could never act on it: a
+     * viewer's turn cannot edit anything anyway
+     * ([ch.arcticsoft.springchat3.agent.ChatRequest.documentEditingAllowed]),
+     * so letting them arm a switch that can never fire would only be
+     * confusing.
+     */
+    @PatchMapping("/documents/{id}/editable")
+    fun setEditable(
+        @PathVariable id: String,
+        @RequestBody request: DocumentEditableRequest,
+        exchange: ServerWebExchange,
+    ): ResponseEntity<Void> {
+        val document = documentStore.get(id) ?: return ResponseEntity.notFound().build()
+        spaceAccess.requireWrite(exchange, document.spaceId)
+        userSettingsStore.setDocumentEditable(spaceAccess.currentUserEmail(exchange), id, request.editable)
+        return ResponseEntity.noContent().build()
     }
 
     @DeleteMapping("/documents/{id}")

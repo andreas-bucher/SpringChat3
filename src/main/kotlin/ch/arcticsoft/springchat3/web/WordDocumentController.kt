@@ -7,6 +7,7 @@ import ch.arcticsoft.springchat3.document.UploadedWordDocument
 import ch.arcticsoft.springchat3.document.WordDocumentStore
 import ch.arcticsoft.springchat3.document.WordTextExtractor
 import ch.arcticsoft.springchat3.project.SpaceAccess
+import ch.arcticsoft.springchat3.settings.SettingsResolver
 import org.slf4j.LoggerFactory
 import org.springframework.core.io.buffer.DataBufferUtils
 import org.springframework.http.MediaType
@@ -35,6 +36,15 @@ data class WordDocumentStatus(
     val characterCount: Int,
     val uploadedAt: Long,
     val spaceId: String? = null,
+    /**
+     * Whether **this caller** has unlocked the document for the agent to edit
+     * (2026-08-25) - see
+     * [ch.arcticsoft.springchat3.settings.UserSettings.editableDocumentIds]
+     * for why the unlock is per user. Only Word documents carry it: nothing
+     * else in this app can be edited by the agent at all, so a padlock on a
+     * PDF card would imply a risk that does not exist.
+     */
+    val editable: Boolean = false,
 )
 
 /**
@@ -67,6 +77,7 @@ class WordDocumentController(
     private val wordTextExtractor: WordTextExtractor,
     private val pdfPreviewService: PdfPreviewService,
     private val spaceAccess: SpaceAccess,
+    private val settingsResolver: SettingsResolver,
 ) {
     private val log = LoggerFactory.getLogger(WordDocumentController::class.java)
 
@@ -98,8 +109,14 @@ class WordDocumentController(
         }
 
     @GetMapping("/word-documents")
-    fun list(exchange: ServerWebExchange): List<WordDocumentStatus> =
-        wordDocumentStore.getAll().filter { spaceAccess.canRead(exchange, it.spaceId) }.mapNotNull { statusFor(it) }
+    fun list(exchange: ServerWebExchange): List<WordDocumentStatus> {
+        // Resolved once for the whole list rather than per row - it is one
+        // read of this caller's own settings, not a per-document lookup.
+        val unlocked = settingsResolver.editableDocumentIdsFor(spaceAccess.currentUserEmail(exchange))
+        return wordDocumentStore.getAll()
+            .filter { spaceAccess.canRead(exchange, it.spaceId) }
+            .mapNotNull { statusFor(it)?.copy(editable = it.documentId in unlocked) }
+    }
 
     /**
      * Rejects a non-`.docx` filename up front rather than letting Tika try

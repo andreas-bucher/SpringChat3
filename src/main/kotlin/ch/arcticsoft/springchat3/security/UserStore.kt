@@ -27,16 +27,16 @@ import java.io.File
  * [password] is the **admin's plaintext bootstrap field** and is normally
  * absent. The admin adds an account by writing one into `users.json` by
  * hand; the store hashes it into [passwordHash], clears it, and rewrites the
- * file the first time it reads it (see [LocalUserStore]). It exists only so
+ * file the first time it reads it (see [UserStore]). It exists only so
  * that adding a user needs no separate hashing tool and no UI - the tradeoff
  * being that the plaintext does sit in that file until the app next reads
- * it, which is why [LocalUserStore] rewrites eagerly rather than lazily.
+ * it, which is why [UserStore] rewrites eagerly rather than lazily.
  *
  * [mustChangePassword] defaults to true for exactly that reason: a password
  * the admin chose is a password the admin knows.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class LocalUser(
+data class AppUser(
     val email: String,
     val displayName: String = "",
     val password: String? = null,
@@ -72,15 +72,15 @@ data class LocalUser(
  * `users.json` locks local users out, it never lets anyone in.
  */
 @Component
-class LocalUserStore(
+class UserStore(
     @Value("\${springchat3.data-dir}") private val dataDir: String,
     private val passwordEncoder: PasswordEncoder,
 ) {
-    private val log = LoggerFactory.getLogger(LocalUserStore::class.java)
+    private val log = LoggerFactory.getLogger(UserStore::class.java)
     private val objectMapper = jacksonObjectMapper()
 
     @Volatile
-    private var users: List<LocalUser> = emptyList()
+    private var users: List<AppUser> = emptyList()
 
     @Volatile
     private var loadedFromModifiedAt: Long = -1
@@ -91,20 +91,20 @@ class LocalUserStore(
      * One account by email, case-insensitively, or null if there is none -
      * the only lookup [SecurityConfig]'s `ReactiveUserDetailsService` needs.
      */
-    fun find(email: String): LocalUser? {
+    fun find(email: String): AppUser? {
         reloadIfChanged()
         return users.firstOrNull { it.email.equals(email, ignoreCase = true) }
     }
 
     /** Every local account - for `GET /me` to tell a local session from a Google one. */
-    fun list(): List<LocalUser> {
+    fun list(): List<AppUser> {
         reloadIfChanged()
         return users
     }
 
     /**
      * Replaces [email]'s stored password with a freshly hashed [rawPassword]
-     * and clears [LocalUser.mustChangePassword] - the one write path
+     * and clears [AppUser.mustChangePassword] - the one write path
      * [ch.arcticsoft.springchat3.web.AccountController] uses. Returns false
      * if there is no such account.
      */
@@ -144,10 +144,10 @@ class LocalUserStore(
         }
     }
 
-    private fun load(file: File): List<LocalUser> {
+    private fun load(file: File): List<AppUser> {
         if (!file.exists()) return emptyList()
         return try {
-            objectMapper.readValue<List<LocalUser>>(file)
+            objectMapper.readValue<List<AppUser>>(file)
                 .filter { it.email.isNotBlank() }
                 .map { it.copy(email = it.email.lowercase()) }
         } catch (e: Exception) {
@@ -157,8 +157,8 @@ class LocalUserStore(
     }
 
     /**
-     * Turns every plaintext [LocalUser.password] the admin wrote into a
-     * [LocalUser.passwordHash] and rewrites the file. An entry that has both
+     * Turns every plaintext [AppUser.password] the admin wrote into a
+     * [AppUser.passwordHash] and rewrites the file. An entry that has both
      * keeps the plaintext one: writing a new password by hand is how an
      * admin resets a forgotten one, and that has to win over the hash that
      * is already there or the reset would silently do nothing.
