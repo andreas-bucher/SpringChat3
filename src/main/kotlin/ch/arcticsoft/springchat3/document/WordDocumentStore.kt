@@ -97,6 +97,29 @@ class WordDocumentStore(
         persist()
     }
 
+    /**
+     * Renames [documentId], a no-op for an id that is not an uploaded Word
+     * document (2026-08-28). The row here and
+     * [ch.arcticsoft.springchat3.document.ExtractedDocument.filename] are
+     * two copies of the same name - a `.docx` upload writes both - so
+     * [ch.arcticsoft.springchat3.web.DocumentController.rename] sets both,
+     * and this one being a no-op for a PDF is what lets it do so
+     * unconditionally.
+     *
+     * The agent resolves a document to edit BY FILENAME
+     * ([ch.arcticsoft.springchat3.document.WordDocumentWorkspace.resolve],
+     * and [ch.arcticsoft.springchat3.tools.WordDocumentEditTool.targetedByUser]
+     * checks the user named it), and both read this store live - so a rename
+     * changes what the user has to say to point at this document, with no
+     * stale copy left behind.
+     */
+    fun rename(documentId: String, filename: String) {
+        val index = docs.indexOfFirst { it.documentId == documentId }
+        if (index < 0) return
+        docs = docs.toMutableList().also { it[index] = it[index].copy(filename = filename) }
+        persist()
+    }
+
     fun remove(documentId: String) {
         val updated = docs.filterNot { it.documentId == documentId }
         if (updated.size != docs.size) {

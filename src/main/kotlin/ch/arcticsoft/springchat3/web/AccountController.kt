@@ -34,15 +34,25 @@ class AccountController(
     @PostMapping("/account/password")
     fun changePassword(@RequestBody request: ChangePasswordRequest, exchange: ServerWebExchange) {
         val email = spaceAccess.currentUserEmail(exchange)
+        // Having no row used to be the test for "this is a Google account",
+        // back when a Google account had no row at all. Since 2026-08-26 it
+        // has one, so the question is whether the row carries a password -
+        // otherwise a Google user asking to change a password they do not
+        // have would fall through to "that is not your current password".
         val user = userStore.find(email)
-            ?: throw ResponseStatusException(HttpStatus.CONFLICT, "This account signs in with Google - change your password there.")
+        if (user == null || !user.hasPassword) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "This account signs in with Google - change your password there.")
+        }
         val hash = user.passwordHash
         if (hash == null || !passwordEncoder.matches(request.currentPassword, hash)) {
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "That is not your current password.")
         }
         val fresh = request.newPassword
-        if (fresh.length < MIN_PASSWORD_LENGTH) {
-            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Please choose at least $MIN_PASSWORD_LENGTH characters.")
+        if (fresh.length < UserStore.MIN_PASSWORD_LENGTH) {
+            throw ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Please choose at least ${UserStore.MIN_PASSWORD_LENGTH} characters.",
+            )
         }
         if (passwordEncoder.matches(fresh, hash)) {
             // Not pedantry: the whole point of the forced first change is
@@ -51,9 +61,5 @@ class AccountController(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Please choose a password you have not used here before.")
         }
         userStore.changePassword(email, fresh)
-    }
-
-    companion object {
-        private const val MIN_PASSWORD_LENGTH = 10
     }
 }

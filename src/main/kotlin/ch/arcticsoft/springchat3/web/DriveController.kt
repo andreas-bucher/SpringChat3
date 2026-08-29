@@ -111,6 +111,15 @@ data class DriveFolderStatus(
     val files: List<DocumentSummary>,
     val syncing: Boolean = false,
     val spaceId: String? = null,
+    /**
+     * The 6-digit id naming this folder's own directory on disk,
+     * `spaces/<spaceId>/gdrive-<driveFolderLocalId>/` (2026-08-29, so the
+     * side panel can show where a synced file actually lives - see
+     * index.html's `documentLocation`). Null for a folder linked before
+     * per-folder directories existed, whose files still land ungrouped
+     * directly in the space - see [ch.arcticsoft.springchat3.document.DriveLink].
+     */
+    val driveFolderLocalId: String? = null,
 )
 
 /**
@@ -368,6 +377,7 @@ class DriveController(
                     files = files,
                     syncing = link.folderId in syncingFolderIds,
                     spaceId = link.spaceId,
+                    driveFolderLocalId = link.driveFolderLocalId,
                 )
             },
             workingDocuments = workingDocumentStore.getAll().filter { canSee(exchange, it.spaceId) }.mapNotNull { doc ->

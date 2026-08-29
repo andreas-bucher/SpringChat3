@@ -5,6 +5,7 @@ import ch.arcticsoft.springchat3.agent.ChatProgressEvent
 import ch.arcticsoft.springchat3.agent.ChatReply
 import ch.arcticsoft.springchat3.agent.ChatRequest
 import ch.arcticsoft.springchat3.chat.ChatHistoryStore
+import ch.arcticsoft.springchat3.chat.ChatTrace
 import ch.arcticsoft.springchat3.project.SpaceAccess
 import ch.arcticsoft.springchat3.settings.SettingsResolver
 import com.embabel.agent.api.invocation.AgentInvocation
@@ -119,7 +120,12 @@ class ChatController(
      * springchat3_settings.md - the agent is a singleton, so this is the only
      * point at which "who is asking" still exists).
      *
-     * **All three are overwritten unconditionally**, never merged with
+     * Since 2026-08-28 it also carries this session's previous assistant
+     * reply (see [ch.arcticsoft.springchat3.agent.ChatRequest.previousAnswer])
+     * - the one piece of conversation history any step of the agent sees,
+     * added so "save the summary in a new document" has something to save.
+     *
+     * **All of them are overwritten unconditionally**, never merged with
      * whatever arrived in the request body: each is a server-side decision on
      * a field the client can also send, so the only safe handling is to
      * ignore what came in. A viewer therefore gets a chat agent that can read
@@ -136,6 +142,12 @@ class ChatController(
             toolsEnabled = settingsResolver.toolsEnabledFor(email),
             modelOverrides = settingsResolver.effectiveOverrides(email),
             editableDocumentIds = settingsResolver.editableDocumentIdsFor(email),
+            previousAnswer = chatHistoryStore.lastAssistantText(request.sessionId, request.spaceId, email),
+            // Same rule as every field above it: read from the session file,
+            // never trusted from the request body. A client able to supply
+            // this could re-arm the editing step on any turn it liked, with a
+            // question of its own writing.
+            pendingEdit = chatHistoryStore.lastPendingEdit(request.sessionId, request.spaceId, email),
         )
     }
 
@@ -156,7 +168,24 @@ class ChatController(
             // no assistant reply worth recording. request.sessionId is
             // passed through so the turn lands in the right session file
             // (2026-08-23, see ChatRequest.sessionId's own doc comment).
+            //
+            // The reply's trace is recorded with it (2026-08-28, user's own
+            // request "Can you store the chat processing data as part of
+            // the Chat History?") - the same three summaries the browser is
+            // handed live, so re-opening this session later shows the
+            // Details disclosure it showed when the answer first landed
+            // rather than a bare bubble. Here rather than in ChatAgent for
+            // the same reason the rest of this call is here: this is the one
+            // place both /chat and /chat/stream pass through with a
+            // finished ChatReply in hand.
             .doOnNext { reply ->
-                chatHistoryStore.recordTurn(request.sessionId, request.spaceId, request.message, reply.text, email)
+                chatHistoryStore.recordTurn(
+                    request.sessionId,
+                    request.spaceId,
+                    request.message,
+                    reply.text,
+                    email,
+                    ChatTrace(reply.toolCalls, reply.steps, reply.retrieval, reply.pendingEdit),
+                )
             }
 }

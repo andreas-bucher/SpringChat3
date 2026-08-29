@@ -75,7 +75,8 @@ data class Project(
  * rather than one shared JSON file, so a load/write failure is bounded to a
  * single project) - nested under a `spaces/` subdirectory, unlike
  * [DocumentStore]'s flat `[dataDir]/<documentId>/` layout, so a 6-digit
- * project id can never collide with a document's UUID-named directory, and
+ * project id can never collide with a document directory (10-digit since
+ * 2026-08-29, UUID-named before that - see [DocumentStore] for both), and
  * `data/spaces/` reads as a real, browsable "project folder" the way the
  * request describes.
  *

@@ -1,5 +1,9 @@
 package ch.arcticsoft.springchat3.chat
 
+import ch.arcticsoft.springchat3.agent.PendingEdit
+import ch.arcticsoft.springchat3.agent.RetrievalSummary
+import ch.arcticsoft.springchat3.agent.StepTiming
+import ch.arcticsoft.springchat3.agent.ToolCallSummary
 import ch.arcticsoft.springchat3.project.ProjectStore
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -62,6 +66,26 @@ import java.util.UUID
  * `GET /chat-history`'s flat entry list by session and label each group
  * without a second round-trip - defaults to blank for any entry read
  * straight off disk before that enrichment happens.
+ *
+ * [trace] is what the agent actually did to produce this reply - the same
+ * step timings, tool calls and document lookup the live panel shows while
+ * the turn runs, and that the collapsed "Details" disclosure shows once it
+ * lands (2026-08-28, user's own request "The data about the processing of a
+ * user message are not stored in the Chat History. When coming back to a
+ * chat I do not have the information anymore about the processing."). Null
+ * on every user entry (there is no processing to describe until the agent
+ * has run) and on every entry recorded before this field existed, which is
+ * also exactly how the browser tells "nothing to show" from "showed
+ * nothing" - it renders neither, same as it did before this was captured.
+ *
+ * [sessionOwned] is likewise not on disk and set by the same [getAll]
+ * enrichment: whether the owning session has a [ChatSessionFile.owner] at
+ * all. Never the owner's address itself - [getAll] only ever returns the
+ * caller's own sessions and ownerless ones, so an address here would always
+ * be either their own or nobody's, and the one thing the browser actually
+ * needs to know is that an ownerless session is visible to everyone and so
+ * worth a different warning before deleting it (2026-08-28, see
+ * [ChatHistoryStore.delete]).
  */
 data class ChatHistoryEntry(
     val entryId: String,
@@ -72,6 +96,49 @@ data class ChatHistoryEntry(
     val text: String,
     val timestamp: Long,
     val sessionName: String = "",
+    val sessionOwned: Boolean = false,
+    val trace: ChatTrace? = null,
+)
+
+/**
+ * The processing behind one assistant reply, persisted with it
+ * (2026-08-28).
+ *
+ * **Deliberately the same three types [ch.arcticsoft.springchat3.agent.ChatReply]
+ * already hands the browser**, not a parallel set of history-shaped copies:
+ * they are already this app's wire vocabulary for a trace (`/chat` returns
+ * them, and the `done` event of `/chat/stream` carries them inside its
+ * reply), and index.html's `buildTrace` already renders exactly this shape.
+ * Copying them into history-local types would mean a converter to keep in
+ * step with three classes that change for agent reasons, to gain nothing a
+ * reader of the JSON could see. The cost is the one recorded here: these
+ * three are now a *persisted* format as well as a wire format, so removing
+ * or renaming a field in them makes every session file already on disk
+ * unreadable by [ChatHistoryStore.readSession] (which logs and skips it -
+ * the session's turns are then orphaned, same as every earlier
+ * storage-layout change in this app).
+ *
+ * Only what the finished reply carried, never the live event stream
+ * ([ch.arcticsoft.springchat3.agent.ChatProgressEvent]): re-opening a
+ * session should look the way that turn looked once it had landed, and the
+ * intermediate "started" events say nothing the finished summaries don't.
+ */
+data class ChatTrace(
+    val toolCalls: List<ToolCallSummary> = emptyList(),
+    val steps: List<StepTiming> = emptyList(),
+    val retrieval: RetrievalSummary? = null,
+    /**
+     * Set when this turn's editing step ran, changed nothing and explained
+     * itself - so the NEXT turn can understand a bare "yes" (2026-08-29, see
+     * [ch.arcticsoft.springchat3.agent.PendingEdit]).
+     *
+     * A new NULLABLE field on a persisted shape, which is what keeps it
+     * compatible: every session file written before today reads it as null,
+     * and nothing here treats null as anything but "no question outstanding".
+     * Read this file's own note on the three summary types before renaming
+     * anything in here.
+     */
+    val pendingEdit: PendingEdit? = null,
 )
 
 /**
@@ -169,8 +236,9 @@ data class ChatSessionFile(
  * restructure fails [readSession]'s parse (logged, then treated as empty,
  * same as a missing file) rather than crashing, but its turns are
  * effectively orphaned, same as every earlier storage-layout change in this
- * app. No delete/prune support either (yet) - same "no cleanup code until
- * someone actually asks for it" precedent.
+ * app. Removing a whole session is [delete] (2026-08-28); there is still
+ * no prune/expiry of old sessions, same "no cleanup code until someone
+ * actually asks for it" precedent.
  */
 @Component
 class ChatHistoryStore(
@@ -193,8 +261,21 @@ class ChatHistoryStore(
      * turn into its own single-turn "session", which is worse than just
      * grouping them together the way the pre-session-id design implicitly
      * did.
+     *
+     * An id that isn't a plain identifier is folded into that same file
+     * rather than reaching [sessionFile]: this string is supplied by the
+     * browser and becomes a *file name*, so a "../" in one would otherwise
+     * write outside the space's own sessions folder - and, since 2026-08-28,
+     * let [delete] move a file from outside it into the trash.
      */
-    private fun normalizeSessionId(sessionId: String): String = sessionId.ifBlank { "unsessioned" }
+    private fun normalizeSessionId(sessionId: String): String =
+        safeSessionId(sessionId) ?: "unsessioned".also {
+            if (sessionId.isNotBlank()) log.warn("Unusable chat session id {} - recording it under {} instead", sessionId, it)
+        }
+
+    /** [sessionId] itself when it is safe to use as a file name, else null - see [normalizeSessionId]. */
+    private fun safeSessionId(sessionId: String): String? =
+        if (SAFE_SESSION_ID.matches(sessionId)) sessionId else null
 
     /**
      * The session's display name, derived from [firstQuestion] - the very
@@ -231,7 +312,9 @@ class ChatHistoryStore(
         return files.sortedBy { it.name }
             .mapNotNull { readSession(it) }
             .filter { it.owner == null || it.owner.equals(email, ignoreCase = true) }
-            .flatMap { session -> session.entries.map { it.copy(sessionName = session.sessionName) } }
+            .flatMap { session ->
+                session.entries.map { it.copy(sessionName = session.sessionName, sessionOwned = session.owner != null) }
+            }
     }
 
     /**
@@ -284,6 +367,10 @@ class ChatHistoryStore(
      * for the same session, even though [userMessage] is different every
      * time - see [ChatSessionFile.sessionName]'s own doc comment.
      *
+     * [trace] is recorded on the assistant entry only - it describes how
+     * that reply was produced, and the question that prompted it has no
+     * processing of its own to describe.
+     *
      * `@Synchronized` here is coarser than strictly necessary (blocks a
      * concurrent write to a *different* session's or project's file too,
      * not just the same one) but matches this store's own prior single-lock
@@ -291,7 +378,14 @@ class ChatHistoryStore(
      * per-session lock map for that.
      */
     @Synchronized
-    fun recordTurn(sessionId: String, spaceId: String?, userMessage: String, assistantText: String, owner: String?) {
+    fun recordTurn(
+        sessionId: String,
+        spaceId: String?,
+        userMessage: String,
+        assistantText: String,
+        owner: String?,
+        trace: ChatTrace? = null,
+    ) {
         val effectiveSessionId = normalizeSessionId(sessionId)
         val turnId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
@@ -304,7 +398,10 @@ class ChatHistoryStore(
         val sessionOwner = existing?.owner ?: owner
         val updatedEntries = (existing?.entries ?: emptyList()) +
             ChatHistoryEntry(UUID.randomUUID().toString(), turnId, effectiveSessionId, spaceId, "user", userMessage, now) +
-            ChatHistoryEntry(UUID.randomUUID().toString(), turnId, effectiveSessionId, spaceId, "assistant", assistantText, now)
+            ChatHistoryEntry(
+                UUID.randomUUID().toString(), turnId, effectiveSessionId, spaceId, "assistant", assistantText, now,
+                trace = trace,
+            )
         try {
             file.parentFile?.mkdirs()
             objectMapper.writeValue(file, ChatSessionFile(effectiveSessionId, sessionName, updatedEntries, sessionOwner))
@@ -313,8 +410,136 @@ class ChatHistoryStore(
         }
     }
 
+    /**
+     * The most recent assistant reply in one session, or null - what
+     * "save the summary in a new document" refers to (2026-08-28, from a
+     * real failure: [ch.arcticsoft.springchat3.agent.ChatAgent.documentEdit]
+     * sees only the current message, so a request to save an earlier reply
+     * pointed at text no step of the agent could reach).
+     *
+     * This store is written on every turn and, until now, read only by the
+     * left panel. This is the first read that feeds a turn's own
+     * processing - and the reason it stays HERE rather than becoming a
+     * general "load the conversation": one reply, named explicitly, is a
+     * bounded thing to hand a document-writing step. Feeding whole
+     * transcripts back into the agent is a different decision with different
+     * costs, and this method should not quietly become it.
+     *
+     * Ownership is checked the same way [delete] checks it, for the same
+     * reason: someone else's session is not yours to read out of, and an
+     * ownerless one (recorded before sessions had an owner) belongs to
+     * whoever can see the space. Unlike [delete] the space is given rather
+     * than searched for - the caller is answering a message in a known
+     * space, and [ch.arcticsoft.springchat3.web.ChatController] has already
+     * checked read access to it.
+     *
+     * A blank/empty reply is skipped rather than returned: an empty document
+     * is not what anyone means by "save that".
+     */
+    fun lastAssistantText(sessionId: String, spaceId: String?, email: String): String? {
+        val safeId = safeSessionId(sessionId) ?: return null
+        val session = readSession(sessionFile(spaceId ?: UNASSIGNED_KEY, safeId)) ?: return null
+        if (session.owner != null && !session.owner.equals(email, ignoreCase = true)) return null
+        return session.entries.lastOrNull { it.role == "assistant" && it.text.isNotBlank() }?.text
+    }
+
+    /**
+     * The editing question left open by the last assistant turn of this
+     * session, or null when there is none (2026-08-29 - see
+     * [ch.arcticsoft.springchat3.agent.PendingEdit] for what it is for).
+     *
+     * Same session, same ownership check and the same "read it from the file,
+     * never from the request body" rule as [lastAssistantText] - a client
+     * that could supply this could make the edit step run on any turn it
+     * liked, with a question of its own choosing.
+     *
+     * Deliberately the LAST assistant entry and not a search backwards for
+     * the most recent one that happens to carry a question: a question two
+     * turns old has already been answered, ignored, or overtaken, and
+     * reviving it is how "yes" ends up applied to the wrong request. That
+     * is also what makes the whole mechanism one-shot without any expiry
+     * bookkeeping.
+     */
+    fun lastPendingEdit(sessionId: String, spaceId: String?, email: String): PendingEdit? {
+        val safeId = safeSessionId(sessionId) ?: return null
+        val session = readSession(sessionFile(spaceId ?: UNASSIGNED_KEY, safeId)) ?: return null
+        if (session.owner != null && !session.owner.equals(email, ignoreCase = true)) return null
+        return session.entries.lastOrNull { it.role == "assistant" }?.trace?.pendingEdit
+    }
+
+    /**
+     * Removes one whole session - its file, and so every turn in it -
+     * returning false when [email] has no such session to remove
+     * (2026-08-28, user's own request "Enable to remove chat history").
+     *
+     * **The search is the permission check.** Only [visibleSpaceIds] are
+     * looked in, plus the unassigned fallback that belongs to no space and
+     * is readable by everyone under the same legacy rule [getAll] applies -
+     * so a session in a space the caller cannot see isn't found at all, and
+     * [ch.arcticsoft.springchat3.web.ChatHistoryController] needs no
+     * separate access call for a space this store is the one to identify.
+     * Read access, deliberately not write: a chat belongs to whoever had
+     * it, so a VIEWER may delete their own chats in a space they cannot
+     * otherwise change - the one place in this app where a viewer destroys
+     * something (2026-08-24, see springchat3_multi_user.md in project
+     * memory for what a viewer is).
+     *
+     * A session that exists but belongs to someone else is false too,
+     * indistinguishable from one that never existed, so `DELETE` cannot be
+     * used to find out which session ids are real.
+     *
+     * An **ownerless** session - recorded before [ChatSessionFile.owner]
+     * existed, and therefore shown to everyone by [getAll] - is deletable
+     * by anyone who can see it. The alternative is a row that is visible
+     * forever and removable by nobody, which is the thing this feature
+     * exists to fix; index.html says plainly that it goes for everyone
+     * before it asks.
+     *
+     * `@Synchronized`, so a delete cannot interleave with [recordTurn]
+     * writing the same file - the loser of that race would otherwise
+     * re-create the session it just removed.
+     */
+    @Synchronized
+    fun delete(sessionId: String, email: String, visibleSpaceIds: Set<String>): Boolean {
+        val safeId = safeSessionId(sessionId) ?: return false
+        for (key in visibleSpaceIds + UNASSIGNED_KEY) {
+            val session = readSession(sessionFile(key, safeId)) ?: continue
+            if (session.owner != null && !session.owner.equals(email, ignoreCase = true)) continue
+            return moveToTrash(sessionFile(key, safeId), key, safeId)
+        }
+        return false
+    }
+
+    /**
+     * Moved, not deleted - one rename into `[dataDir]/trash/sessions/`,
+     * which the app never scans, so the session is gone from its point of
+     * view while a mistake stays recoverable by hand. Same convention
+     * [ch.arcticsoft.springchat3.project.ProjectStore.moveToTrash] already
+     * uses for a whole space, timestamp suffix included so deleting two
+     * sessions with the same id (one per space) cannot collide.
+     */
+    private fun moveToTrash(file: File, key: String, sessionId: String): Boolean {
+        val trash = File(File(dataDir, "trash"), "sessions")
+        trash.mkdirs()
+        val target = File(trash, key + "-" + sessionId + "-" + System.currentTimeMillis() + ".json")
+        if (!file.renameTo(target)) {
+            log.warn("Could not move chat session {} ({}) to {} - leaving it in place", sessionId, key, target)
+            return false
+        }
+        log.info("Deleted chat session {} ({}) - its file is now {}", sessionId, key, target)
+        return true
+    }
+
     companion object {
         private const val UNASSIGNED_KEY = "__unassigned__"
         private const val SESSION_NAME_PREVIEW_LENGTH = 20
+
+        /**
+         * What a session id may contain to be used as a file name - the
+         * browser's own `crypto.randomUUID()` and the "unsessioned"
+         * fallback both fit; nothing with a path separator, a dot or a
+         * `~` in it does.
+         */
+        private val SAFE_SESSION_ID = Regex("[A-Za-z0-9_-]{1,64}")
     }
 }

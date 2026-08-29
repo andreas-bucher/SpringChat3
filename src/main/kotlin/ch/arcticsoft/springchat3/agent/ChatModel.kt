@@ -144,6 +144,73 @@ data class ChatRequest(
      * nothing rather than everything.
      */
     val editableDocumentIds: Set<String> = emptySet(),
+    /**
+     * The last assistant reply in this browser session, when there is one
+     * (2026-08-28) - so "save the summary in a new document" has something
+     * to save. Stamped by [ch.arcticsoft.springchat3.web.ChatController]
+     * from [ch.arcticsoft.springchat3.chat.ChatHistoryStore], and, like the
+     * four fields above it, overwritten unconditionally rather than trusted
+     * from the request body: it is read out of another user's session file
+     * if the client is allowed to choose it.
+     *
+     * Read only by [ChatAgent.documentEdit], which hands it to
+     * [ch.arcticsoft.springchat3.tools.WordDocumentEditTool] so the text can
+     * be saved VERBATIM. It is deliberately not put in any prompt: the point
+     * is to save exactly what the user read, and a model asked to pass a
+     * long reply through a tool argument will paraphrase, truncate or
+     * mangle it.
+     *
+     * This turn's own answer is NOT here and cannot be - [ChatAgent.answer]
+     * runs after [ChatAgent.documentEdit] by data dependency. "Summarise
+     * this and save it" is therefore a two-turn request by construction.
+     */
+    val previousAnswer: String? = null,
+    /**
+     * What the editing step left unresolved on the PREVIOUS turn, or null -
+     * the state that makes a bare "yes" mean something (2026-08-29, user's
+     * own report: "when the answer was a question regarding editing the
+     * document, and the user answers with yes, the Editing document does not
+     * kick in").
+     *
+     * Two distinct failures needed this, and only fixing both helps:
+     *  1. "yes" carries no change verb, so [ChatAgent.looksLikeDocumentChange]
+     *     short-circuits [ChatAgent.documentEdit] before any LLM call.
+     *  2. Even bypassing that, the step is built from [message] plus the
+     *     scope and the guardrails and NOTHING else - a step handed the
+     *     single word "yes" cannot know what was asked. Bypassing the filter
+     *     alone would only buy a more expensive failure.
+     *
+     * Stamped by [ch.arcticsoft.springchat3.web.ChatController] from the last
+     * assistant entry's own trace, exactly as [previousAnswer] is, and for
+     * the same reason: it is read out of a session file, so the client is
+     * never trusted to supply it.
+     *
+     * **One-shot by construction, with no expiry logic.** It always comes
+     * from the IMMEDIATELY previous assistant entry, so as soon as the next
+     * turn writes a trace of its own - whether it edited something or
+     * declined again - the old question is gone. A stale question cannot keep
+     * re-arming the edit step turn after turn.
+     */
+    val pendingEdit: PendingEdit? = null,
+)
+
+/**
+ * An unfinished editing exchange: what the editing step said when it changed
+ * nothing, and the message it was answering.
+ *
+ * Both halves are needed. [question] is what the user was asked; [askedAbout]
+ * is the request that prompted it, and is what makes the follow-up
+ * actionable - "yes" is only meaningful next to "make the stories longer,
+ * around 500 characters".
+ *
+ * Persisted inside [ch.arcticsoft.springchat3.chat.ChatTrace], so it survives
+ * a restart and shows up in the stored turn like every other trace field.
+ * A new nullable field on an existing persisted shape: older session files
+ * simply read it as null.
+ */
+data class PendingEdit(
+    val question: String,
+    val askedAbout: String,
 )
 
 /**
@@ -206,12 +273,30 @@ data class ToolResults(val executions: List<ToolExecution>, val timings: List<St
  *
  * [seconds] is wall-clock time for this one call, so the UI can show e.g.
  * "Lookup place 0.4s".
+ *
+ * [step] names the pipeline step this call belongs to - the same label the
+ * matching [StepTiming] carries - so the UI can nest it under the right row
+ * (2026-08-28). Null means [ChatAgent.analyzeMessage]'s gathering step,
+ * which is where the frontend has always put an unattributed call and where
+ * every call recorded before this field existed came from.
+ *
+ * [outcome] is a short, human-readable version of the tool's own result,
+ * set only for [ChatAgent.documentEdit]'s calls (2026-08-28): an edit is the
+ * one kind of tool call whose result the user has a direct stake in, since
+ * it changed their document. Null everywhere else, and the UI shows nothing
+ * extra for a null.
+ *
+ * Both are nullable with defaults on purpose: this class is a PERSISTED
+ * format (see springchat3_chat_history_trace.md in project memory), so a
+ * session file written before either existed still reads back.
  */
 data class ToolCallSummary(
     val tool: String,
     val input: String,
     val failed: Boolean,
     val seconds: Double,
+    val step: String? = null,
+    val outcome: String? = null,
 )
 
 /**
@@ -351,9 +436,27 @@ data class DocumentSearchStrategy(
  * trace beside the lookups that led to it.
  *
  * An empty [executions] is the overwhelmingly common case - most turns ask
- * for nothing to be changed - and is indistinguishable from the step having
- * short-circuited without an LLM call at all, deliberately: from [answer]'s
- * point of view "nothing was changed" is one state, not three.
+ * for nothing to be changed.
+ *
+ * [note] is that step's own closing words, and it is NOT the honest record -
+ * [executions] is. Carried across since 2026-08-29; before that it was
+ * logged and dropped, which meant the one step that knew what it had decided
+ * could not say anything to the user, and anything it wanted to ASK reached
+ * nobody. That is why the ambiguity guard had to move into
+ * [ch.arcticsoft.springchat3.tools.WordDocumentEditTool]'s own code, where a
+ * refusal comes back as a tool result: a result crosses, prose did not.
+ *
+ * Treat [note] strictly as commentary. A model that emits its tool-call
+ * syntax as ordinary text writes a note claiming a change it never made -
+ * that is a real, observed failure here, not a hypothetical - so [answer]'s
+ * prompt says plainly that a note contradicting [executions] is wrong. The
+ * one case where it is worth reading is the one [executions] cannot express:
+ * the step ran, chose to change nothing, and said why - which is also where
+ * a question back to the user lives.
+ *
+ * That does mean "nothing was changed" is no longer one flat state: an empty
+ * [executions] with a [note] is "it ran and declined", and with no note is
+ * "it never really ran". Deliberate, and the reason this field exists.
  *
  * [seconds] is 0.0 whenever the step short-circuited, which is also how
  * [answer] decides whether to show it as a step in the UI timeline at all -
@@ -362,6 +465,7 @@ data class DocumentSearchStrategy(
 data class DocumentEdits(
     val executions: List<ToolExecution> = emptyList(),
     val seconds: Double = 0.0,
+    val note: String? = null,
 )
 
 /**
@@ -373,4 +477,12 @@ data class ChatReply(
     val toolCalls: List<ToolCallSummary> = emptyList(),
     val steps: List<StepTiming> = emptyList(),
     val retrieval: RetrievalSummary? = null,
+    /**
+     * Set only when this turn's editing step ran, changed nothing and said
+     * why - the state [ChatAgent.answer]'s middle guidance branch already
+     * detects. [ch.arcticsoft.springchat3.web.ChatController] copies it into
+     * the stored trace, and the NEXT turn reads it back as
+     * [ChatRequest.pendingEdit]. Nothing in the browser reads it.
+     */
+    val pendingEdit: PendingEdit? = null,
 )

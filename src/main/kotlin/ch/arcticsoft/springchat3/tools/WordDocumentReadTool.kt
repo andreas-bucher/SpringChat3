@@ -3,6 +3,7 @@ package ch.arcticsoft.springchat3.tools
 import ch.arcticsoft.springchat3.document.WordDocumentRef
 import ch.arcticsoft.springchat3.document.WordDocumentWorkspace
 import ch.arcticsoft.springchat3.document.WordParagraph
+import ch.arcticsoft.springchat3.document.WordParagraphFormat
 import org.springframework.ai.tool.annotation.Tool
 import org.springframework.ai.tool.annotation.ToolParam
 
@@ -31,7 +32,18 @@ import org.springframework.ai.tool.annotation.ToolParam
  *  - [listWordDocuments] is names and sizes only,
  *  - [getWordDocumentOutline] is headings only,
  *  - [findInWordDocument] returns matching paragraph numbers with snippets,
- *  - [readWordDocument] takes an explicit window and caps it hard.
+ *  - [readWordDocument] takes an explicit window and caps it hard,
+ *  - [listWordStyles] caps the list,
+ *  - [analyzeWordFormatting] computes its counts here and sends only the
+ *    conclusions - never XML, and never one line per paragraph.
+ *
+ * The last two arrived 2026-08-29 as the read half of formatting support
+ * (springchat3_word_formatting_design.md in project memory). Until then the
+ * model could see each paragraph's STYLE but nothing about the direct
+ * formatting sitting on top of it - so the commonest defect in a
+ * hand-formatted document, a heading that is really body text in bold, was
+ * invisible, and so was the reason a font change silently did nothing. The
+ * write half is deliberately not here yet.
  *
  * Paragraph numbers are 1-based in the tool surface and 0-based internally
  * (see [WordParagraph.index]) - LLMs handle "paragraph 1 is the first one"
@@ -62,6 +74,22 @@ class WordDocumentReadTool(
 
         /** Heading style ids treated as outline entries by [getWordDocumentOutline]. */
         private val HEADING_STYLES = setOf("title", "heading1", "heading2", "heading3", "heading4")
+
+        /** Most styles listed by [listWordStyles], and most paragraph numbers named in one line of a report. */
+        const val MAX_STYLES_LISTED = 60
+        const val MAX_NUMBERS_LISTED = 12
+    }
+
+    /** A style id as the comparisons here want it: lowercase, no spaces. */
+    private fun normalizedStyle(style: String?): String? = style?.lowercase()?.replace(" ", "")
+
+    private fun isHeading(style: String?): Boolean = normalizedStyle(style) in HEADING_STYLES
+
+    /** 1-based paragraph numbers, capped - a report line must not become the whole document. */
+    private fun numbers(paragraphs: List<WordParagraphFormat>): String {
+        val shown = paragraphs.take(MAX_NUMBERS_LISTED).joinToString(", ") { (it.index + 1).toString() }
+        val rest = paragraphs.size - MAX_NUMBERS_LISTED
+        return if (rest > 0) "$shown and $rest more" else shown
     }
 
     private fun clip(text: String): String =
@@ -163,6 +191,118 @@ class WordDocumentReadTool(
             val more = if (last < all.size) "\n(paragraphs ${last + 1}-${all.size} not shown)" else ""
             "\"${ref.filename}\", paragraphs ${from + 1}-$last of ${all.size}:\n" + render(window) + more
         }
+    }
+
+    @Tool(
+        name = "list_word_styles",
+        description = "List the paragraph and character styles a Word document actually defines, with their " +
+            "ids and display names. Use it before talking about applying a style: a document written in " +
+            "another language may not define \"Heading1\" at all, and a style it does not define does nothing.",
+    )
+    fun listWordStyles(
+        @ToolParam(description = "The document's filename, e.g. \"Spec v2.docx\"")
+        filename: String,
+    ): String = withDocument(filename) { ref ->
+        val styles = workspace.styles(ref)
+        if (styles.isEmpty()) {
+            "\"${ref.filename}\" defines no styles of its own, so every paragraph uses Word's built-in defaults."
+        } else {
+            val shown = styles.take(MAX_STYLES_LISTED)
+            val more = if (styles.size > shown.size) "\n(${styles.size - shown.size} further styles not shown)" else ""
+            "${styles.size} style(s) defined by \"${ref.filename}\" (id, then display name):\n" +
+                shown.joinToString("\n") { style ->
+                    val name = style.name?.takeIf { it != style.styleId }?.let { " - \"$it\"" }.orEmpty()
+                    "- ${style.styleId}$name"
+                } + more
+        }
+    }
+
+    /**
+     * The formatting half of reading a document (2026-08-29). Everything
+     * else here shows TEXT and its style; this shows what is actually
+     * formatting the text, which the model was previously blind to.
+     *
+     * Deliberately a report and never XML, for the same reason every other
+     * tool in this class is paged: its output goes straight into the small
+     * tool-selection model's context. So the counts are computed here and
+     * only the conclusions travel.
+     *
+     * The line that earns the tool is the direct-formatting count. Direct
+     * run formatting beats both docDefaults and the paragraph's style, so a
+     * document that arrived by paste overrides everything and a
+     * document-wide font change appears to do absolutely nothing - see
+     * springchat3_word_formatting_design.md in project memory.
+     */
+    @Tool(
+        name = "analyze_word_formatting",
+        description = "Report how a Word document is formatted: its default font and size, which fonts and " +
+            "sizes actually appear, how many paragraphs override their style with direct formatting, " +
+            "paragraphs that are entirely bold but not real headings, typed-in numbering that is not a real " +
+            "Word list, and empty spacer paragraphs. Call this whenever the user asks about a document's " +
+            "formatting, asks to improve or tidy it, or wonders why a formatting change had no effect.",
+    )
+    fun analyzeWordFormatting(
+        @ToolParam(description = "The document's filename, e.g. \"Spec v2.docx\"")
+        filename: String,
+    ): String = withDocument(filename) { ref ->
+        val report = workspace.formatting(ref)
+        val paragraphs = report?.paragraphs.orEmpty()
+        if (report == null || paragraphs.isEmpty()) {
+            return@withDocument "\"${ref.filename}\" has no paragraphs to analyze."
+        }
+        val overriding = paragraphs.filter { it.directlyFormattedRuns > 0 }
+        val pseudoHeadings = paragraphs.filter { it.allRunsBold && !it.empty && !isHeading(it.style) }
+        val manual = paragraphs.filter { it.manuallyNumbered && !it.listNumbered }
+        val empties = paragraphs.filter { it.empty }
+        val fonts = paragraphs.flatMap { it.fonts }.groupingBy { it }.eachCount()
+        val sizes = paragraphs.flatMap { it.sizesPt }.distinct().sorted()
+        val levels = paragraphs.mapNotNull { p ->
+            val style = normalizedStyle(p.style)
+            if (style != null && style.startsWith("heading")) style.removePrefix("heading").toIntOrNull() else null
+        }
+        val skips = levels.zipWithNext().count { (previous, next) -> next > previous + 1 }
+
+        val defaults = when {
+            report.defaultFont == null && report.defaultSizePt == null ->
+                "Document default (docDefaults): none set - Word falls back to its own built-in default."
+            else ->
+                "Document default (docDefaults): ${report.defaultFont ?: "font not set"}" +
+                    (report.defaultSizePt?.let { ", ${it}pt" } ?: ", size not set")
+        }
+        listOfNotNull(
+            "Formatting of \"${ref.filename}\" (${paragraphs.size} paragraphs, ${report.styles.size} styles defined):",
+            defaults,
+            if (fonts.isEmpty()) {
+                "Direct font settings: none - every run takes its font from its style or from docDefaults."
+            } else {
+                "Fonts set directly on runs: " + fonts.entries.sortedByDescending { it.value }
+                    .joinToString(", ") { "${it.key} (${it.value} paragraph(s))" }
+            },
+            if (sizes.isEmpty()) null else "Sizes set directly on runs: " + sizes.joinToString(", ") { "${it}pt" },
+            "Paragraphs overriding their style with direct formatting: ${overriding.size} of ${paragraphs.size}" +
+                if (overriding.isEmpty()) {
+                    " - a change to docDefaults or to a style will apply everywhere."
+                } else {
+                    " - this is why a document-wide font or size change can appear to do nothing, since direct " +
+                        "formatting wins over both the style and docDefaults."
+                },
+            if (levels.isEmpty()) {
+                "Headings: none - this document has no heading styles at all."
+            } else {
+                "Headings: ${levels.size} across levels ${levels.distinct().sorted().joinToString(", ")}" +
+                    if (skips > 0) " ($skips place(s) where a level is skipped)" else " (no level skipped)"
+            },
+            if (pseudoHeadings.isEmpty()) null else {
+                "Entirely bold but not a heading style: ${pseudoHeadings.size} paragraph(s) - " +
+                    numbers(pseudoHeadings) + ". These are usually headings that were never styled as one."
+            },
+            if (manual.isEmpty()) null else {
+                "Typed-in numbering rather than a real Word list: ${manual.size} paragraph(s) - " + numbers(manual) + "."
+            },
+            if (empties.isEmpty()) null else {
+                "Empty paragraphs used as spacing: ${empties.size} - " + numbers(empties) + "."
+            },
+        ).joinToString("\n")
     }
 
     @Tool(

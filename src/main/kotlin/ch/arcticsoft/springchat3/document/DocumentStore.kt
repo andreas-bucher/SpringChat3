@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component
 import java.io.File
 import java.nio.file.Files
 import java.util.Collections
-import java.util.UUID
+import kotlin.random.Random
 
 /**
  * One uploaded document's extracted plain text, plus its original filename.
@@ -287,8 +287,9 @@ class DocumentStore(
         // each in turn holding that folder's own document directories. A
         // child directory's name starting with "gdrive-" is how it's told
         // apart from a plain document directory at the same nesting level -
-        // a document directory is always named with a random UUID (see
-        // [store]), which never starts with "gdrive-".
+        // a document directory is named with a 10-digit id since 2026-08-29
+        // and with a random UUID before that (see [generateDocumentId]), and
+        // neither can start with "gdrive-".
         fun loadContainer(container: File, exclude: Set<String> = emptySet()) {
             container.listFiles { file -> file.isDirectory && file.name !in exclude }?.forEach { child ->
                 if (child.name.startsWith("gdrive-")) {
@@ -366,14 +367,59 @@ class DocumentStore(
         driveFolderLocalId: String? = null,
         rawFilename: String = DEFAULT_RAW_FILENAME,
     ): String {
-        val documentId = UUID.randomUUID().toString()
         val document = ExtractedDocument(filename, text, System.currentTimeMillis(), spaceId, driveFolderLocalId, rawFilename)
-        documents[documentId] = document
+        // Generate and insert together under one lock, so the uniqueness
+        // check and the insert cannot be interleaved by a concurrent store()
+        // - the same pairing [ProjectStore.create] makes for a space id.
+        val documentId = synchronized(documents) {
+            val id = generateDocumentId(spaceId, driveFolderLocalId)
+            documents[id] = document
+            id
+        }
         persist(documentId, document)
         if (bytes != null) {
             persistBytes(documentId, spaceId, driveFolderLocalId, rawFilename, bytes)
         }
         return documentId
+    }
+
+    /**
+     * A random 10-digit id ("1000000000".."9999999999", so it is always 10
+     * digits - never a shorter number that dropping a leading zero could
+     * produce), 2026-08-29, user's own request: "documents get a uuid when
+     * created. using a 10 digit identifier makes it easier to find the
+     * documents." Same shape and same reasoning as
+     * [ProjectStore.generateSpaceId]'s 6-digit space id, which this app has
+     * used since 2026-08-23 - a document directory is now as readable as the
+     * space directory holding it.
+     *
+     * Must be called while holding `synchronized(documents)` (see [store]),
+     * so the uniqueness check and the eventual insert are atomic together.
+     *
+     * Checked against BOTH the in-memory map and the target directory. The
+     * map is the stronger of the two, since it is loaded from every
+     * container at startup and so covers the flat root, every space folder
+     * and every `gdrive-<id>` folder at once - but a document directory
+     * whose `document.json` failed to parse is skipped at load and would be
+     * missing from it, and that is exactly the directory a rename would
+     * clobber. The filesystem check costs one `exists()` and closes that.
+     *
+     * 10 digits cannot collide with a 6-digit space id, and a numeric name
+     * can never collide with the `gdrive-` prefix [loadPersisted] uses to
+     * tell a Drive-link folder from a document directory.
+     *
+     * Documents created before this date keep their UUID directory names
+     * wherever they were not migrated: nothing here or anywhere else parses
+     * a document id, so the two shapes coexist with no special case.
+     */
+    private fun generateDocumentId(spaceId: String?, driveFolderLocalId: String?): String {
+        repeat(50) {
+            val candidate = (1_000_000_000L + Random.nextLong(9_000_000_000L)).toString()
+            if (!documents.containsKey(candidate) && !documentDirFor(candidate, spaceId, driveFolderLocalId).exists()) {
+                return candidate
+            }
+        }
+        error("Could not generate a unique 10-digit document id after 50 attempts")
     }
 
     /** Returns the document stored under [documentId], or null if there is none (never uploaded, or an unrecognized id). */
@@ -422,6 +468,34 @@ class DocumentStore(
         documents[documentId] = updated
         persist(documentId, updated)
         persistBytes(documentId, updated.spaceId, updated.driveFolderLocalId, updated.rawFilename, bytes)
+        return true
+    }
+
+    /**
+     * Renames [documentId] - the DISPLAY name only (2026-08-28, "Support
+     * editing a file name"). Returns false for an unknown id.
+     *
+     * Nothing on disk is touched, and that is not a shortcut: the raw bytes
+     * live under [ExtractedDocument.rawFilename] ("document.pdf" /
+     * "document.docx") inside `<documentId>/`, so this field has never been
+     * a path. Contrast [moveToSpace], which moves a directory and therefore
+     * has to undo itself when the metadata write fails - here there is
+     * nothing to get out of step, so the ordinary [persist] (which logs and
+     * swallows) is enough.
+     *
+     * Who else keeps a copy of this name: [WordDocumentStore] for an
+     * uploaded `.docx`, which the caller renames alongside this. Nothing
+     * else - [DocumentIndex] indexes text with no filename metadata, the
+     * structure store keys on the id, and the chat history stores the
+     * name only inside already-written reply text, which is a record of what
+     * was said and is deliberately left alone.
+     */
+    fun rename(documentId: String, filename: String): Boolean {
+        val existing = documents[documentId] ?: return false
+        if (existing.filename == filename) return true
+        val updated = existing.copy(filename = filename)
+        documents[documentId] = updated
+        persist(documentId, updated)
         return true
     }
 

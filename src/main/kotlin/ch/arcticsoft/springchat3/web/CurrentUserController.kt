@@ -1,5 +1,6 @@
 package ch.arcticsoft.springchat3.web
 
+import ch.arcticsoft.springchat3.security.Admins
 import ch.arcticsoft.springchat3.security.CURRENT_USER_EMAIL_ATTRIBUTE
 import ch.arcticsoft.springchat3.security.CURRENT_USER_IS_GOOGLE_ATTRIBUTE
 import ch.arcticsoft.springchat3.security.UserStore
@@ -41,6 +42,18 @@ data class CurrentUserResponse(
      * turns this into a blocking prompt.
      */
     val mustChangePassword: Boolean = false,
+    /**
+     * Whether this session may open the Users screen (2026-08-26). The menu
+     * entry is hidden without it - the one place in this UI where a control
+     * is hidden rather than disabled, and only because it opens a screen a
+     * non-administrator has never seen and cannot act on at all. The two
+     * *settings* an admin controls stay visible and greyed for everyone, for
+     * the reason recorded in springchat3_per_user_settings.md.
+     *
+     * A courtesy for the UI either way: every `/admin/users` route checks
+     * [ch.arcticsoft.springchat3.security.Admins] itself.
+     */
+    val admin: Boolean = false,
 )
 
 /**
@@ -66,6 +79,7 @@ data class CurrentUserResponse(
 @RestController
 class CurrentUserController(
     private val userStore: UserStore,
+    private val admins: Admins,
 ) {
     /**
      * Reads the session rather than the principal (2026-08-24, local
@@ -89,8 +103,12 @@ class CurrentUserController(
         val email = exchange.getAttribute<String>(CURRENT_USER_EMAIL_ATTRIBUTE)
         val isGoogle = exchange.getAttribute<Boolean>(CURRENT_USER_IS_GOOGLE_ATTRIBUTE) == true
         val local = if (email == null) null else userStore.find(email)
+        // Read from the exchange's email, not from the OidcUser below: the two
+        // are the same address, and asking the row once means a Google session
+        // and a password session cannot answer this differently.
+        val isAdmin = admins.isAdmin(email)
         return user
-            .map { CurrentUserResponse(it.email, it.fullName, it.picture, canUseGoogleDrive = true) }
+            .map { CurrentUserResponse(it.email, it.fullName, it.picture, canUseGoogleDrive = true, admin = isAdmin) }
             .defaultIfEmpty(
                 CurrentUserResponse(
                     email = email,
@@ -98,6 +116,7 @@ class CurrentUserController(
                     picture = null,
                     canUseGoogleDrive = isGoogle,
                     mustChangePassword = local?.mustChangePassword == true,
+                    admin = isAdmin,
                 ),
             )
     }

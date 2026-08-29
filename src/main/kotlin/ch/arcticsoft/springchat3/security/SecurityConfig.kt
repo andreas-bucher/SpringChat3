@@ -294,15 +294,19 @@ class SecurityConfig {
     }
 
     /**
-     * Restricts sign-in to the allow-list (`springchat3.allowed-emails`,
-     * comma-separated - see application.yml/.env), rejecting anyone else via
-     * an [OAuth2AuthenticationException] rather than letting them in.
+     * Restricts sign-in to the allow-list, rejecting anyone else via an
+     * [OAuth2AuthenticationException] rather than letting them in.
      *
-     * The list itself is parsed by [KnownUsers] (2026-08-24) rather than
-     * here, so that this check and the "can this person actually accept a
-     * share?" check in
-     * [ch.arcticsoft.springchat3.web.ProjectController.addMember] read the
-     * same set. Injected as a **method** parameter, not through this class's
+     * The list is [KnownUsers]'s (2026-08-24) rather than one parsed here, so
+     * that this check and the "can this person actually accept a share?"
+     * check in [ch.arcticsoft.springchat3.web.ProjectController.addMember]
+     * can never disagree. Since 2026-08-26 that list is rows in `users.json`
+     * carrying `google: true`, not the `springchat3.allowed-emails` env var -
+     * two consequences worth knowing at this call site: adding or revoking a
+     * Google account takes effect on the next sign-in attempt with no
+     * restart, and `disabled: true` on the row is now a working revocation.
+     *
+     * Injected as a **method** parameter, not through this class's
      * constructor: [KnownUsers] needs [UserStore], which needs the
      * [passwordEncoder] bean declared above, and a constructor dependency
      * would close that into a cycle Spring could not resolve at startup.

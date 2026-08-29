@@ -161,6 +161,13 @@ class ToolCallProgressBridge(private val progressBus: ChatProgressBus) : Agentic
                 capture?.executions?.add(
                     ToolExecution(event.request.tool.toString(), event.request.toolInput, outputText, durationMs),
                 )
+                log.debug(
+                    "Tool call response: {} (output: {}, processId: {})",
+                    event.request.tool,
+                    outputText,
+                    event.processId
+
+                )
                 val correlationId = capture?.correlationId ?: return
                 progressBus.emit(
                     correlationId,

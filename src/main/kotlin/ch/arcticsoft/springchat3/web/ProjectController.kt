@@ -241,7 +241,7 @@ class ProjectController(
         if (email != SpaceMember.EVERYONE && !knownUsers.canSignIn(email)) {
             throw ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
-                "$email cannot sign in yet - add them to SPRINGCHAT3_ALLOWED_EMAILS or to users.json first.",
+                "$email cannot sign in yet - an administrator has to add them on the Users screen first.",
             )
         }
 

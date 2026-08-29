@@ -75,6 +75,9 @@ data class MoveDocumentRequest(val spaceId: String?)
 /** `PATCH /documents/{id}/editable`'s body. */
 data class DocumentEditableRequest(val editable: Boolean)
 
+/** The new display name for [DocumentController.rename] - see its doc comment for what is done to it. */
+data class RenameDocumentRequest(val name: String)
+
 @RestController
 class DocumentController(
     private val documentStore: DocumentStore,
@@ -106,6 +109,15 @@ class DocumentController(
          * Bump this if a real document gets rejected that shouldn't be.
          */
         private const val MAX_PDF_BYTES = 20 * 1024 * 1024 // 20 MB
+
+        /**
+         * Cap on a renamed file name (2026-08-28, see [rename]). Long enough
+         * for any real document title, short enough that the card, the chat
+         * composer's chips and the agent's own document list stay readable -
+         * the browser's field caps it too, and this is the half that a
+         * hand-written request also has to pass.
+         */
+        private const val MAX_FILENAME_LENGTH = 120
 
         /**
          * OOXML's own media type for a `.docx` - served by [file] for an
@@ -427,6 +439,81 @@ class DocumentController(
                 mapOf("message" to "The document could not be moved. It is unchanged."),
             )
         }
+    }
+
+    /**
+     * Renames [id] (2026-08-28, user's own request "Support editing a file
+     * name. Same look and feel as edit space name.").
+     *
+     * Like the space rename it mirrors, this is a `PATCH` of one field and
+     * requires WRITE, not ownership: it destroys nothing and is undone by
+     * typing the old name back. And like that one, **the name is a key
+     * nowhere** - the raw bytes sit under a fixed `document.pdf` /
+     * `document.docx` inside `<documentId>/` and every store row references
+     * the id - so this changes metadata and nothing cascades. The two places
+     * that do keep a copy are updated together here (see
+     * [DocumentStore.rename] / [WordDocumentStore.rename]); [wordDocumentStore]
+     * is a no-op for a PDF, which is why it can be called unconditionally.
+     *
+     * **Two 409s, for the same reason [moveToSpace] has one**: a file inside
+     * a linked Drive folder, and a linked Google Doc, are both owned by their
+     * sync. Renaming either would look like it worked until the next sync
+     * wrote the Drive name back over it - so it is refused with an answer
+     * saying where the name actually lives, rather than silently accepted.
+     *
+     * The **extension is kept** ([renamedFilename]): the bytes are what they
+     * are, and a `.docx` relabelled as something else would mislead the user,
+     * the download button and the agent's own document list at once.
+     */
+    @PatchMapping("/documents/{id}/name")
+    fun rename(
+        @PathVariable id: String,
+        @RequestBody request: RenameDocumentRequest,
+        exchange: ServerWebExchange,
+    ): ResponseEntity<Map<String, String>> {
+        val document = documentStore.get(id) ?: return ResponseEntity.notFound().build()
+        spaceAccess.requireWrite(exchange, document.spaceId)
+        if (document.driveFolderLocalId != null) {
+            return ResponseEntity.status(409).body(
+                mapOf("message" to "A file inside a linked Drive folder is named by Drive - rename it there and sync."),
+            )
+        }
+        if (workingDocumentStore.get(id) != null) {
+            return ResponseEntity.status(409).body(
+                mapOf("message" to "A linked Google Doc is named by Drive - rename it there, and the next sync follows."),
+            )
+        }
+        val filename = renamedFilename(request.name, document.filename)
+            ?: return ResponseEntity.badRequest().body(
+                mapOf("message" to "That is not a usable file name."),
+            )
+        if (!documentStore.rename(id, filename)) return ResponseEntity.notFound().build()
+        wordDocumentStore.rename(id, filename)
+        return ResponseEntity.ok(mapOf("filename" to filename))
+    }
+
+    /**
+     * The name [rename] will actually store, or null when there is nothing
+     * usable in [raw].
+     *
+     * Kept path-safe even though this name is never a path: it is quoted into
+     * the agent's prompts and its tool results, shown in the browser, and
+     * would be the obvious thing to reach for if some future feature ever did
+     * write a file named after it. A separator or a lone dot costs nothing to
+     * refuse now and would be a real defect to discover later.
+     *
+     * The original extension is re-appended when [raw] does not already end
+     * in it, so "Offer.docx" renamed to "Offer v2" stays a `.docx` - see
+     * [rename]'s own doc comment for why the file's own type wins over what
+     * was typed.
+     */
+    private fun renamedFilename(raw: String, current: String): String? {
+        val cleaned = raw.trim().filter { it.code >= 0x20 && it != '\u007f' }
+        if (cleaned.isBlank() || cleaned.length > MAX_FILENAME_LENGTH) return null
+        if (cleaned.any { it == '/' || it == '\\' } || cleaned == "." || cleaned == "..") return null
+        val extension = current.substringAfterLast('.', "")
+        if (extension.isEmpty()) return cleaned
+        return if (cleaned.endsWith(".$extension", ignoreCase = true)) cleaned else "$cleaned.$extension"
     }
 
     /**

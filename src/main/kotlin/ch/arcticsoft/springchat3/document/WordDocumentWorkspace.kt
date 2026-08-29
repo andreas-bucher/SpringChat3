@@ -104,6 +104,23 @@ class WordDocumentWorkspace(
         return wordDocumentService.paragraphs(bytes)
     }
 
+    /** The styles this document defines - see [WordStyle]. Empty when it has no styles part at all. */
+    fun styles(ref: WordDocumentRef): List<WordStyle> {
+        val bytes = documentStore.getBytes(ref.documentId) ?: return emptyList()
+        return wordDocumentService.styles(bytes)
+    }
+
+    /**
+     * The document's formatting picture, or null when its bytes are gone -
+     * distinguished from an empty report on purpose, since "no such document"
+     * and "a document with no formatting" are different things to tell the
+     * user.
+     */
+    fun formatting(ref: WordDocumentRef): WordFormattingReport? {
+        val bytes = documentStore.getBytes(ref.documentId) ?: return null
+        return wordDocumentService.formatting(bytes)
+    }
+
     /**
      * The one write path: hand the current bytes to [edit], and if it
      * produced anything, back the old ones up for undo, persist the new

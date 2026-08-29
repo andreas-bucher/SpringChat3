@@ -16,14 +16,9 @@ logging:
     ch.arcticsoft.springchat3: DEBUG
     ch.arcticsoft.springchat3.web: DEBUG
     ch.arcticsoft.springchat3.agent: DEBUG
-    Embabel: WARN
-    # docx4j narrates every package load at INFO - JVM vendor, the SAX/DOM
-    # factory it found, "Detected WordProcessingML package", elapsed time -
-    # which is several lines per document edit (2026-08-23, see
-    # springchat3_word_tools.md in project memory). WARN keeps the parts that
-    # actually matter: a document whose XML it had to recover from, or a
-    # part it couldn't read at all.
+    org.docx4j.XmlUtils: ERROR
     org.docx4j: WARN
+    Embabel: WARN
 
 spring:
   application:
@@ -67,48 +62,71 @@ spring:
     embedding: ollama
 
 embabel:
+  # Retries around every LLM call (2026-08-28, from a real run). The default
+  # is TEN, and with a long per-call timeout that is a disaster rather than
+  # resilience: one impossible request ("make each of the stories longer,
+  # around 300 words each" against a local 8B) spent ten minutes retrying,
+  # kept its Ollama slot busy, and so made the NEXT turn time out as well -
+  # the log showed two turns' retries overlapping. Three attempts still
+  # covers what this retry is actually for, which is a malformed structured
+  # response, not a model that cannot finish in time.
+  agent:
+    platform:
+      llm-operations:
+        data-binding:
+          max-attempts: ${EMBABEL_LLM_MAX_ATTEMPTS:3}
   models:
     default-llm: ${OLLAMA_MODEL:granite4.1:3b}
     llms:
-      #generation: ${OLLAMA_GENERATION_MODEL:TechyShishy/ministral-3:8b-reasoning-2512-q8_0}
-      generation: ${OLLAMA_GENERATION_MODEL:ornith:9b}
       document-search-strategy: ${OLLAMA_DOC_STRATEGY_MODEL:granite4.1:3b}
-      # The model that decides and performs document edits (2026-08-23, see
-      # ChatAgent.documentEdit). Defaults to the SAME model as tool selection
-      # rather than the larger generation one, for one blunt reason: this
-      # step is useless unless the model does native tool calling, and that
-      # is a property of the model's Ollama template, not of its size. The
-      # first real run of this step used the generation model and it emitted
-      # "[TOOL_CALLS]list_word_documents{}" as ordinary text - the platform
-      # saw zero tool calls (see ChatAgent.leakedToolCallFailure). The
-      # tool-selection default below is the one model already proven to
-      # tool-call correctly in this app, via analyzeMessage. Override with
-      # OLLAMA_DOC_EDIT_MODEL, or pick a bigger tool-capable model in the
-      # settings popup - `ollama show <model>` lists "tools" under
-      # Capabilities for models whose template supports it.
-      # (Spelled out rather than nesting ${OLLAMA_MODEL:...} inside this
-      # placeholder's default - these model names contain colons, and a
-      # nested placeholder whose default itself contains one is exactly the
-      # kind of thing that fails at startup rather than at test time.)
-
-      # document-edit: ${OLLAMA_DOC_EDIT_MODEL:granite4.1:3b}
-      # document-edit: ${OLLAMA_DOC_EDIT_MODEL:mistral-medium-3.5:128b}
-      # document-edit: ${OLLAMA_DOC_EDIT_MODEL:ornith:35b}
-      document-edit: ${OLLAMA_DOC_EDIT_MODEL:ornith:9b}
+      document-edit: ${OLLAMA_DOC_EDIT_MODEL:magistral:24b-small-2506-q4_K_M}
+      generation: ${OLLAMA_GENERATION_MODEL:magistral:24b-small-2506-q4_K_M}
 
 springchat3:
   data-dir: ${SPRINGCHAT3_DATA_DIR:./data}
-  # Comma-separated list of Google account emails allowed to sign in - see
-  # ch.arcticsoft.springchat3.security.SecurityConfig.oidcUserService. No
-  # default (fails fast if unset) - an unset allow-list should never
-  # silently mean "let everyone in".
-  #allowed-emails: ${SPRINGCHAT3_ALLOWED_EMAILS}
-  # Comma-separated list of addresses (Google or local accounts alike) allowed
-  # to change server policy from the settings popup - document editing and the
-  # model allow-list - see ch.arcticsoft.springchat3.security.Admins. Empty by
-  # default and empty means NOBODY, not everybody: before this existed any
-  # signed-in user could flip those for the whole server, so failing open here
-  # would keep that rather than fix it. Startup logs a WARN while it is unset.
+  # Per-role LLM timeouts (2026-08-28). Embabel's own default is 60s, which
+  # is right for a classifier and much too short for a step that has to WRITE
+  # several hundred words - see ChatAgent's own constructor doc comment.
+  # Generous on purpose: the cost of a timeout that is too long is one slow
+  # turn, the cost of one that is too short is a change that never happens
+  # and a retry storm behind it.
+  llm-timeouts:
+    document-edit-seconds: ${SPRINGCHAT3_DOCUMENT_EDIT_TIMEOUT_SECONDS:900}
+    generation-seconds: ${SPRINGCHAT3_GENERATION_TIMEOUT_SECONDS:300}
+  # BOOTSTRAP SEED ONLY. Since 2026-08-26 the Google roster lives as rows in
+  # users.json ("google": true) alongside password accounts - see
+  # ch.arcticsoft.springchat3.security.UserStore. This variable is read on one
+  # single occasion: a startup that finds NO users.json at all, where it is
+  # written out as rows so a fresh deployment has a way in. It is never read
+  # against an existing file, however that file looks - otherwise revoking
+  # someone in the file would undo itself on the next restart.
+  #
+  # An address left here but missing from an existing users.json is therefore
+  # somebody who cannot sign in. UserStore logs a WARN naming them at boot;
+  # add the row, or drop the address from .env once it is gone.
+  #
+  # The line stays commented because SPRINGCHAT3_ALLOWED_EMAILS binds to this
+  # property through Spring Boot's relaxed binding either way - this is
+  # documentation, not wiring. The empty default that keeps an unset variable
+  # from failing startup is on the @Value in UserStore, not here.
+  #allowed-emails: ${SPRINGCHAT3_ALLOWED_EMAILS:}
+  # BOOTSTRAP SEED ONLY, exactly like allowed-emails above (2026-08-26). Admin
+  # is now `"admin": true` on a users.json row - see
+  # ch.arcticsoft.springchat3.security.Admins - so it hot-reloads and can be
+  # granted from the Users screen instead of needing a restart. This variable
+  # is read on one single occasion: the same startup that finds NO users.json
+  # and writes one from allowed-emails, where it marks which of those rows are
+  # administrators. It never marks anything in an existing file, or revoking an
+  # administrator there would undo itself on the next restart.
+  #
+  # So on an install that already had a users.json when this changed, the
+  # addresses here are NOT administrators - UserStore logs a WARN naming them
+  # at boot. Add `"admin": true` to their rows (no restart needed), then drop
+  # the variable from .env.
+  #
+  # Empty still means NOBODY, not everybody: before any of this existed any
+  # signed-in user could flip server policy for everyone, so failing open would
+  # keep that bug rather than fix it.
   admin-emails: ${SPRINGCHAT3_ADMIN_EMAILS:}
   google:
     # Google Cloud "Picker API key" (a browser/API key restricted by HTTP

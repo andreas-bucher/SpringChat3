@@ -167,16 +167,19 @@
    * see addRow()), so these rules only ever meet LLM-authored, HTML-escaped
    * content in practice.
    */
-  .bubble h1, .bubble h2, .bubble h3, .bubble h4 {
+  /* h2-h5, not h1-h4: renderMarkdown maps '#'-'####' one level down (a
+     bubble is never the page's top heading), so h1 never appears and h5 -
+     from '####' - was falling back to the browser default. */
+  .bubble h2, .bubble h3, .bubble h4, .bubble h5 {
     margin: 10px 0 4px;
     font-weight: 600;
     line-height: 1.3;
   }
 
-  .bubble h1 { font-size: 17px; }
-  .bubble h2 { font-size: 16px; }
-  .bubble h3 { font-size: 15px; }
-  .bubble h4 { font-size: 14.5px; }
+  .bubble h2 { font-size: 17px; }
+  .bubble h3 { font-size: 16px; }
+  .bubble h4 { font-size: 15px; }
+  .bubble h5 { font-size: 14.5px; }
 
   .bubble *:first-child { margin-top: 0; }
   .bubble *:last-child { margin-bottom: 0; }
@@ -213,6 +216,75 @@
   .bubble pre code {
     background: none;
     padding: 0;
+  }
+
+  /*
+   * Fenced code blocks as a labelled card (2026-08-28, user's own report
+   * that a reply arriving as one ```markdown fence "does not look nice" -
+   * it reads as quoted text). Two halves to that: ChatAgent.cleanAnswerText
+   * now drops a fence wrapping a WHOLE reply, so what reaches here is a
+   * genuine code block inside a longer answer - and it is drawn as a
+   * deliberate object with its language named, rather than an unexplained
+   * grey rectangle. The language row is also what makes the copy button
+   * discoverable; a bare <pre> had nowhere to put one.
+   */
+  .code-block {
+    margin: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--panel);
+  }
+
+  .code-block-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 4px 3px 10px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  .code-lang {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .code-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .code-copy:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: var(--text);
+  }
+
+  .code-copy.copied {
+    color: #1a7f37;
+  }
+
+  /* The card draws the frame now, so the <pre> inside it keeps only the
+     scrolling. max-height so a long block scrolls in place instead of
+     pushing the rest of the turn off screen. */
+  .code-block pre {
+    margin: 0;
+    border-radius: 0;
+    background: none;
+    max-height: 380px;
+    overflow: auto;
   }
 
   .bubble a {
@@ -322,6 +394,35 @@
 
   .trace-tool.failed .trace-time {
     color: #92251c;
+  }
+
+  /*
+   * What a document-editing tool call actually did, on its own line under
+   * the call (2026-08-28, ToolCallSummary.outcome in ChatAgent.kt). Wraps
+   * instead of ellipsing - it is the one line in the whole trace the user
+   * has a real stake in, since it says what happened to their document.
+   */
+  .trace-tool-outcome {
+    color: var(--muted);
+    padding-left: 10px;
+    overflow-wrap: anywhere;
+  }
+
+  .trace-tool-outcome.failed {
+    color: #92251c;
+  }
+
+  /*
+   * Stands in for the tool group under a step that ran and called nothing -
+   * "Editing document ..." deciding no change was wanted. Without it that
+   * step reads as an unexplained gap (2026-08-28).
+   */
+  .trace-note {
+    margin: 2px 0 2px 4px;
+    padding-left: 8px;
+    border-left: 2px solid var(--border);
+    color: var(--muted);
+    font-style: italic;
   }
 
   /*
@@ -552,6 +653,25 @@
 
   /* The in-place rename field (2026-08-25) - sized to sit exactly where the
      name it replaces sat, so the row does not jump when editing starts. */
+  /* The file-name twin of .project-item-name-input (2026-08-28) - same field,
+     sized for the card's name row instead of the space row, so the card does
+     not jump when editing starts. */
+  .resource-name-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 16px;
+    padding: 0 4px;
+    margin: -1px 0;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text);
+    outline: none;
+  }
+
   .project-item-name-input {
     flex: 1 1 auto;
     min-width: 0;
@@ -681,6 +801,150 @@
     padding: 6px 0;
   }
 
+  /* The Users screen (2026-08-26). Wider than the 360px .modal-dialog every
+     other dialog uses: a row here carries an address, two state chips and
+     four actions, and at 360px the address is the first thing to be
+     ellipsed - which is the one part of the row that identifies it. */
+  .admin-users-dialog {
+    width: 640px;
+  }
+
+  /* Every .modal-overlay shares one z-index, so which of two open ones paints
+     on top is decided by DOM order - and #confirm-overlay is declared before
+     the dialogs that call askConfirm() from inside themselves. Until the
+     Users screen nothing did, so nothing had noticed. A confirmation is
+     always on top of whatever asked for it; the password prompt sits between
+     the two for the same reason. */
+  #confirm-overlay {
+    z-index: 40;
+  }
+
+  #admin-password-overlay {
+    z-index: 35;
+  }
+
+  .admin-users-list {
+    max-height: 46vh;
+    overflow-y: auto;
+  }
+
+  .admin-user-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .admin-user-row:last-child {
+    border-bottom: none;
+  }
+
+  /* A disabled account stays listed and stays legible - it is the state you
+     came here to undo. Faded, not hidden. */
+  .admin-user-row.is-disabled .admin-user-identity {
+    opacity: 0.55;
+  }
+
+  .admin-user-identity {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .admin-user-email {
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-user-meta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  .admin-user-chip {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .admin-user-chip.is-admin {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .admin-user-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .admin-user-toggle {
+    font-size: 11.5px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .admin-user-toggle:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .admin-user-toggle:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .admin-user-form {
+    margin-top: 4px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .admin-user-form-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .admin-user-form-row input[type="email"],
+  .admin-user-form-row input[type="text"],
+  .admin-user-form-row input[type="password"] {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .admin-user-form-checks {
+    gap: 16px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  .admin-user-form-checks label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .project-item-desc {
     font-size: 11.5px;
     color: var(--muted);
@@ -727,20 +991,65 @@
     white-space: nowrap;
   }
 
-  /* Clicking a row re-fills the composer with that past question (see index.html's own click handler) rather than doing nothing - cursor: pointer signals that. */
+  /* Clicking a row opens that whole session in the middle panel (see
+     buildChatHistoryItem) - cursor: pointer signals that. The truncation
+     moved onto .chat-history-item-label when the row became a flex
+     container (2026-08-28), so the name is what gets ellipsised and the x
+     beside it never does. */
   .chat-history-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     padding: 6px 8px;
     border-radius: 8px;
     font-size: 12.5px;
     color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     cursor: pointer;
   }
 
   .chat-history-item:hover {
     background: var(--panel);
+  }
+
+  .chat-history-item-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Revealed on hover, and on keyboard focus so the row isn't mouse-only.
+     opacity rather than [hidden]: the button keeps its space either way, so
+     revealing it never re-truncates the label under the pointer. A device
+     with no hover at all shows it permanently - nothing would ever reveal
+     it there. */
+  .chat-history-item-delete {
+    flex-shrink: 0;
+    border: none;
+    background: none;
+    padding: 2px 3px;
+    border-radius: 6px;
+    color: var(--muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    opacity: 0;
+  }
+
+  .chat-history-item:hover .chat-history-item-delete,
+  .chat-history-item-delete:focus-visible {
+    opacity: 1;
+  }
+
+  .chat-history-item-delete:hover {
+    color: var(--text);
+  }
+
+  @media (hover: none) {
+    .chat-history-item-delete {
+      opacity: 1;
+    }
   }
 
   .chat-history-more-hint {
@@ -2287,6 +2596,16 @@
         </button>
         <div id="user-menu" class="user-menu" hidden>
           <button id="user-menu-settings-btn" type="button" class="user-menu-item"><span class="user-menu-item-icon" data-icon="settings" data-icon-size="15"></span>Settings</button>
+          <!--
+            Hidden rather than greyed for a non-administrator, which is the
+            opposite of what the Server policy section does - and deliberately
+            so. That section is a control someone had and could lose; this
+            opens a whole screen nobody but an admin has ever seen, so a
+            permanently dead entry in a four-item menu would be noise rather
+            than an explanation. GET /me carries the flag; every route behind
+            it checks again.
+          -->
+          <button id="user-menu-users-btn" type="button" class="user-menu-item" hidden><span class="user-menu-item-icon" data-icon="users" data-icon-size="15"></span>Users</button>
           <button id="user-menu-signout-btn" type="button" class="user-menu-item"><span class="user-menu-item-icon" data-icon="external-link" data-icon-size="15"></span>Sign out</button>
         </div>
         <div id="settings-popup" class="settings-popup" hidden>
@@ -2618,6 +2937,81 @@
   </div>
 </div>
 
+<!--
+  The Users screen (2026-08-26, user's own request "Admin Screen shows all
+  users ... enables to add new users with password ... enables to add new
+  users having google accounts (allow list)"). Backed by /admin/users; see
+  AdminUserController for the four things it refuses and why each of them is
+  a way to lock everybody out.
+
+  An account is a row in users.json that may carry Google sign-in, a password,
+  or both - so this is one list with two capabilities on it, not two lists.
+  The add form says the same thing: one form, two checkboxes.
+-->
+<div id="admin-users-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog admin-users-dialog">
+    <div class="modal-header">
+      <h3>Users</h3>
+      <button id="admin-users-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
+    </div>
+    <div class="modal-field">
+      <span class="modal-field-label">Everyone who has an account</span>
+      <div id="admin-users-list" class="admin-users-list"></div>
+    </div>
+    <form id="admin-user-form" class="admin-user-form">
+      <span class="modal-field-label">Add someone</span>
+      <div class="admin-user-form-row">
+        <input type="email" id="admin-user-email" placeholder="name@example.com" required autocomplete="off">
+        <input type="text" id="admin-user-name" placeholder="Display name (optional)" autocomplete="off">
+      </div>
+      <div class="admin-user-form-row admin-user-form-checks">
+        <label><input type="checkbox" id="admin-user-google"> Can sign in with Google</label>
+        <label><input type="checkbox" id="admin-user-admin"> Administrator</label>
+      </div>
+      <div class="admin-user-form-row">
+        <!--
+          minlength, but no `required`: an empty field is the Google-only case,
+          and minlength is not enforced on an empty optional input - so this is
+          the same instant check the reset prompt gives, without making a
+          password compulsory. The server checks again either way.
+        -->
+        <input type="password" id="admin-user-password" placeholder="Password (leave empty for Google only)" autocomplete="new-password" minlength="10">
+        <button type="submit" id="admin-user-add-btn" class="modal-btn-primary">Add</button>
+      </div>
+      <div class="settings-hint">Give an account Google sign-in, a password, or both - one with neither cannot sign in. A password typed here is one they have to replace the first time they use it.</div>
+    </form>
+    <div id="admin-users-error" class="settings-error" hidden></div>
+    <div class="modal-actions">
+      <button type="button" id="admin-users-done-btn" class="modal-btn-secondary">Done</button>
+    </div>
+  </div>
+</div>
+
+<!--
+  A password prompt, same promise-based shape as askConfirm() - which cannot
+  be reused here for the one reason that matters: a confirmation answers yes
+  or no, and this has to come back carrying a value.
+-->
+<div id="admin-password-overlay" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3 id="admin-password-title">Set a password</h3>
+      <button id="admin-password-close-btn" type="button" class="panel-icon-btn" title="Close" data-icon="x"></button>
+    </div>
+    <form id="admin-password-form">
+      <p class="settings-hint" id="admin-password-hint"></p>
+      <label class="modal-field">
+        <span class="modal-field-label">New password</span>
+        <input type="password" id="admin-password-input" autocomplete="new-password" minlength="10" required>
+      </label>
+      <div class="modal-actions">
+        <button type="button" id="admin-password-cancel-btn" class="modal-btn-secondary">Cancel</button>
+        <button type="submit" class="modal-btn-primary">Set password</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="password-overlay" class="modal-overlay" hidden>
   <div class="modal-dialog">
     <div class="modal-header">
@@ -2707,9 +3101,6 @@
     unlock:
       '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
     // A plain pencil, distinct from file-pen: renaming a space edits a label, not a document.
-    pencil:
-      '<path d="M12 20h9"/>' +
-      '<path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
     'external-link':
       '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
       '<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
@@ -2718,8 +3109,15 @@
       '<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><polyline points="3 21 3 16 8 16"/>',
     pencil:
       '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>',
+    copy:
+      '<rect x="9" y="9" width="13" height="13" rx="2"/>' +
+      '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    check: '<polyline points="20 6 9 17 4 12"/>',
     x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
     plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    users:
+      '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>' +
+      '<path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     settings:
       '<circle cx="12" cy="12" r="3"/>' +
       '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
@@ -2747,9 +3145,13 @@
   // The static markup carries data-icon instead of a literal <svg>, which
   // keeps the body readable and the set in one place. This script tag sits
   // after the whole body, so the elements are already there.
-  document.querySelectorAll('[data-icon]').forEach((el) => {
-    setIcon(el, el.dataset.icon, Number(el.dataset.iconSize) || 16);
-  });
+  function hydrateIcons(root) {
+    root.querySelectorAll('[data-icon]').forEach((el) => {
+      setIcon(el, el.dataset.icon, Number(el.dataset.iconSize) || 16);
+    });
+  }
+
+  hydrateIcons(document);
 
   const messagesEl = document.getElementById('messages');
   const emptyStateEl = document.getElementById('empty-state');
@@ -2791,7 +3193,27 @@
   const userFirstnameEl = document.getElementById('user-firstname');
   const userMenuEl = document.getElementById('user-menu');
   const userMenuSettingsBtnEl = document.getElementById('user-menu-settings-btn');
+  const userMenuUsersBtnEl = document.getElementById('user-menu-users-btn');
   const userMenuSignoutBtnEl = document.getElementById('user-menu-signout-btn');
+  const adminUsersOverlayEl = document.getElementById('admin-users-overlay');
+  const adminUsersListEl = document.getElementById('admin-users-list');
+  const adminUsersErrorEl = document.getElementById('admin-users-error');
+  const adminUsersCloseBtnEl = document.getElementById('admin-users-close-btn');
+  const adminUsersDoneBtnEl = document.getElementById('admin-users-done-btn');
+  const adminUserFormEl = document.getElementById('admin-user-form');
+  const adminUserEmailEl = document.getElementById('admin-user-email');
+  const adminUserNameEl = document.getElementById('admin-user-name');
+  const adminUserGoogleEl = document.getElementById('admin-user-google');
+  const adminUserAdminEl = document.getElementById('admin-user-admin');
+  const adminUserPasswordEl = document.getElementById('admin-user-password');
+  const adminUserAddBtnEl = document.getElementById('admin-user-add-btn');
+  const adminPasswordOverlayEl = document.getElementById('admin-password-overlay');
+  const adminPasswordFormEl = document.getElementById('admin-password-form');
+  const adminPasswordTitleEl = document.getElementById('admin-password-title');
+  const adminPasswordHintEl = document.getElementById('admin-password-hint');
+  const adminPasswordInputEl = document.getElementById('admin-password-input');
+  const adminPasswordCancelBtnEl = document.getElementById('admin-password-cancel-btn');
+  const adminPasswordCloseBtnEl = document.getElementById('admin-password-close-btn');
   const shareRowEl = document.getElementById('share-row');
   const deleteSpaceRowEl = document.getElementById('delete-space-row');
   const renameSpaceRowEl = document.getElementById('rename-space-row');
@@ -2883,6 +3305,19 @@
     lookup_place: 'Lookup place',
     get_user_location: 'Get user location',
     get_meteoswiss_weather: 'MeteoSwiss weather',
+    // documentEdit's own tools (WordDocumentEditTool.kt / WordDocumentReadTool.kt)
+    create_word_document: 'Create document',
+    save_answer_as_word_document: 'Save answer as document',
+    append_to_word_document: 'Append to document',
+    insert_paragraphs_into_word_document: 'Insert paragraphs',
+    replace_paragraph_in_word_document: 'Replace paragraph',
+    delete_paragraph_from_word_document: 'Delete paragraph',
+    replace_text_in_word_document: 'Replace text',
+    undo_word_document_edit: 'Undo edit',
+    list_word_documents: 'List documents',
+    get_word_document_outline: 'Document outline',
+    read_word_document: 'Read document',
+    find_in_word_document: 'Find in document',
   };
 
   // Step label ChatAgent.gatherInfo (ChatAgent.kt) records - the step whose
@@ -2901,6 +3336,15 @@
   // an exact "===" so a settings-popup model switch doesn't break the
   // retrieval-row placement.
   const ANSWER_STEP_PREFIX = 'Generating answer';
+
+  // ChatAgent.documentEdit's step label (ChatAgent.kt) - the step whose tool
+  // calls, and whose "nothing was changed" case, belong under it rather than
+  // under EXECUTE_STEP_NAME where every tool call used to be drawn
+  // (2026-08-28). A prefix for the same reason ANSWER_STEP_PREFIX is one:
+  // the label carries the model in use.
+  const DOCUMENT_EDIT_STEP_PREFIX = 'Editing document';
+
+  const NO_CHANGE_NOTE = 'No change made';
 
   // get_user_location takes no arguments, so its tool-input payload is
   // empty/"{}" rather than a place name worth displaying - see
@@ -2942,8 +3386,23 @@
     group.className = 'trace-tools';
     for (const call of toolCalls) {
       group.appendChild(buildToolRow(call));
+      // Only document edits carry one (ChatAgent.editOutcome); everything
+      // else keeps the plain one-line row it always had.
+      if (call.outcome) {
+        const outcome = document.createElement('div');
+        outcome.className = 'trace-tool-outcome' + (call.failed ? ' failed' : '');
+        outcome.textContent = call.outcome;
+        group.appendChild(outcome);
+      }
     }
     return group;
+  }
+
+  function buildNoChangeNote() {
+    const note = document.createElement('div');
+    note.className = 'trace-note';
+    note.textContent = NO_CHANGE_NOTE;
+    return note;
   }
 
   // ChatReply.retrieval (2026-08-22, promoted from a nested tool-style chip
@@ -3079,6 +3538,11 @@
 
     const body = document.createElement('div');
     body.className = 'trace-body';
+    // A call with no step is analyzeMessage's, either because that is where
+    // it came from or because it was recorded before ToolCallSummary.step
+    // existed (2026-08-28) - the old behaviour, kept for old sessions.
+    const unattributed = (toolCalls || []).filter((call) => !call.step);
+    const attributed = new Set();
     let toolsNested = false;
     let retrievalPlaced = false;
     for (const step of (steps || [])) {
@@ -3101,15 +3565,36 @@
       row.appendChild(time);
       body.appendChild(row);
 
-      if (hasTools && step.step === EXECUTE_STEP_NAME) {
-        body.appendChild(buildToolsGroup(toolCalls));
+      const own = (toolCalls || []).filter((call) => call.step === step.step);
+      if (own.length) {
+        body.appendChild(buildToolsGroup(own));
+        for (const call of own) attributed.add(call);
+      } else if (!unattributed.length && step.step.startsWith(DOCUMENT_EDIT_STEP_PREFIX)) {
+        // The step ran an LLM call - it only gets a row at all when it did -
+        // and called no tool. Say so, rather than leaving a bare timing.
+        //
+        // Suppressed for a trace that has any unattributed call, i.e. one
+        // recorded before ChatAgent.kt tagged them: those calls nest under
+        // "Analyzing message ..." wherever they really came from, so an
+        // edit among them would be claimed here as "no change" - a false
+        // statement about a turn that did change the document.
+        body.appendChild(buildNoChangeNote());
+      }
+
+      if (unattributed.length && step.step === EXECUTE_STEP_NAME) {
+        body.appendChild(buildToolsGroup(unattributed));
         toolsNested = true;
       }
     }
     // Fallback for a reply with tool calls but no matching "Execute tools"
     // step (e.g. no steps at all) - still show them rather than drop them.
-    if (hasTools && !toolsNested) {
-      body.appendChild(buildToolsGroup(toolCalls));
+    if (unattributed.length && !toolsNested) {
+      body.appendChild(buildToolsGroup(unattributed));
+    }
+    // Same idea for a call tagged with a step that isn't in this timeline.
+    const orphans = (toolCalls || []).filter((call) => call.step && !attributed.has(call));
+    if (orphans.length) {
+      body.appendChild(buildToolsGroup(orphans));
     }
     // Same fallback idea for a retrieval with no matching "Generating
     // answer ..." step.
@@ -3149,30 +3634,72 @@
       .replace(/"/g, '&quot;');
   }
 
+  function emphasize(s) {
+    return s
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/(^|[^\w])_([^_]+)_(?!\w)/g, '$1<em>$2</em>');
+  }
+
+  // Inline code spans and links are lifted out to placeholders before
+  // emphasis runs, then put back. Both halves fix a real defect: an
+  // asterisk or underscore inside `inline code` used to become an <em>
+  // mid-span, and the emphasis regexes ran over the anchor markup this
+  // function had already emitted - so a line like
+  // "[docs](https://x.dev) live in snake_case" matched from target="_blank"
+  // to that later underscore and shredded the link. A link's own label is
+  // emphasized separately, on the way back in, so [**bold** text](url)
+  // still works.
+  //
+  // The placeholders cannot be forged from model output: every NUL is
+  // stripped from the escaped text first, so the only \u0000 in the string
+  // are the ones put there here.
   function renderInline(text) {
-    let s = escapeHtml(text);
-    s = s.replace(/`([^`]+)`/g, (_, code) => '<code>' + code + '</code>');
-    s = s.replace(
-      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-      (_, label, url) => '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>',
-    );
-    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-    s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    s = s.replace(/(^|[^\w])_([^_]+)_(?!\w)/g, '$1<em>$2</em>');
+    const codeSpans = [];
+    const links = [];
+    let s = escapeHtml(text).replace(/\u0000/g, '');
+
+    s = s.replace(/`([^`]+)`/g, (_, code) => {
+      codeSpans.push(code);
+      return '\u0000c' + (codeSpans.length - 1) + '\u0000';
+    });
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => {
+      links.push({ label, url });
+      return '\u0000a' + (links.length - 1) + '\u0000';
+    });
+
+    s = emphasize(s);
+
+    // Links first: a label may contain a code placeholder of its own, and
+    // the pass below is what turns those back into real <code>.
+    s = s.replace(/\u0000a(\d+)\u0000/g, (_, i) => {
+      const link = links[Number(i)];
+      return '<a href="' + link.url + '" target="_blank" rel="noopener noreferrer">' + emphasize(link.label) + '</a>';
+    });
+    s = s.replace(/\u0000c(\d+)\u0000/g, (_, i) => '<code>' + codeSpans[Number(i)] + '</code>');
     return s;
   }
 
   function renderMarkdown(text) {
     const lines = text.split('\n');
     const out = [];
-    let list = null; // { type: 'ul' | 'ol', items: [] }
+    let list = null; // { type: 'ul' | 'ol', items: [], start: number }
     let i = 0;
 
     function flushList() {
       if (!list) return;
+      // Only the FIRST number is honoured, never one per item: Markdown's
+      // own convention is that "1." on every line still renders 1, 2, 3,
+      // and models write lists that way constantly - putting value="1" on
+      // each <li> would turn those into 1, 1, 1. Carrying the start does
+      // fix the case that actually reads wrong, a list the model numbered
+      // from 3 because it continues an earlier one.
+      const open = list.type === 'ol' && list.start !== 1
+        ? '<ol start="' + list.start + '">'
+        : '<' + list.type + '>';
       out.push(
-        '<' + list.type + '>' + list.items.map((item) => '<li>' + renderInline(item) + '</li>').join('') + '</' + list.type + '>',
+        open + list.items.map((item) => '<li>' + renderInline(item) + '</li>').join('') + '</' + list.type + '>',
       );
       list = null;
     }
@@ -3180,8 +3707,13 @@
     while (i < lines.length) {
       const line = lines[i];
 
-      if (/^```/.test(line.trim())) {
+      const fence = line.trim().match(/^```([A-Za-z0-9_+-]*)/);
+      if (fence) {
         flushList();
+        // The info string used to be parsed off and thrown away. It is the
+        // card's label now - and "code" when the model gave none, so the
+        // header (and with it the copy button) is always there.
+        const lang = fence[1] || 'code';
         const codeLines = [];
         i++;
         while (i < lines.length && !/^```/.test(lines[i].trim())) {
@@ -3189,7 +3721,15 @@
           i++;
         }
         i++; // skip the closing fence
-        out.push('<pre><code>' + escapeHtml(codeLines.join('\n')) + '</code></pre>');
+        out.push(
+          '<div class="code-block">' +
+            '<div class="code-block-head">' +
+              '<span class="code-lang">' + escapeHtml(lang) + '</span>' +
+              '<button type="button" class="code-copy" title="Copy" aria-label="Copy code" data-icon="copy" data-icon-size="14"></button>' +
+            '</div>' +
+            '<pre><code>' + escapeHtml(codeLines.join('\n')) + '</code></pre>' +
+          '</div>',
+        );
         continue;
       }
 
@@ -3206,20 +3746,20 @@
       if (ulItem) {
         if (!list || list.type !== 'ul') {
           flushList();
-          list = { type: 'ul', items: [] };
+          list = { type: 'ul', items: [], start: 1 };
         }
         list.items.push(ulItem[1]);
         i++;
         continue;
       }
 
-      const olItem = line.match(/^\s*\d+\.\s+(.*)$/);
+      const olItem = line.match(/^\s*(\d+)\.\s+(.*)$/);
       if (olItem) {
         if (!list || list.type !== 'ol') {
           flushList();
-          list = { type: 'ol', items: [] };
+          list = { type: 'ol', items: [], start: Number(olItem[1]) };
         }
-        list.items.push(olItem[1]);
+        list.items.push(olItem[2]);
         i++;
         continue;
       }
@@ -3261,6 +3801,9 @@
     bubble.className = 'bubble';
     if (role === 'assistant') {
       bubble.innerHTML = renderMarkdown(text);
+      // The document-wide data-icon pass runs once, at load, so markup this
+      // function inserts has to be hydrated itself (2026-08-28).
+      hydrateIcons(bubble);
     } else {
       bubble.textContent = text;
     }
@@ -3295,6 +3838,46 @@
   // appears with a spinner, then gets its time once its "*-finished" event
   // shows up, same for tool calls nested under "Execute tools". Replaces
   // the old plain three-dot typing indicator.
+  /*
+   * Copying a code block (2026-08-28). Delegated from the message list
+   * rather than bound per button: the buttons arrive inside an innerHTML
+   * string, live replies and re-opened history both go through addRow, and
+   * a re-render replaces every node - one listener here outlives all of it.
+   *
+   * The text is read back out of the rendered <pre>, so there is no copy of
+   * the source to keep in sync with what is on screen.
+   */
+  messagesEl.addEventListener('click', (event) => {
+    const button = event.target.closest('.code-copy');
+    if (!button) return;
+    const code = button.closest('.code-block')?.querySelector('pre');
+    if (!code) return;
+    // No optional-chained .then(): a missing clipboard yields undefined, and
+    // calling .then on it would throw inside the listener.
+    const written = navigator.clipboard?.writeText(code.textContent);
+    if (!written) {
+      button.title = 'Could not copy - select the text instead';
+      return;
+    }
+    written.then(
+      () => {
+        setIcon(button, 'check', 14);
+        button.classList.add('copied');
+        button.title = 'Copied';
+        setTimeout(() => {
+          setIcon(button, 'copy', 14);
+          button.classList.remove('copied');
+          button.title = 'Copy';
+        }, 1200);
+      },
+      // A denied or missing clipboard is silent otherwise, which reads as a
+      // dead button - say so in the tooltip and leave the text selectable.
+      () => {
+        button.title = 'Could not copy - select the text instead';
+      },
+    );
+  });
+
   function addLiveProgressRow() {
     document.getElementById('empty-state')?.remove();
     const row = document.createElement('div');
@@ -3311,6 +3894,7 @@
       row,
       panel,
       stepStatusEls: new Map(),
+      stepGroupEls: new Map(),
       toolsGroupEl: null,
       toolEls: new Map(),
       retrievalEl: null,
@@ -3331,17 +3915,34 @@
     live.panel.appendChild(stepRow);
     live.stepStatusEls.set(stepName, status);
 
-    // ChatAgent.kt's analyzeMessage is the one step individual tool calls
-    // belong under - reserve the nested group here so tool-started events
-    // (which can arrive interleaved with this step still "running") have
-    // somewhere to attach.
-    if (stepName === EXECUTE_STEP_NAME) {
+    // Two steps make tool calls - analyzeMessage and documentEdit - so each
+    // reserves its own nested group here, and later tool-started events
+    // attach to the one most recently opened. Before 2026-08-28 only
+    // analyzeMessage reserved a group, so an edit's calls were drawn under
+    // "Analyzing message ..." however late they arrived. The steps run in
+    // sequence, so "most recently opened" is the right owner.
+    if (stepName === EXECUTE_STEP_NAME || stepName.startsWith(DOCUMENT_EDIT_STEP_PREFIX)) {
       const group = document.createElement('div');
       group.className = 'trace-tools';
       live.panel.appendChild(group);
       live.toolsGroupEl = group;
+      live.stepGroupEls.set(stepName, group);
     }
     scrollToBottom();
+  }
+
+  // Live counterpart to buildTrace's own "No change made" line: the editing
+  // step has finished and its reserved group is still empty, so nothing was
+  // changed (2026-08-28).
+  function finishLiveStep(live, stepName, seconds) {
+    finishLiveStatus(live.stepStatusEls.get(stepName), seconds);
+    if (!stepName.startsWith(DOCUMENT_EDIT_STEP_PREFIX)) return;
+    const group = live.stepGroupEls.get(stepName);
+    if (group && !group.childElementCount) {
+      group.replaceWith(buildNoChangeNote());
+      live.stepGroupEls.delete(stepName);
+      if (live.toolsGroupEl === group) live.toolsGroupEl = null;
+    }
   }
 
   function finishLiveStatus(statusEl, seconds) {
@@ -3425,7 +4026,7 @@
         addLiveStep(live, event.step);
         break;
       case 'step-finished':
-        finishLiveStatus(live.stepStatusEls.get(event.step), event.seconds);
+        finishLiveStep(live, event.step, event.seconds);
         break;
       case 'tool-started':
         addLiveTool(live, event.index, event.tool, event.input);
@@ -3573,6 +4174,18 @@
   // of a single value.
   let documents = [];
   let activeDocumentIds = new Set();
+  /*
+   * Set while an inline rename editor is open - for a space name or a file
+   * name, never both, since one gesture opens one editor. Declared up here
+   * rather than beside the rename code that fills it because renderProjects()
+   * AND renderResources() both have to tear an open editor down before they
+   * discard the nodes under it, and renderResources is defined well above
+   * that section - a `let` is in its temporal dead zone until its own line
+   * runs, so a declaration further down would be a live hazard rather than a
+   * style question. See beginRenameSpace for WHY the teardown has to be
+   * explicit (Chrome fires blur while the node is still attached).
+   */
+  let cancelActiveRename = null;
   // Linked web pages (2026-08-23, "Web Pages" - see this section's own
   // opening HTML comment / springchat3_projects_panel.md in project
   // memory) - mirrors driveStatus.workingDocuments's shape (WebPageStatus
@@ -3771,10 +4384,48 @@
   // own action icons rather than going through this flat row at all. What's
   // left uses buildDocItem: a plain uploaded PDF, and the files inside a
   // Drive folder card.)
-  function buildDocItem(doc, badge) {
+  /*
+   * Where a document actually sits on disk, relative to the configured data
+   * directory (`springchat3.data-dir`, which this page has no way to know) -
+   * `spaces/<spaceId>/<documentId>`, with one extra `gdrive-<id>` level for a
+   * file a linked Drive folder synced down, and a bare id for an unscoped
+   * document that predates spaces.
+   *
+   * 2026-08-29, user's own request: "I would like to enable to see on the UI
+   * somehow the document number." The PATH rather than the bare number,
+   * deliberately - the id alone does not find the folder, since every
+   * document sits under its space and a synced one under a Drive folder
+   * again, and the last segment IS the number for anyone who only wanted
+   * that. Document ids became 10-digit the same day (see DocumentStore).
+   *
+   * Not rendered as a chip on the card, unlike the space row's own 6-digit
+   * `#id`: at 320px a resource name already ellipsis-truncates, and a
+   * 10-digit id is nearly twice the width of that one. The tooltip costs no
+   * layout at all.
+   */
+  function documentLocation(documentId, spaceId, driveFolderLocalId) {
+    const parts = [];
+    if (spaceId) parts.push('spaces', spaceId);
+    if (driveFolderLocalId) parts.push('gdrive-' + driveFolderLocalId);
+    if (documentId) parts.push(documentId);
+    return parts.join('/');
+  }
+
+  /*
+   * Every resource card already carried `title = <its full name>`, because
+   * the visible name truncates. This composes that same line with the
+   * location, so there is still exactly one tooltip per card and the name
+   * stays the first thing read.
+   */
+  function setResourceTitle(card, label, documentId, spaceId, driveFolderLocalId) {
+    const location = documentLocation(documentId, spaceId, driveFolderLocalId);
+    card.title = location ? label + '\n' + location : label;
+  }
+
+  function buildDocItem(doc, badge, driveFolderLocalId) {
     const item = document.createElement('div');
     item.className = 'doc-item' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
-    item.title = doc.filename;
+    setResourceTitle(item, doc.filename, doc.documentId, doc.spaceId, driveFolderLocalId);
 
     const icon = document.createElement('span');
     icon.className = 'doc-item-icon';
@@ -3901,7 +4552,7 @@
   function buildUploadedDocCard(doc) {
     const card = document.createElement('div');
     card.className = 'drive-folder-card workingdoc-card' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
-    card.title = doc.filename;
+    setResourceTitle(card, doc.filename, doc.documentId, doc.spaceId, null);
     makeDocumentDraggable(card, doc.documentId);
 
     const header = document.createElement('div');
@@ -3919,6 +4570,11 @@
     const nameEl = document.createElement('div');
     nameEl.className = 'drive-folder-name';
     nameEl.textContent = doc.filename;
+    // Marks this name as double-click renamable (2026-08-28). The delegated
+    // handler keys on the attribute rather than on a card class, so the two
+    // kinds that can be renamed opt in and the ones owned by a Drive sync
+    // simply never carry it.
+    nameEl.dataset.renameDocumentId = doc.documentId;
     nameRow.appendChild(nameEl);
     const badgeEl = document.createElement('span');
     badgeEl.className = 'drive-badge';
@@ -4097,6 +4753,11 @@
   }
 
   function renderResources() {
+    // Same reason renderProjects() does this: an open editor whose node is
+    // about to be discarded would otherwise have its blur handler commit a
+    // half-typed name. The Drive status poll re-renders in the background,
+    // so this is not a rare path.
+    if (cancelActiveRename) cancelActiveRename();
     for (const block of projectsListEl.querySelectorAll('.space-resources')) {
       const spaceId = block.dataset.spaceId;
       const list = block.querySelector('.space-resource-list');
@@ -4272,7 +4933,11 @@
     const nameEl = document.createElement('div');
     nameEl.className = 'drive-folder-name';
     nameEl.textContent = folder.folderName;
-    nameEl.title = folder.folderName;
+    // On the NAME, not on the <details> card: the card wraps every synced
+    // file, and a tooltip covering all of them would answer "where is this
+    // file?" with the folder's path everywhere the cursor is not exactly on
+    // a file. No documentId - a linked folder is not itself a document.
+    setResourceTitle(nameEl, folder.folderName, null, folder.spaceId, folder.driveFolderLocalId);
     info.appendChild(nameEl);
     const metaEl = document.createElement('div');
     metaEl.className = 'drive-folder-meta';
@@ -4392,7 +5057,7 @@
       filesEl.appendChild(hint);
     } else {
       for (const doc of folder.files) {
-        filesEl.appendChild(buildDocItem(doc, 'DRIVE'));
+        filesEl.appendChild(buildDocItem(doc, 'DRIVE', folder.driveFolderLocalId));
       }
     }
     card.appendChild(filesEl);
@@ -4433,7 +5098,7 @@
     const isWord = kind === 'word';
     const card = document.createElement('div');
     card.className = 'drive-folder-card workingdoc-card' + (activeDocumentIds.has(doc.documentId) ? ' active' : '');
-    card.title = doc.filename;
+    setResourceTitle(card, doc.filename, doc.documentId, doc.spaceId, null);
     makeDocumentDraggable(card, doc.documentId);
 
     const header = document.createElement('div');
@@ -4451,6 +5116,10 @@
     const nameEl = document.createElement('div');
     nameEl.className = 'drive-folder-name';
     nameEl.textContent = doc.filename;
+    // Uploaded .docx only: a linked Google Doc's name belongs to Drive, and
+    // the next sync would write it back - the server refuses that rename
+    // with a 409, so the affordance is not offered either.
+    if (isWord) nameEl.dataset.renameDocumentId = doc.documentId;
     nameRow.appendChild(nameEl);
     const badgeEl = document.createElement('span');
     badgeEl.className = 'drive-badge';
@@ -5052,7 +5721,7 @@
   function buildWebPageCard(page) {
     const card = document.createElement('div');
     card.className = 'drive-folder-card webpage-card' + (activeDocumentIds.has(page.documentId) ? ' active' : '');
-    card.title = page.title;
+    setResourceTitle(card, page.title, page.documentId, page.spaceId, null);
     makeDocumentDraggable(card, page.documentId);
 
     const header = document.createElement('div');
@@ -5272,6 +5941,7 @@
     signedInEmailEl.textContent = data.email || '(unknown)';
     currentUserEmail = (data.email || '').toLowerCase();
     applyGoogleCapability(data.canUseGoogleDrive !== false);
+    userMenuUsersBtnEl.hidden = !data.admin;
     if (data.mustChangePassword) openPasswordOverlay();
   }
 
@@ -5554,6 +6224,305 @@
     }
   }
 
+  /*
+   * The Users screen (2026-08-26, user's own request) - backed by
+   * /admin/users, see AdminUserController for the four refusals and why each
+   * of them is a way to lock everyone out of an app whose only unlock is a
+   * text editor on the server.
+   *
+   * Every mutation re-renders from the row the server sent back rather than
+   * patching the local copy: a change can MOVE a row, since the list puts
+   * administrators first, and a refusal has to leave the screen showing what
+   * is actually stored rather than what was clicked.
+   */
+  let adminUsers = [];
+
+  function openAdminUsers() {
+    adminUsersErrorEl.hidden = true;
+    adminUsersOverlayEl.hidden = false;
+    loadAdminUsers();
+  }
+
+  function closeAdminUsers() {
+    adminUsersOverlayEl.hidden = true;
+  }
+
+  function showAdminUsersError(message) {
+    adminUsersErrorEl.textContent = message;
+    adminUsersErrorEl.hidden = false;
+  }
+
+  async function loadAdminUsers() {
+    try {
+      const res = await fetch('/admin/users');
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      adminUsers = await res.json();
+      renderAdminUsers();
+    } catch (err) {
+      showAdminUsersError(err.message);
+    }
+  }
+
+  // What the row says under the address. "No way to sign in" is a real state
+  // - a half-written row left in users.json by hand - and saying so is the
+  // only way anyone would find out, since such an account simply never works.
+  function adminUserSubtitle(user) {
+    const ways = [];
+    if (user.google) ways.push('Google');
+    if (user.hasPassword) ways.push('Password');
+    const parts = [ways.length ? ways.join(' + ') : 'No way to sign in'];
+    if (user.mustChangePassword) parts.push('has to set a new password');
+    if (user.ownedSpaces > 0) parts.push(user.ownedSpaces === 1 ? 'owns 1 space' : 'owns ' + user.ownedSpaces + ' spaces');
+    return parts.join(' · ');
+  }
+
+  function adminUserButton(label, onClick, disabledReason) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'admin-user-toggle';
+    btn.textContent = label;
+    btn.disabled = !!disabledReason;
+    if (disabledReason) btn.title = disabledReason;
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  function adminUserChip(label, isAdmin) {
+    const chip = document.createElement('span');
+    chip.className = 'admin-user-chip' + (isAdmin ? ' is-admin' : '');
+    chip.textContent = label;
+    return chip;
+  }
+
+  function renderAdminUsers() {
+    adminUsersListEl.innerHTML = '';
+    adminUsers.forEach((user) => {
+      const row = document.createElement('div');
+      row.className = 'admin-user-row' + (user.disabled ? ' is-disabled' : '');
+
+      const identity = document.createElement('div');
+      identity.className = 'admin-user-identity';
+      const email = document.createElement('div');
+      email.className = 'admin-user-email';
+      email.textContent = user.displayName ? user.displayName + ' (' + user.email + ')' : user.email;
+      email.title = user.email;
+      identity.appendChild(email);
+      const meta = document.createElement('div');
+      meta.className = 'admin-user-meta';
+      meta.textContent = adminUserSubtitle(user);
+      identity.appendChild(meta);
+      row.appendChild(identity);
+
+      // Only the two states worth noticing - the same "show the state that
+      // surprises" rule the space rows follow, which is why there is no
+      // "User" chip on everybody else.
+      if (user.admin) row.appendChild(adminUserChip('Admin', true));
+      if (user.disabled) row.appendChild(adminUserChip('Disabled', false));
+
+      const actions = document.createElement('div');
+      actions.className = 'admin-user-actions';
+
+      // The three buttons the server would refuse on your own row are
+      // disabled with the reason on hover. That is the courtesy; the refusal
+      // in AdminUserController is the rule.
+      actions.appendChild(adminUserButton(
+        user.admin ? 'Revoke admin' : 'Make admin',
+        () => patchAdminUser(user.email, { admin: !user.admin }),
+        user.self && user.admin ? 'You cannot remove your own administrator rights' : '',
+      ));
+      actions.appendChild(adminUserButton(
+        user.disabled ? 'Enable' : 'Disable',
+        () => toggleAdminUserDisabled(user),
+        user.self ? 'You cannot disable your own account' : '',
+      ));
+      actions.appendChild(adminUserButton(
+        user.hasPassword ? 'Reset password' : 'Set password',
+        () => setAdminUserPassword(user),
+        user.self ? 'Change your own password from the app, where it asks for the current one' : '',
+      ));
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'panel-icon-btn';
+      remove.disabled = user.self;
+      remove.title = user.self
+        ? 'You cannot delete your own account'
+        : (user.ownedSpaces > 0 ? 'Owns spaces - disable this account instead' : 'Delete ' + user.email);
+      setIcon(remove, 'x', 14);
+      remove.addEventListener('click', () => deleteAdminUser(user));
+      actions.appendChild(remove);
+
+      row.appendChild(actions);
+      adminUsersListEl.appendChild(row);
+    });
+  }
+
+  // Re-sorted exactly the way the server sorts it, so a row that just became
+  // an admin moves to where the next GET would have put it rather than
+  // staying put until the screen is reopened.
+  function applyAdminUser(updated) {
+    const index = adminUsers.findIndex((u) => u.email === updated.email);
+    if (index >= 0) adminUsers[index] = updated; else adminUsers.push(updated);
+    adminUsers.sort((a, b) => (a.admin === b.admin ? a.email.localeCompare(b.email) : (a.admin ? -1 : 1)));
+    // The share picker caches /users for the session. Adding, disabling or
+    // deleting an account changes who may be shared with, and a picker
+    // offering someone the server will now reject reads as sharing being
+    // broken.
+    knownUsers = null;
+    renderAdminUsers();
+  }
+
+  async function patchAdminUser(email, patch) {
+    adminUsersErrorEl.hidden = true;
+    try {
+      const res = await fetch('/admin/users?email=' + encodeURIComponent(email), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      applyAdminUser(await res.json());
+    } catch (err) {
+      showAdminUsersError(err.message);
+    }
+  }
+
+  async function toggleAdminUserDisabled(user) {
+    if (!user.disabled) {
+      const ok = await askConfirm({
+        title: 'Disable ' + user.email + '?',
+        message: 'They stay on this list and keep everything they own, but cannot sign in until you enable them again.',
+        confirmLabel: 'Disable',
+      });
+      if (!ok) return;
+    }
+    patchAdminUser(user.email, { disabled: !user.disabled });
+  }
+
+  async function setAdminUserPassword(user) {
+    const password = await askPassword({
+      title: (user.hasPassword ? 'Reset the password for ' : 'Set a password for ') + user.email,
+      hint: 'They have to replace it the first time they sign in, so it never has to be a good long-term password - only hard to guess between now and then. At least 10 characters.',
+    });
+    if (!password) return;
+    adminUsersErrorEl.hidden = true;
+    try {
+      const res = await fetch('/admin/users/password?email=' + encodeURIComponent(user.email), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      applyAdminUser(await res.json());
+    } catch (err) {
+      showAdminUsersError(err.message);
+    }
+  }
+
+  async function deleteAdminUser(user) {
+    adminUsersErrorEl.hidden = true;
+    // Said before the confirmation rather than after it: the server refuses
+    // this anyway, and asking "are you sure" only to answer "no, actually"
+    // teaches nothing.
+    if (user.ownedSpaces > 0) {
+      showAdminUsersError(
+        user.email + ' owns ' + user.ownedSpaces + (user.ownedSpaces === 1 ? ' space' : ' spaces') +
+        '. Disable the account instead - deleting it would leave those spaces owned by an address nobody can sign in as.',
+      );
+      return;
+    }
+    const ok = await askConfirm({
+      title: 'Delete ' + user.email + '?',
+      message: 'The account is removed for good. Their chats and anything they were shared into stay where they are, but nothing here remembers who they were. Disabling keeps the row and is undoable.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch('/admin/users?email=' + encodeURIComponent(user.email), {
+        method: 'DELETE',
+        headers: csrfHeader(),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      adminUsers = adminUsers.filter((u) => u.email !== user.email);
+      knownUsers = null;
+      renderAdminUsers();
+    } catch (err) {
+      showAdminUsersError(err.message);
+    }
+  }
+
+  adminUserFormEl.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    adminUsersErrorEl.hidden = true;
+    const password = adminUserPasswordEl.value;
+    adminUserAddBtnEl.disabled = true;
+    try {
+      const res = await fetch('/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({
+          email: adminUserEmailEl.value.trim(),
+          displayName: adminUserNameEl.value.trim(),
+          google: adminUserGoogleEl.checked,
+          admin: adminUserAdminEl.checked,
+          password: password || null,
+        }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      applyAdminUser(await res.json());
+      adminUserFormEl.reset();
+    } catch (err) {
+      showAdminUsersError(err.message);
+    } finally {
+      adminUserAddBtnEl.disabled = false;
+    }
+  });
+
+  userMenuUsersBtnEl.addEventListener('click', () => {
+    closeUserMenu();
+    openAdminUsers();
+  });
+  adminUsersCloseBtnEl.addEventListener('click', closeAdminUsers);
+  adminUsersDoneBtnEl.addEventListener('click', closeAdminUsers);
+
+  /*
+   * askPassword() - askConfirm()'s shape for the one thing a confirmation
+   * cannot do: come back carrying a value. Resolves to the typed password, or
+   * null if it was cancelled, closed or escaped.
+   */
+  let adminPasswordResolve = null;
+
+  function closeAdminPassword(result) {
+    if (!adminPasswordResolve) return;
+    const resolve = adminPasswordResolve;
+    adminPasswordResolve = null;
+    adminPasswordOverlayEl.hidden = true;
+    resolve(result);
+  }
+
+  function askPassword({ title, hint }) {
+    closeAdminPassword(null); // whatever was open is cancelled before this replaces it
+    adminPasswordTitleEl.textContent = title;
+    adminPasswordHintEl.textContent = hint;
+    adminPasswordInputEl.value = '';
+    adminPasswordOverlayEl.hidden = false;
+    adminPasswordInputEl.focus();
+    return new Promise((resolve) => { adminPasswordResolve = resolve; });
+  }
+
+  adminPasswordFormEl.addEventListener('submit', (e) => {
+    e.preventDefault();
+    closeAdminPassword(adminPasswordInputEl.value);
+  });
+  adminPasswordCancelBtnEl.addEventListener('click', () => closeAdminPassword(null));
+  adminPasswordCloseBtnEl.addEventListener('click', () => closeAdminPassword(null));
+  adminPasswordOverlayEl.addEventListener('click', (e) => {
+    if (e.target === adminPasswordOverlayEl) closeAdminPassword(null);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !adminPasswordOverlayEl.hidden) closeAdminPassword(null);
+  });
+
   // Deleting a space (2026-08-24 - see springchat3_space_deletion.md in
   // project memory). Owner-only server-side; hiding the row for anyone else
   // only saves them a 403.
@@ -5645,7 +6614,8 @@
    * committing whatever was half-typed. Proven by a browser test; no amount of
    * reading would have settled which way round Chrome ordered those two.
    */
-  let cancelActiveRename = null;
+  // (cancelActiveRename itself is declared near activeDocumentIds - see the
+  // comment there for why it lives that far up.)
 
   async function commitSpaceRename(spaceId, name) {
     try {
@@ -5768,6 +6738,151 @@
       renderActiveThread();
     }
     beginRenameSpace(spaceId);
+  }, true);
+
+  /*
+   * Renaming a FILE in place (2026-08-28, user's own request: "Support
+   * editing a file name. Same look and feel as edit space name."). Same
+   * gesture, same field, same three exits as beginRenameSpace - read that
+   * function's comments first, they explain the mechanics this reuses.
+   *
+   * Two differences the card forces:
+   *  - the single click it competes with toggles the document's ATTACHMENT
+   *    to the conversation rather than selecting a space, so what gets put
+   *    back after a double click is the attached set, not activeSpaceId,
+   *  - only PDFs and uploaded .docx carry the opt-in attribute; a Drive
+   *    folder's file and a linked Google Doc are named by Drive, and the
+   *    server refuses those with a 409 (DocumentController.rename).
+   */
+  let renamingDocumentId = null;
+
+  function documentSpaceIdOf(documentId) {
+    const known = documents.concat(wordDocuments).find((d) => d.documentId === documentId);
+    return known ? (known.spaceId || null) : null;
+  }
+
+  async function commitDocumentRename(documentId, name) {
+    try {
+      const res = await fetch('/documents/' + encodeURIComponent(documentId) + '/name', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      // The server's answer, not the typed text: it re-appends the original
+      // extension, so "Offer v2" comes back as "Offer v2.docx" and the card
+      // must show what is actually stored.
+      const stored = (await res.json()).filename;
+      for (const list of [documents, wordDocuments]) {
+        const row = list.find((d) => d.documentId === documentId);
+        if (row) row.filename = stored;
+      }
+    } catch (err) {
+      addRow('error', 'Could not rename file: ' + err.message);
+    }
+    // Unconditional, exactly like the space rename: the re-render rebuilds
+    // the card from the arrays and is also how the editor is torn down.
+    renderResources();
+  }
+
+  function beginRenameDocument(documentId) {
+    if (renamingSpaceId || renamingDocumentId) return;
+    const spaceId = documentSpaceIdOf(documentId);
+    const space = projects.find((p) => p.spaceId === spaceId);
+    // Gated on the role the server reported, same as the space editor - the
+    // PATCH still checks for itself. An unfiled document (no space) has no
+    // row to check and is the caller's own, so it stays editable.
+    if (spaceId && !canWriteSpace(space)) return;
+    const nameEl = projectsListEl.querySelector('[data-rename-document-id="' + documentId + '"]');
+    if (!nameEl) return;
+    const card = nameEl.closest('[data-document-id]');
+    const original = nameEl.textContent;
+
+    renamingDocumentId = documentId;
+    // The badge and the action buttons step aside so the field can take the
+    // card's width - the same move the space row makes with its chips.
+    const hidden = [
+      ...(nameEl.parentElement?.querySelectorAll('.drive-badge') ?? []),
+      ...(card?.querySelectorAll('.drive-folder-actions') ?? []),
+    ];
+    hidden.forEach((el) => { el.style.display = 'none'; });
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'resource-name-input';
+    input.maxLength = 120;
+    input.value = original;
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let finished = false;
+    cancelActiveRename = () => {
+      finished = true;
+      renamingDocumentId = null;
+      cancelActiveRename = null;
+    };
+    const finish = (commit) => {
+      if (finished) return;
+      finished = true;
+      renamingDocumentId = null;
+      cancelActiveRename = null;
+      const name = input.value.trim();
+      if (commit && name && name !== original) commitDocumentRename(documentId, name);
+      else renderResources();
+    };
+
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener('blur', () => finish(true));
+    ['click', 'dblclick', 'mousedown'].forEach((evt) => {
+      input.addEventListener(evt, (e) => e.stopPropagation());
+    });
+    // A card is draggable (springchat3_document_move.md); dragging the text
+    // inside the field would otherwise start a document move instead of
+    // selecting characters.
+    if (card) {
+      card.draggable = false;
+      const restore = () => { card.draggable = true; };
+      input.addEventListener('blur', restore);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Escape') restore(); });
+    }
+  }
+
+  /*
+   * What was attached before the current click gesture began. The card's own
+   * click handler toggles activeDocumentIds and re-renders, so by the time a
+   * second click arrives the first has already attached (or detached) the
+   * document - this puts that back, the way the space handler restores
+   * activeSpaceId. Captured for every single click rather than inside each
+   * card builder: one listener, and the builders stay untouched.
+   */
+  let attachedBeforeClick = new Set();
+  projectsListEl.addEventListener('click', (e) => {
+    if (e.detail <= 1) attachedBeforeClick = new Set(activeDocumentIds);
+  }, true);
+
+  // Capture-phase click on e.detail === 2, NOT dblclick - see the space
+  // handler above for the full reason (the row is rebuilt between the two
+  // clicks, so dblclick fires on an ancestor and closest() finds nothing).
+  projectsListEl.addEventListener('click', (e) => {
+    if (e.detail !== 2) return;
+    const nameEl = e.target && e.target.closest && e.target.closest('[data-rename-document-id]');
+    if (!nameEl) return;
+    const documentId = nameEl.dataset.renameDocumentId;
+    e.preventDefault();
+    e.stopPropagation();
+    activeDocumentIds = new Set(attachedBeforeClick);
+    renderResources();
+    beginRenameDocument(documentId);
   }, true);
 
   renameSpaceRowEl.addEventListener('click', () => beginRenameSpace(activeSpaceId));
@@ -7370,11 +8485,83 @@
   // makes the clicked session the active one (so a message typed next
   // continues *this* session, the same way "New Chat" starts a fresh one -
   // see activeSessionId's own doc comment) before rendering its transcript.
+  /*
+   * Deletes one whole session - every turn in it, not just the row
+   * (2026-08-28, user's own request "Enable to remove chat history").
+   *
+   * Refuses only while *this* session is the one being written to: the turn
+   * in flight is recorded server-side when the stream finishes (see the
+   * submit handler's own comment), so deleting it now would take the file
+   * away and let that write put it straight back. Any other session is safe
+   * to delete mid-answer. sendEl.disabled is this page's only "a turn is in
+   * flight" state; there is no second flag to keep in sync with it.
+   *
+   * An ownerless session is one captured before chats belonged to a person,
+   * and everyone here sees it - so it gets a different, honest sentence
+   * rather than the private-sounding default, the same way deleteDocument
+   * tells the truth about a Drive-synced file.
+   *
+   * 404 is treated as success: the session is gone either way, and the local
+   * prune below is what the user is actually asking for.
+   */
+  async function deleteChatSession(session) {
+    if (sendEl.disabled && session.sessionId === activeSessionId) {
+      addRow('error', 'This chat is still being answered - wait for the reply, then delete it.');
+      return;
+    }
+    const confirmed = await askConfirm({
+      title: 'Delete this chat?',
+      message: session.sessionOwned
+        ? '"' + session.sessionName + '" and every question and answer in it will be removed from Chat History. ' +
+          'This cannot be undone.'
+        : '"' + session.sessionName + '" was captured before chats belonged to one person, so everyone here can see ' +
+          'it - deleting it removes it for everyone. This cannot be undone.',
+    });
+    if (!confirmed) return;
+    try {
+      const res = await fetch('/chat-history/' + encodeURIComponent(session.sessionId), {
+        method: 'DELETE',
+        headers: csrfHeader(),
+      });
+      if (!res.ok && res.status !== 404) throw new Error(await readErrorMessage(res));
+    } catch (err) {
+      addRow('error', 'Could not delete this chat: ' + err.message);
+      return;
+    }
+    chatHistory = chatHistory.filter((entry) => entry.sessionId !== session.sessionId);
+    renderChatHistory();
+    // Deleting the session you are *in* has to mint a fresh id, exactly like
+    // "New Chat": recordTurn creates a session file when it writes, so the
+    // next message would otherwise re-create this one under the same id and
+    // the same derived name, and the row would come back.
+    if (session.sessionId === activeSessionId) {
+      activeSessionId = crypto.randomUUID();
+      showEmptyState();
+    }
+  }
+
   function buildChatHistoryItem(session) {
     const item = document.createElement('div');
     item.className = 'chat-history-item';
-    item.textContent = session.sessionName;
     item.title = new Date(session.lastTimestamp).toLocaleString() + '\n\n' + session.sessionName;
+
+    const label = document.createElement('span');
+    label.className = 'chat-history-item-label';
+    label.textContent = session.sessionName;
+    item.appendChild(label);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'chat-history-item-delete';
+    removeBtn.title = 'Delete this chat';
+    removeBtn.setAttribute('aria-label', 'Delete the chat "' + session.sessionName + '"');
+    setIcon(removeBtn, 'x', 13);
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also open the session we are about to delete
+      deleteChatSession(session);
+    });
+    item.appendChild(removeBtn);
+
     item.addEventListener('click', () => {
       const sessionSpaceId = session.spaceId || null;
       if (sessionSpaceId !== activeSpaceId) selectProject(sessionSpaceId);
@@ -7414,6 +8601,10 @@
             sessionId: entry.sessionId,
             spaceId: entry.spaceId,
             sessionName: entry.sessionName,
+            // Only used to word the delete confirmation (see
+            // deleteChatSession) - false means the session predates chats
+            // having an owner, so it is everyone's.
+            sessionOwned: entry.sessionOwned,
             lastTimestamp: entry.timestamp,
           });
         }
@@ -7509,6 +8700,18 @@
   // Falls back to the empty-state placeholder if the session somehow has no
   // entries (defensive only - a session only ever appears in the Chat History list,
   // and so is only ever clickable, once it has at least one).
+  //
+  // Each assistant entry is re-rendered WITH its stored trace (2026-08-28,
+  // user's own request "The data about the processing of a user message are
+  // not stored in the Chat History. When coming back to a chat I do not have
+  // the information anymore about the processing.") - the same three
+  // arguments applyProgressEvent's 'done' branch passes straight off the
+  // reply, so a re-opened turn shows the identical collapsed Details
+  // disclosure it showed when the answer first landed. A turn recorded
+  // before traces were captured, and every user entry, has no trace at all
+  // and renders exactly as it did before: buildTrace returns null for
+  // undefined steps/tools/retrieval, so there is nothing to special-case
+  // here.
   function renderSessionThread(sessionId) {
     const entries = chatHistory.filter((entry) => entry.sessionId === sessionId);
     if (entries.length === 0) {
@@ -7517,7 +8720,7 @@
     }
     messagesEl.innerHTML = '';
     for (const entry of entries) {
-      addRow(entry.role, entry.text);
+      addRow(entry.role, entry.text, entry.trace?.toolCalls, entry.trace?.steps, entry.trace?.retrieval);
     }
   }
 
@@ -7718,6 +8921,10 @@
       turnId: pendingEntryId,
       sessionId: activeSessionId,
       sessionName: pendingSessionName,
+      // A turn sent now is always recorded with the sender as its owner, so
+      // deleting a brand new session before the re-fetch below still asks
+      // the right question.
+      sessionOwned: true,
       spaceId: activeSpaceId,
       role: 'user',
       text: message,

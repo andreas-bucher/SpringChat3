@@ -14,6 +14,7 @@ import ch.arcticsoft.springchat3.tools.ChatToolRegistry
 import ch.arcticsoft.springchat3.tools.CurrentLocationTool
 import ch.arcticsoft.springchat3.tools.GatheringTool
 import ch.arcticsoft.springchat3.tools.GeoTool
+import ch.arcticsoft.springchat3.tools.SaveAnswerIntent
 import ch.arcticsoft.springchat3.tools.WordDocumentEditTool
 import ch.arcticsoft.springchat3.tools.WordDocumentReadTool
 import ch.arcticsoft.springchat3.web.ChatController
@@ -25,7 +26,9 @@ import com.embabel.agent.api.annotation.AchievesGoal
 import com.embabel.agent.api.annotation.Action
 import com.embabel.agent.api.annotation.Agent
 import com.embabel.agent.api.common.OperationContext
+import com.embabel.common.ai.model.LlmOptions
 import com.fasterxml.jackson.databind.ObjectMapper
+import java.time.Duration
 
 @Agent(description = "Answers a chat message: call whatever tools are needed, then answer in one LLM call from the raw results")
 class ChatAgent(
@@ -42,6 +45,23 @@ class ChatAgent(
     @Value("\${embabel.models.llms.generation}") private val generationDefaultModel: String,
     @Value("\${embabel.models.llms.document-search-strategy}") private val documentSearchStrategyDefaultModel: String,
     @Value("\${embabel.models.llms.document-edit}") private val documentEditDefaultModel: String,
+    /**
+     * Per-role LLM timeouts, in seconds (2026-08-28, from a real run: "make
+     * each of the stories longer, around 300 words each" against a local 8B
+     * model). Embabel's own default is 60s, which is fine for a classifier
+     * and hopeless for a step whose whole job is to WRITE several hundred
+     * words - every attempt was cancelled mid-generation and retried, so the
+     * document was never edited at all and Ollama spent ten minutes
+     * producing text nobody would ever see.
+     *
+     * Only the two generating roles get one. The strategy classifier and the
+     * tool-selection model answer in a sentence; if either ever takes a
+     * minute, something is wrong and the timeout should fire.
+     */
+    @Value("\${springchat3.llm-timeouts.document-edit-seconds:900}")
+    private val documentEditTimeoutSeconds: Long,
+    @Value("\${springchat3.llm-timeouts.generation-seconds:300}")
+    private val generationTimeoutSeconds: Long,
 ) {
     val objectMapper = ObjectMapper()
     private val log = LoggerFactory.getLogger(ChatAgent::class.java)
@@ -53,6 +73,65 @@ class ChatAgent(
      * doesn't map it onto the structured tool-call field.
      */
     private val TOOL_CALL_LEAK_MARKERS = listOf("[TOOL_CALLS]", "<tool_call>", "<|tool_call|>")
+
+    /**
+     * Verbs that could mean "change or create a document", for
+     * [looksLikeDocumentChange]. Matched as substrings, so German stems are
+     * given without their endings ("ergänz" covers ergänze/ergänzen/ergänzt)
+     * and the English ones cover their own -e/-ed/-ing forms.
+     */
+    /**
+     * [analyzeMessage]'s step label, named once because it is now also the
+     * [ToolCallSummary.step] its tool calls carry (2026-08-28) - the two
+     * have to stay identical for the UI to nest them under that row.
+     */
+    private val ANALYZE_STEP_NAME = "Analyzing message ..."
+
+    /**
+     * One fenced block spanning an entire reply: group 1 is the info string
+     * ("markdown", "kotlin", ""), group 2 the body. Used by
+     * [cleanAnswerText] - see its doc comment for why only some info
+     * strings are unwrapped.
+     */
+    private val WHOLE_REPLY_FENCE = Regex("^```([A-Za-z0-9_+-]*)[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n?```$")
+
+    /** Info strings whose fence [cleanAnswerText] removes rather than keeps. */
+    private val MARKDOWN_FENCE_INFO = setOf("markdown", "md")
+
+    /** Cap on [editOutcome]'s trace line - long enough for any edit tool's own sentence. */
+    private val EDIT_OUTCOME_MAX_CHARS = 240
+
+    private val WHITESPACE = Regex("\\s+")
+
+    private val DOCUMENT_CHANGE_KEYWORDS = listOf(
+        // create
+        "create", "write", "draft", "new ", "generate", "erstell", "schreib", "verfass", "entwirf",
+        // change
+        "change", "edit", "update", "revise", "rewrite", "reword", "rephrase", "correct", "fix",
+        "replace", "insert", "append", "add ", "remove", "delete", "rename", "translate", "format",
+        "shorten", "expand", "polish", "save", "keep a copy",
+        // Comparatives (2026-08-29). "shorten" was here but not "shorter",
+        // and nothing covered "longer" at all - so "make the stories longer",
+        // the exact phrasing of a real failed request, only ever reached this
+        // step because that message ALSO happened to say "edit". A question
+        // like "how much longer is chapter 2?" now costs one LLM call that
+        // does nothing, which is the trade this whole list already makes.
+        "longer", "shorter", "bigger", "smaller", "laenger", "läng", "groesser", "größer",
+        // Formatting (2026-08-29, with the write half of the Word formatting
+        // tools). "format"/"formatier" were already here, but they only cover
+        // the word itself: "make the font bigger", "use Heading 1 for the
+        // titles" and "Schriftart aendern" all named no verb this list knew,
+        // so documentEdit short-circuited and no formatting tool could ever
+        // be reached - silently, which is the worst shape for a miss.
+        "font", "bold", "italic", "heading", "style", "indent", "spacing",
+        "schrift", "fett", "kursiv", "ueberschrift", "überschrift", "formatvorlage", "einzug",
+        // No umlaut-less fallbacks for "änder" or "kürz": "ander" matches
+        // "andere" and "kurz" matches "kurz zusammenfassen", both of which
+        // are ordinary question words here.
+        "änder", "bearbeit", "überarbeit", "aktualisier", "ersetz", "einfüg", "füg", "ergänz",
+        "lösch", "entfern", "umbenenn", "korrigier", "streich", "kürz", "übersetz", "formatier",
+        "speicher",
+    )
 
     /**
      * Resolves the LLM for tool selection - [ModelRoleKeys.TOOL_SELECTION]'s
@@ -86,9 +165,34 @@ class ChatAgent(
      * pulled Ollama model as its own selectable LLM by tag.
      */
     private fun llmForRole(request: ChatRequest, context: OperationContext, role: String) =
+        context.ai().withLlm(withTimeout(llmOptionsForRole(request, role), role))
+
+    /**
+     * The same resolution [llmForRole] always did, expressed as [LlmOptions]
+     * rather than as the two `Ai` shortcuts (2026-08-28), because a timeout
+     * can only be attached to the options: `withLlm(name)` and
+     * `withLlmByRole(role)` build exactly these two values internally.
+     */
+    private fun llmOptionsForRole(request: ChatRequest, role: String): LlmOptions =
         request.modelOverrides[role]
-            ?.let { context.ai().withLlm(it) }
-            ?: context.ai().withLlmByRole(role)
+            ?.let { LlmOptions.withModel(it) }
+            ?: LlmOptions.withLlmForRole(role)
+
+    /**
+     * Attaches this role's timeout, when it has one - see the constructor
+     * properties for why only the generating roles do.
+     *
+     * A timeout here is not a nicety: Embabel cancels the call and then
+     * RETRIES it, and a retry re-runs the whole tool loop. For [documentEdit]
+     * that means the model can re-issue an edit it already applied, which is
+     * why [ch.arcticsoft.springchat3.tools.WordDocumentEditTool] refuses a
+     * repeated identical write - the two guards belong together.
+     */
+    private fun withTimeout(options: LlmOptions, role: String): LlmOptions = when (role) {
+        ModelRoleKeys.DOCUMENT_EDIT -> options.withTimeout(Duration.ofSeconds(documentEditTimeoutSeconds))
+        ModelRoleKeys.GENERATION -> options.withTimeout(Duration.ofSeconds(generationTimeoutSeconds))
+        else -> options
+    }
 
     /**
      * The exact model tag actually backing [role]'s calls right now - the
@@ -143,7 +247,7 @@ class ChatAgent(
         }
 
         log.debug("analyze message: {}", request.message)
-        progressBus.emit(request.correlationId, ChatProgressEvent.StepStarted("Analyzing message ..."))
+        progressBus.emit(request.correlationId, ChatProgressEvent.StepStarted(ANALYZE_STEP_NAME))
         val start = System.currentTimeMillis()
 
         val currentLocationTool = CurrentLocationTool(geoTool, request.latitude, request.longitude)
@@ -293,9 +397,9 @@ class ChatAgent(
         }
 
         val seconds = (System.currentTimeMillis() - start) / 1000.0
-        progressBus.emit(request.correlationId, ChatProgressEvent.StepFinished("Analyzing message ...", seconds))
+        progressBus.emit(request.correlationId, ChatProgressEvent.StepFinished(ANALYZE_STEP_NAME, seconds))
 
-        return ToolResults(executions, timings = listOf(StepTiming("Analyzing message ...", seconds)))
+        return ToolResults(executions, timings = listOf(StepTiming(ANALYZE_STEP_NAME, seconds)))
     }
 
     /**
@@ -306,6 +410,47 @@ class ChatAgent(
      * guarantee.
      */
     private fun isToolError(output: String): Boolean = output.trimStart().startsWith("{\"error\"")
+
+    private fun toolCallSummary(execution: ToolExecution, step: String? = null, outcome: String? = null) =
+        ToolCallSummary(
+            tool = execution.tool,
+            input = execution.input,
+            failed = isToolError(execution.rawOutput),
+            seconds = execution.durationMs / 1000.0,
+            step = step,
+            outcome = outcome,
+        )
+
+    /**
+     * One line of what a [documentEdit] tool call actually did, for the
+     * trace row under "Editing document ..." (2026-08-28).
+     *
+     * The tools already answer in a sentence meant to be read ("Appended 2
+     * paragraphs to \"Offer.docx\". It now has 31 paragraphs ...") or as
+     * `{"error": ...}`, so this only unwraps the error envelope, flattens
+     * whitespace and caps the length - a read tool called in the same step
+     * can return a whole document, and the trace is not the place for it.
+     * The full text is still in the reply itself, which answer() writes from
+     * these same results.
+     */
+    private fun editOutcome(rawOutput: String): String {
+        val trimmed = rawOutput.trim()
+        val unwrapped = if (trimmed.startsWith("{")) {
+            try {
+                objectMapper.readTree(trimmed).get("error")?.asText() ?: trimmed
+            } catch (e: Exception) {
+                trimmed
+            }
+        } else {
+            trimmed
+        }
+        val oneLine = unwrapped.replace(WHITESPACE, " ").trim()
+        return if (oneLine.length <= EDIT_OUTCOME_MAX_CHARS) {
+            oneLine
+        } else {
+            oneLine.take(EDIT_OUTCOME_MAX_CHARS).trimEnd() + "..."
+        }
+    }
 
     /**
      * Renders a document's extracted outline as an indented plain-text list
@@ -513,13 +658,20 @@ class ChatAgent(
      * produce one.
      *
      * Short-circuits to no LLM call at all - the common case, most turns -
-     * when editing is switched off, when no project is active, or when the
+     * when editing is switched off, when no project is active, when the
      * active project has no Word documents to edit and the message is
-     * clearly not asking for one to be created. The last of those is a
-     * cheap keyword pre-filter rather than a classifier call: getting it
+     * clearly not asking for one to be created, or when the message asks
+     * for no change at all ([looksLikeDocumentChange]). The last two are
+     * cheap keyword pre-filters rather than classifier calls: getting one
      * wrong costs one skipped feature invocation, and the alternative (an
      * LLM call on every single turn just to rule editing out) costs more
      * than the feature is worth.
+     *
+     * The verb pre-filter earns more than the call it saves (2026-08-28):
+     * without it every turn with a Word document selected - which is every
+     * document Q&A turn, this app's main use - paid a full document-editing
+     * LLM call with the write tools armed, only to decide "no". That call
+     * was also the one window in which an unasked-for edit could happen.
      */
     @Action
     fun documentEdit(request: ChatRequest, context: OperationContext): DocumentEdits {
@@ -581,7 +733,7 @@ class ChatAgent(
             return DocumentEdits()
         }
         if (request.spaceId == null) {
-            log.debug("documentEdit skipped: no active project, so there is nothing this step could reach")
+            log.debug("documentEdit skipped: no active space, so there is nothing this step could reach")
             return DocumentEdits()
         }
         // Only the documents the user has attached to this turn are in scope
@@ -595,7 +747,7 @@ class ChatAgent(
         val documents = wordDocumentWorkspace.list(request.spaceId, selectedIds)
         if (documents.isEmpty() && !looksLikeDocumentCreation(request.message)) {
             log.debug(
-                "documentEdit skipped: none of the {} Word document(s) in project {} are selected, and \"{}\" " +
+                "documentEdit skipped: none of the {} Word document(s) in space {} are selected, and \"{}\" " +
                     "doesn't look like a request to create one",
                 wordDocumentWorkspace.list(request.spaceId).size,
                 request.spaceId,
@@ -603,8 +755,35 @@ class ChatAgent(
             )
             return DocumentEdits()
         }
+        // Nothing in the message asks for anything to change, so there is
+        // no decision left for the model to make (2026-08-28). Deliberately
+        // asymmetric, the same trade looksLikeDocumentCreation already
+        // makes: a false negative costs a skipped feature invocation and
+        // the user rephrases, a false positive costs one LLM call that then
+        // does nothing.
+        // The verb pre-filter is skipped entirely when the previous turn left
+        // an editing question open (2026-08-29). A reply to a question this
+        // app asked - "yes", "the first one", "500 each" - contains no change
+        // verb by nature, so the filter that exists to keep this step off
+        // ordinary Q&A turns was also the thing swallowing every answer to
+        // its own questions. See [ChatRequest.pendingEdit]; it comes from the
+        // immediately previous assistant entry of this same session and
+        // space, so it can never be stale by more than one turn.
+        if (!looksLikeDocumentChange(request.message) && request.pendingEdit == null) {
+            log.debug(
+                "documentEdit skipped: \"{}\" asks for no change to a document",
+                request.message,
+            )
+            return DocumentEdits()
+        }
+        if (request.pendingEdit != null) {
+            log.debug(
+                "documentEdit running on a follow-up - the previous turn asked: {}",
+                request.pendingEdit.question,
+            )
+        }
         log.debug(
-            "documentEdit running against {} selected Word document(s) in project {}",
+            "documentEdit running against {} selected Word document(s) in space {}",
             documents.size,
             request.spaceId,
         )
@@ -615,18 +794,113 @@ class ChatAgent(
 
         // Every document listed here is one the user selected - the list is
         // already filtered above - so there is no "<- selected" annotation to
-        // make any more. What the prompt still has to do is stop the model
-        // guessing between SEVERAL selected documents; WordDocumentEditTool
-        // enforces that in code too (see its targetedByUser), because this
-        // paragraph is advice and that is a rule.
-        val documentNames = documents.joinToString("\n") { doc -> "- \"${doc.filename}\"" }
-        val prompt = """
-            The user's message was: "${request.message}"
-
+        // make any more.
+        //
+        // The prompt deliberately says NOTHING about which of several
+        // selected documents to pick (2026-08-28). It used to: it told the
+        // model to change nothing and name the candidates so the user could
+        // choose. But this step's note text is logged and dropped - only
+        // ToolExecutions cross into answer() - so that question reached
+        // nobody, and the model holding back read to the user as though no
+        // change had been asked for. Ambiguity is left entirely to
+        // WordDocumentEditTool.targetedByUser, which refuses in code and
+        // returns an error naming every candidate: the only version of that
+        // question the user can actually see.
+        // Scope paragraph, split in two on 2026-08-28 after a real refusal:
+        // asked to "save the summary in a new document" with nothing
+        // selected, the model answered "I cannot create a document" and
+        // called no tool. The old single wording listed the selected
+        // documents as "the only ones you may read or change" and rendered
+        // "(none - the user has selected no document)" when there were
+        // none - which reads as a blanket "you may touch nothing", one line
+        // above being asked to decide whether to CREATE. Creating needs no
+        // selection, and now the prompt says so in both branches.
+        val scope = if (documents.isEmpty()) {
+            """
+            The user has selected no document in the side panel, so there is
+            nothing here for you to read or change. Creating a NEW document
+            needs no selection - the create tool is available to you, so if
+            that is what was asked for, do it.
+            """.trimIndent()
+        } else {
+            """
             The Word documents the user has selected in the side panel are
             the only ones you may read or change:
-            ${documentNames.ifBlank { "(none - the user has selected no document)" }}
+            ${documents.joinToString("\n            ") { doc -> "- \"${doc.filename}\"" }}
 
+            That list limits reading and changing only. You may also create a
+            NEW document if that is what was asked for - creating needs no
+            selection.
+            """.trimIndent()
+        }
+        // Assembled as separate paragraphs the way answer() builds its own,
+        // rather than one raw string with $scope interpolated into it. Same
+        // reason the filename list above is joined with its own indent:
+        // trimIndent() trims to the SHALLOWEST line, so one interpolated
+        // line sitting at column 0 disables it for the whole block and the
+        // rest keeps its source indentation. (The old single-string prompt
+        // had exactly that bug whenever two or more documents were listed.)
+        // Mentioned only when there IS a previous reply AND this message
+        // actually asks for it to be saved (2026-08-29). The first half is
+        // the original 2026-08-28 rule: naming a tool that can only fail
+        // invites the call and wastes the turn.
+        //
+        // The second half is what was missing, and it cost a real edit. A
+        // previous reply exists on every turn after the first, so the hint
+        // was on offer permanently - including for "edit greeks.docx. make
+        // the stories longer", where the model took the tool that needs only
+        // a filename over the edit path that needs a read and paragraph
+        // numbers, and saved the prior turn's apology as "Summary.docx"
+        // while the document it was asked to change went untouched. See
+        // SaveAnswerIntent for why that filter is strict where
+        // looksLikeDocumentChange is generous.
+        //
+        // The prompt is still only the soft layer: the same check runs
+        // inside WordDocumentEditTool, which is what actually refuses, with
+        // an error the user gets told about.
+        val saveAnswerHint = if (
+            !request.previousAnswer.isNullOrBlank() && SaveAnswerIntent.isAskedFor(request.message)
+        ) {
+            """
+            Your previous reply in this chat can be saved as a new document
+            exactly as written, with save_answer_as_word_document - it takes
+            only a filename. Use it when the user asks to save, keep or write
+            down "the answer", "the summary" or "what you just said". Do not
+            retype that text into create_word_document: you would be saving
+            your own paraphrase of it instead of the reply they read.
+            """.trimIndent()
+        } else {
+            null
+        }
+        // Assembled as its own paragraphs rather than interpolated into one
+        // trimIndent block: the question and the earlier message are both
+        // values that can span lines, and trimIndent runs AFTER interpolation
+        // - one line landing at column 0 disables the trim for everything.
+        val pendingEditContext = request.pendingEdit?.let { pending ->
+            listOf(
+                "This is a FOLLOW-UP. On the previous turn you changed nothing and said:",
+                pending.question,
+                "The request you were answering then was:",
+                pending.askedAbout,
+                """
+                The user's message above is their reply to that. Read it as the
+                answer to your own question: "yes" means go ahead with exactly
+                what you proposed, and a short phrase like "the first one" or
+                "500 each" supplies the detail you asked for. You have already
+                asked once - do not ask the same thing again unless their reply
+                genuinely still leaves you unable to act. Make the change now.
+                """.trimIndent(),
+            ).joinToString("\n\n")
+        }
+
+        val prompt = listOfNotNull(
+            pendingEditContext,
+            // A plain string, not a raw one: a raw string cannot end with a
+            // quote character without the ${'"'} dance.
+            "The user's message was: \"${request.message}\"",
+            scope,
+            saveAnswerHint,
+            """
             Decide whether this message is asking you to CREATE or CHANGE a
             document, and act accordingly:
 
@@ -640,16 +914,56 @@ class ChatAgent(
               Change nothing beyond what was asked - do not tidy, reformat
               or improve anything on your own initiative.
 
-            Be certain WHICH document you are changing. Use the one the
-            user named. If they named none and exactly one is listed above,
-            use that one. If several are listed and they named none, do not
-            pick one - change nothing and say which documents they could
-            have meant, so they can say which. Editing the wrong document is
-            worse than asking.
+            When a change covers several paragraphs, make it ONE TOOL CALL
+            PER PARAGRAPH rather than one call carrying the whole rewritten
+            document. Each call then finishes quickly and its result is
+            already saved, so a slow or interrupted turn leaves the work so
+            far in place instead of losing all of it. Read the document
+            again between calls if you need the numbers.
 
+            Never repeat a tool call you have already made. If a call
+            reported that it changed something, that change is saved - call
+            it again and the same edit is applied twice.
+            """.trimIndent(),
+            """
+            What you can change about formatting: which STYLE a paragraph
+            uses; a style's or the document's font, size, bold, italic and
+            colour; the same directly on a range of paragraphs; the space
+            above, below and between lines; alignment; and indentation.
+
+            What you CANNOT change, at all: tables, page size, margins,
+            orientation, headers and footers, borders, shading, highlighting,
+            columns, images and page breaks. If the user asks for one of
+            those, say plainly that it is not something you can do - do not
+            substitute the nearest thing you CAN change and describe it as if
+            it were what they asked for. Changing the font size when someone
+            asked about line spacing is worse than saying no.
+            """.trimIndent(),
+            """
+            You are not talking to the user here, and nothing you write in
+            this reply reaches a document. Only a tool call changes anything.
+
+            So: describing a tool is not calling one. Never write "I would
+            use", "you could use", "first you would call", or a list of
+            steps someone should follow - the person reading this cannot
+            call these tools, and a plan is the same as having done nothing.
+            If a change is wanted, make the call now.
+
+            You DO have this document. The tools act on the real file, so
+            never say you cannot see it, do not have it, or can only explain
+            how it would be done.
+
+            Never assume what the document contains. If you need to know its
+            headings, its styles, its paragraph numbers or its formatting,
+            CALL the read tool that answers that and use what it returns -
+            guessing from the filename, from the conversation, or from an
+            excerpt someone quoted is how the wrong paragraph gets changed.
+            """.trimIndent(),
+            """
             Then reply with a one-sentence note stating what you changed, or
             that no change was needed.
-        """.trimIndent()
+            """.trimIndent(),
+        ).joinToString("\n\n")
 
         // Read tools alongside the editing ones: whoever edits has to be able
         // to check paragraph numbers in the same breath, since they are
@@ -662,11 +976,12 @@ class ChatAgent(
                 request.message,
                 selectedIds,
                 request.editableDocumentIds,
+                request.previousAnswer,
             ) +
             // Scoped to the same selection as the editing tool: whoever is
             // about to change a document should not be able to read one it
             // isn't allowed to change. analyzeMessage's own read tool stays
-            // project-wide - answering a question is a different job.
+            // space-wide - answering a question is a different job.
             WordDocumentReadTool(wordDocumentWorkspace, request.spaceId, selectedIds)
 
         // generateText, NOT createObject (2026-08-23, after a real failure -
@@ -686,7 +1001,23 @@ class ChatAgent(
 
         val seconds = (System.currentTimeMillis() - start) / 1000.0
         progressBus.emit(request.correlationId, ChatProgressEvent.StepFinished(stepName, seconds))
-        return DocumentEdits(executions + leakedToolCallFailure(request, note, executions), seconds)
+        // The note crosses into [answer] since 2026-08-29 (see [DocumentEdits.note]
+        // for what it is and is not). Cleaned on the way through for the same
+        // reasons a reply is: this model can be a reasoning one, and a raw
+        // scratchpad in the answer prompt is noise at best.
+        //
+        // Suppressed entirely when the leak detector fired. In that case the
+        // note IS the failure - literal "[TOOL_CALLS]..." text - and
+        // [leakedToolCallFailure] has already turned it into a proper error
+        // result that says what went wrong in words the user can act on.
+        // Passing the raw marker text along beside it would add nothing and
+        // invite the answer model to try to make sense of it.
+        val leaked = leakedToolCallFailure(request, note, executions)
+        return DocumentEdits(
+            executions = executions + leaked,
+            seconds = seconds,
+            note = if (leaked.isEmpty()) cleanAnswerText(note).takeIf { it.isNotBlank() } else null,
+        )
     }
 
     /**
@@ -724,6 +1055,21 @@ class ChatAgent(
      *    this shape before, optionally inside a code fence. Unwrapped only
      *    when it is *exactly* one object with one textual `text` field, so a
      *    reply that legitimately shows the user some JSON is left alone.
+     *  - **A ```markdown fence around the WHOLE reply** (2026-08-28, user's
+     *    own report: replies "shown as quoted text"). Instruct models wrap
+     *    their output in one constantly, and index.html then renders the
+     *    entire answer as a grey monospace block with its own `#` and `**`
+     *    showing - nothing is formatted, because from the renderer's point
+     *    of view the reply *is* one code block. The fence is a habit, not
+     *    content, so it is dropped.
+     *
+     * That last unwrap is deliberately narrow, and the narrowness is the
+     * whole safety argument:
+     *  - only `markdown`/`md` info strings - a reply that is entirely one
+     *    ```python block is code the user asked for and stays a code block,
+     *  - only when the fence spans the whole reply, and only when nothing
+     *    inside it looks like another fence, so a message that legitimately
+     *    *shows* a fenced example keeps it.
      *
      * Deliberately not a general-purpose cleaner: anything broader would start
      * editing real answers.
@@ -735,11 +1081,15 @@ class ChatAgent(
         val text = raw ?: ""
         val withoutThinking = if (text.contains("</think>")) text.substringAfterLast("</think>") else text
         val trimmed = withoutThinking.trim()
-        val fenced = Regex("^```[a-zA-Z]*\\s*\\n(.*)\\n```$", RegexOption.DOT_MATCHES_ALL)
-            .find(trimmed)?.groupValues?.get(1)?.trim()
+        val fence = WHOLE_REPLY_FENCE.find(trimmed)
+        val fenceInfo = fence?.groupValues?.get(1)?.trim()?.lowercase().orEmpty()
+        // A body containing another fence marker means the outer match ran
+        // across two separate blocks - not one fence around everything.
+        val fenced = fence?.groupValues?.get(2)?.trim()?.takeUnless { it.contains("\n```") }
+        val body = if (fenced != null && fenceInfo in MARKDOWN_FENCE_INFO) fenced else trimmed
         val candidate = fenced ?: trimmed
         val unwrapped = if (!candidate.startsWith("{")) {
-            trimmed
+            body
         } else {
             try {
                 val node = objectMapper.readTree(candidate)
@@ -747,10 +1097,10 @@ class ChatAgent(
                 if (node.isObject && node.size() == 1 && field != null && field.isTextual) {
                     field.asText().trim()
                 } else {
-                    trimmed
+                    body
                 }
             } catch (e: Exception) {
-                trimmed
+                body
             }
         }
         if (unwrapped.isBlank()) {
@@ -785,8 +1135,24 @@ class ChatAgent(
     }
 
     /**
+     * Cheap pre-filter for [documentEdit]'s verb short-circuit: does this
+     * message ask for anything to be changed or created at all? Same kind
+     * of keyword check as [looksLikeDocumentCreation], and generous on
+     * purpose - a miss silently costs the user the feature for that turn,
+     * a spurious match costs one LLM call that then does nothing.
+     *
+     * German as well as English: the app is used in both, and a filter that
+     * only knew English would switch document editing off for half its
+     * users without a word in the log.
+     */
+    private fun looksLikeDocumentChange(message: String): Boolean {
+        val lower = message.lowercase()
+        return DOCUMENT_CHANGE_KEYWORDS.any { lower.contains(it) }
+    }
+
+    /**
      * Cheap pre-filter for [documentEdit]'s short-circuit: could this
-     * message plausibly be asking for a NEW document, in a project that has
+     * message plausibly be asking for a NEW document, in a space that has
      * none to edit yet? Deliberately a keyword check and not a model call -
      * see that action's own doc comment. A false negative just means the
      * user has to phrase a creation request more plainly; a false positive
@@ -795,7 +1161,10 @@ class ChatAgent(
     private fun looksLikeDocumentCreation(message: String): Boolean {
         val lower = message.lowercase()
         val mentionsDocument = listOf("document", "docx", "word", "dokument").any { lower.contains(it) }
-        val mentionsCreation = listOf("create", "write", "draft", "new ", "generate", "erstell", "schreib").any { lower.contains(it) }
+        val mentionsCreation = listOf(
+            "create", "write", "draft", "new ", "generate", "save",
+            "erstell", "schreib", "speicher",
+        ).any { lower.contains(it) }
         return mentionsDocument && mentionsCreation
     }
 
@@ -827,7 +1196,7 @@ class ChatAgent(
         val attachedDocs = request.documentIds.mapNotNull { id -> documentStore.get(id)?.let { id to it } }
 
         // Two-stage search (2026-08-22, see springchat3_document_qa.md in
-        // project memory): [documentSearchStrategy] already decided, via its
+        // space memory): [documentSearchStrategy] already decided, via its
         // own small dedicated LLM, whether this turn's question is best
         // answered from each document's own extracted outline
         // (DocumentStructureExtractor's PDF bookmarks) or by searching its
@@ -1014,6 +1383,11 @@ class ChatAgent(
             sentences, just write plain sentences - don't force a list
             or heading onto it just to use more formatting.
 
+            Never wrap the whole reply in a code fence. ``` is for actual
+            code, file contents or a command - not for your answer as a
+            whole. A reply that opens with ```markdown is shown to the user
+            as a block of raw source, with the # and ** still in it.
+
             This especially applies when the source material itself is
             a list - e.g. several named or numbered items such as
             modules, chapters, or steps. Use an actual list for those,
@@ -1030,22 +1404,111 @@ class ChatAgent(
         // design (see documentEdit's own doc comment) - so this block is a
         // report of completed work, and the guidance below is about
         // describing it honestly rather than about deciding anything.
-        val documentEditGuidance = if (edits.executions.isEmpty()) {
-            null
-        } else {
-            val outcomes = edits.executions.joinToString("\n") { "- ${it.tool} (input: \"${it.input}\"): ${it.rawOutput}" }
-            """
-            You have already changed the user's documents this turn. These
-            were the changes, with each tool's own result:
+        //
+        // The completeness paragraph was added 2026-08-29 after a reply that
+        // opened "I have edited the stories in greeks.docx to make them
+        // longer" when nothing of the sort had happened: the turn's only
+        // operation was a save_answer_as_word_document that SUCCEEDED, and
+        // the two older rules here cover an error and a no-op but not a
+        // success at some OTHER operation than the one asked for. The model
+        // saw a successful result next to the request and welded them
+        // together. Since this step cannot write anything itself, a reply
+        // claiming a change is the user's only evidence it happened - which
+        // makes an invented one the worst thing this prompt can produce.
+        // Three branches since 2026-08-29, where there used to be two. The
+        // middle one - the step RAN, changed nothing, and said why - had no
+        // way to exist before [DocumentEdits.note] was carried across, and
+        // it is the whole reason the note now is: a question back to the
+        // user lives there, and so does an honest "I did not do that, and
+        // here is what I would need to know".
+        val documentEditGuidance = when {
+            edits.executions.isEmpty() && edits.note.isNullOrBlank() -> null
 
-            $outcomes
+            // Ran and declined. Deliberately says "you have no tools" out
+            // loud: this step's model is the same one that just held an
+            // editing tool belt in documentEdit, and the reply is not the
+            // place to try again.
+            edits.executions.isEmpty() -> listOf(
+                """
+                The document-editing step ran this turn and changed NOTHING.
+                No document was created, edited or renamed. These were its own
+                closing words:
+                """.trimIndent(),
+                edits.note.orEmpty(),
+                """
+                Nothing in that note is a change that happened - it is that
+                step explaining itself. If it says something is missing or
+                ambiguous - which document was meant, which paragraph, what
+                exactly to write - put that question to the user plainly, in
+                your own words, and stop there. Do not guess the answer for
+                them, do not attempt the change yourself, and never say a
+                document was changed: you have no tools here, so nothing you
+                write alters a file.
+                """.trimIndent(),
+                """
+                If instead that note DESCRIBES what it would do - names tools,
+                lists steps, says "I would use" or explains how the change
+                could be made - then it is neither a question nor a plan for
+                the user to carry out. It means the editing step failed to
+                act. Say so in one or two plain sentences: the change was not
+                made, and they can ask again. Do not repeat the tool names,
+                do not reproduce the steps, and do not present any of it as
+                something they could do - those tools exist only inside this
+                app and the user cannot call them.
 
-            Tell the user plainly what was changed, in one sentence, as part
-            of your reply. Report what the results above actually say - if
-            one of them is an error or says nothing was changed, say that
-            instead of claiming the change succeeded. Do not offer to make
-            the change: it has already been made.
-            """.trimIndent()
+                Its claims about what a document contains are not evidence
+                either. That step may never have looked, so do not repeat a
+                statement like "the document has no headings" as fact - if
+                the user asked about the document's contents, answer from the
+                passages above, which came from the document itself.
+                """.trimIndent(),
+            ).joinToString("\n\n")
+
+            else -> {
+                val outcomes = edits.executions.joinToString("\n") { "- ${it.tool} (input: \"${it.input}\"): ${it.rawOutput}" }
+                // Assembled as separate paragraphs rather than one raw string
+                // with the outcomes interpolated into it - the trap documentEdit's
+                // own prompt already learned (springchat3_document_edit_prompt_scope
+                // in project memory): trimIndent runs AFTER interpolation, so a
+                // multi-line value whose later lines start at column 0 makes the
+                // shallowest indent 0 and silently disables the trim for the
+                // whole block.
+                listOfNotNull(
+                    """
+                    These are the ONLY operations performed on the user's documents
+                    this turn, each with its own result:
+                    """.trimIndent(),
+                    outcomes,
+                    """
+                    Tell the user plainly what happened, in one sentence, as part of
+                    your reply. Report what the results above actually say - if one
+                    of them is an error or says nothing was changed, say that
+                    instead of claiming the change succeeded. Do not offer to make a
+                    change that is listed above: it has already been made.
+                    """.trimIndent(),
+                    """
+                    That list is complete. If the user asked for something which is
+                    not in it - a document to be changed, created or renamed that no
+                    result above mentions - then it did NOT happen, and you must say
+                    so plainly, naming that document, rather than describing it as
+                    done. A successful operation above is evidence for itself only,
+                    never for some other thing the user also asked for. Writing the
+                    requested text into your reply is not the same as changing a
+                    document, and must never be described as if it were.
+                    """.trimIndent(),
+                    // Appended by concatenation, not interpolated into the block
+                    // above it, for the trimIndent reason spelled out further up.
+                    edits.note?.takeIf { it.isNotBlank() }?.let { note ->
+                        """
+                        The editing step also signed off with the following. It is
+                        commentary, not a record: the results above are what
+                        actually happened, and where the two disagree the results
+                        win. A note claiming a change that no result above shows is
+                        simply wrong - do not repeat it.
+                        """.trimIndent() + "\n\n" + note
+                    },
+                ).joinToString("\n\n")
+            }
         }
 
         val prompt = listOfNotNull(
@@ -1094,15 +1557,19 @@ class ChatAgent(
         progressBus.emit(request.correlationId, ChatProgressEvent.StepFinished(answerStepName, seconds))
         // Both steps' tool calls - analyzeMessage's own gathering calls plus
         // whatever documentEdit did (2026-08-23) - so an edit shows in the
-        // trace beside the lookups that led to it.
-        val toolCalls = (results.executions + edits.executions).map {
-            ToolCallSummary(
-                tool = it.tool,
-                input = it.input,
-                failed = isToolError(it.rawOutput),
-                seconds = it.durationMs / 1000.0,
-            )
-        }
+        // trace beside the lookups that led to it. Tagged with the step each
+        // one belongs to since 2026-08-28, because they were all being drawn
+        // under "Analyzing message ..." regardless of which step made them;
+        // documentEdit's also carry their result, which is the one thing the
+        // user actually wants to read there - it says what happened to their
+        // document.
+        // Both lists carry their step, so a null one means "recorded before
+        // this existed" and nothing else - which is what lets the UI tell a
+        // legacy trace apart from a step that really changed nothing.
+        val toolCalls = results.executions.map { toolCallSummary(it, step = ANALYZE_STEP_NAME) } +
+            edits.executions.map {
+                toolCallSummary(it, step = documentEditStepName(request), outcome = editOutcome(it.rawOutput))
+            }
         // Steps accumulated from gatherInfo (analyzeMessage), this turn's
         // documentSearchStrategy time (only when at least one document was
         // actually attached - same visibility rule as the retrieval row
@@ -1124,7 +1591,27 @@ class ChatAgent(
             emptyList()
         }
         val steps = results.timings + documentSearchStrategyTiming + documentEditTiming + StepTiming(answerStepName, seconds)
-        val reply = ChatReply(answered, toolCalls, steps, retrievalSummary)
+        /*
+         * The state the NEXT turn needs to understand a bare "yes"
+         * (2026-08-29). Deliberately the same condition the middle branch of
+         * documentEditGuidance above already tests - the editing step ran,
+         * changed nothing, and explained itself - because that IS the "I
+         * asked you something" state. Nothing new has to be detected, and in
+         * particular nothing has to guess whether the note was phrased as a
+         * question: a step that declined and said why is worth answering
+         * either way.
+         *
+         * [request.message] is stored beside it because the reply alone is
+         * not enough. "yes" is only actionable next to the request it agrees
+         * to - see [PendingEdit].
+         */
+        val declinedNote = edits.note?.takeIf { it.isNotBlank() }
+        val pendingEdit = if (edits.executions.isEmpty() && declinedNote != null) {
+            PendingEdit(question = declinedNote, askedAbout = request.message)
+        } else {
+            null
+        }
+        val reply = ChatReply(answered, toolCalls, steps, retrievalSummary, pendingEdit)
         // Terminal event for the live stream - ChatController's /chat/stream
         // endpoint could emit this itself once AgentInvocation.invoke(...)
         // returns the same reply, but emitting it here means answer, not
