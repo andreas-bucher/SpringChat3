@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ch.arctcisoft"
-version = "0.2.2"
+version = "0.2.3"
 description = "SpringChat3 - a Kotlin + Spring Boot + WebFlux chat application built on the Embabel agent framework"
 
 // Embabel is released to its own Artifactory instance rather than Maven Central.
